@@ -72,3 +72,28 @@ thing in a brand-new directory from the bundle, with no manual patching:
   2. unzip the bundle,
   3. `.\build-all.ps1 -Mpi -OpmOrg gitPaean -OpmBranch windows`.
 (Drop -OpmOrg/-OpmBranch once the fixes are merged into OPM/*.)
+
+---
+
+## Full all-targets re-validation (fresh clone, gitPaean/windows, zero manual steps)
+
+After the compositional fixes landed (opm-common Constants.hpp pushed to the fork;
+DUNE yaspgrid fix added to patches/), cloned the harness repo into a fresh dir and
+ran the WHOLE all-targets build twice — serial and MPI:
+
+    git clone <repo> opm_clean3
+    cd opm_clean3
+    .\build-all.ps1 -SimTarget all -OpmOrg gitPaean -OpmBranch windows         # serial
+    .\build-all.ps1 -Mpi -SimTarget all -OpmOrg gitPaean -OpmBranch windows    # parallel
+
+- DUNE patches (gmshreader + yaspgrid) auto-applied to the fresh DUNE clone. OK
+- Fork carried every OPM fix (incl. Constants.hpp) — no manual patching.
+- **Serial:** all **48** opm-simulators executables built (every flow_* variant,
+  incl. compositional flow_comp*/flowexp_comp*). 0 failures.
+- **MPI:** Zoltan built, then all **48** executables built with MPI. 0 failures.
+  `mpiexec -n 2 flow_blackoil SPE1.DATA` -> "Using 2 MPI processes",
+  "ZOLTAN Load balancing method = 9 (GRAPH)", 123 timesteps, exit 0, UNRST written.
+
+**VERDICT: the instructions + patches build the entire opm-common/opm-grid/
+opm-simulators target set (GPU off), serial and parallel, clean from the fork with
+zero manual steps.** Build with -j 4 (RAM); compositional+MPI compiles cleanly.
