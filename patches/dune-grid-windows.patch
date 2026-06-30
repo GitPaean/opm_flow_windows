@@ -1,0 +1,20 @@
+diff --git a/dune/grid/io/file/gmshreader.hh b/dune/grid/io/file/gmshreader.hh
+index 192c0d228..964863519 100644
+--- a/dune/grid/io/file/gmshreader.hh
++++ b/dune/grid/io/file/gmshreader.hh
+@@ -26,6 +26,15 @@
+ #include <dune/grid/common/boundarysegment.hh>
+ #include <dune/grid/common/gridfactory.hh>
+ 
++// MSVC lacks the POSIX large-file functions ftello/fseeko; map them to the
++// Microsoft 64-bit equivalents so the Gmsh reader compiles natively. (off_t is
++// already provided by MSVC's <sys/types.h>, so it is not redefined here.)
++#if defined(_MSC_VER)
++#include <cstdio>
++#define ftello _ftelli64
++#define fseeko _fseeki64
++#endif
++
+ namespace Dune
+ {
+ 

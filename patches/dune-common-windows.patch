@@ -1,0 +1,35 @@
+diff --git a/cmake/modules/DuneCommonMacros.cmake b/cmake/modules/DuneCommonMacros.cmake
+index 554a9dab2..9d8d809bd 100644
+--- a/cmake/modules/DuneCommonMacros.cmake
++++ b/cmake/modules/DuneCommonMacros.cmake
+@@ -22,7 +22,10 @@ find_package(Threads)
+ include(AddThreadsFlags)
+ 
+ # find the MPI library
+-find_package(MPI 3.0 COMPONENTS C)
++# NB: Microsoft MPI is reported by CMake's FindMPI as version 2.0 even though it
++# implements most MPI-3 features, so requiring "3.0" here rejects MS-MPI on
++# Windows. Drop the explicit version so MS-MPI is accepted.
++find_package(MPI COMPONENTS C)
+ include(AddMPIFlags)
+ 
+ # find library for Threading Building Blocks
+diff --git a/dune/common/parallel/mpitraits.hh b/dune/common/parallel/mpitraits.hh
+index 669470d69..f8f6f7826 100644
+--- a/dune/common/parallel/mpitraits.hh
++++ b/dune/common/parallel/mpitraits.hh
+@@ -81,9 +81,14 @@ namespace Dune
+   ComposeMPITraits(float,MPI_FLOAT);
+   ComposeMPITraits(double,MPI_DOUBLE);
+   ComposeMPITraits(long double,MPI_LONG_DOUBLE);
++  // The MPI_CXX_*_COMPLEX datatypes are MPI-3; Microsoft MPI (MPI-2 level) does
++  // not define them. Guard so the header compiles with MS-MPI (std::complex MPI
++  // traits are simply unavailable there).
++#ifdef MPI_CXX_DOUBLE_COMPLEX
+   ComposeMPITraits(std::complex<double>, MPI_CXX_DOUBLE_COMPLEX);
+   ComposeMPITraits(std::complex<long double>, MPI_CXX_LONG_DOUBLE_COMPLEX);
+   ComposeMPITraits(std::complex<float>, MPI_CXX_FLOAT_COMPLEX);
++#endif
+ 
+ 
+ #undef ComposeMPITraits

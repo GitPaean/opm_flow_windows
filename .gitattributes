@@ -1,0 +1,9 @@
+# Keep patch files byte-exact (LF, no CRLF conversion) so `git apply` in
+# build-all.ps1 applies them cleanly on any checkout.
+*.patch -text
+
+# PowerShell scripts and C/C++ shim headers: normalize to LF in the repo; Git
+# checks them out natively. (MSVC and PowerShell accept either line ending.)
+*.ps1 text
+*.h   text
+*.md  text

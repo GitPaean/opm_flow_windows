@@ -1,0 +1,27 @@
+# ---------------------------------------------------------------------------
+# opm_flow_windows — build harness for native Windows (MSVC) OPM Flow.
+# Only the harness (scripts, docs, patches, compat shims, CI) is tracked.
+# Everything cloned or generated below is intentionally ignored.
+# ---------------------------------------------------------------------------
+
+# Cloned sources — these live in their own upstream repos (OPM, DUNE, Trilinos)
+# and are fetched by build-all.ps1; never committed here.
+/src/
+/deps/
+
+# vcpkg checkout + its buildtrees/packages/downloads
+/vcpkg/
+
+# Out-of-source build trees and install prefixes (serial and MPI)
+/build/
+/build-mpi/
+/install/
+/install-mpi/
+
+# Build/configure logs and scratch output
+*.log
+
+# OS / editor cruft
+Thumbs.db
+.DS_Store
+*.swp
