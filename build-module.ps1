@@ -9,6 +9,9 @@ param(
     [Parameter(Mandatory)] [string]$Module,
     [string]$Target = "install",
     [switch]$Mpi,
+    # Parallel compile jobs. Default 4: OPM's heavy template TUs use a lot of RAM,
+    # so more than ~4 concurrent cl.exe can exhaust memory on typical machines.
+    [int]$Jobs = 4,
     [string[]]$Extra = @()
 )
 
@@ -74,7 +77,7 @@ Write-Host "==== configure $Module (MPI=$($Mpi.IsPresent)) ====" -ForegroundColo
 cmake @cmakeArgs
 if ($LASTEXITCODE -ne 0) { throw "$Module configure failed ($LASTEXITCODE)" }
 
-Write-Host "==== build $Module (target=$Target) ====" -ForegroundColor Cyan
-cmake --build $Build --target $Target
+Write-Host "==== build $Module (target=$Target, -j $Jobs) ====" -ForegroundColor Cyan
+cmake --build $Build --target $Target -- -j $Jobs
 if ($LASTEXITCODE -ne 0) { throw "$Module build failed ($LASTEXITCODE)" }
 Write-Host "==== $Module OK ====" -ForegroundColor Green

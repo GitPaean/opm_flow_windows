@@ -93,7 +93,7 @@ function Build-Zoltan {
         -DTPL_MPI_LIBRARIES="$env:MSMPI_LIB64\msmpi.lib" `
         -DTPL_ENABLE_DLlib=OFF `
         -DTPL_ENABLE_Pthread=OFF }
-    Invoke-Native { cmake --build $bld --target install }
+    Invoke-Native { cmake --build $bld --target install -- -j 4 }
 }
 
 # Apply a Windows/MSVC patch to a DUNE module (DUNE is built from source, so the

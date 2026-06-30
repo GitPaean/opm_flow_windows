@@ -213,6 +213,21 @@ native Windows: `mpiexec -n 2 flow_blackoil SPE1.DATA` -> "Using 2 MPI processes
 "ZOLTAN Load balancing method = 9 (GRAPH)", grid split rank0=153 / rank1=147 owned
 cells, 123 timesteps, exit 0, full ECLIPSE output. Links msmpi.dll; Zoltan static.
 
+## Full build — all flow variants (serial, GPU off)
+Building the default `all` target produced **all 39 production flow_* variants**
+(incl. the `flow` omnibus). Only the experimental compositional solvers
+(flowexperimental/comp/*) and a couple of examples (lens_*) failed. Fixes for those:
+
+- dune-grid `dune/grid/yaspgrid.hh` (size() count loop): `std::array<...>::iterator`
+  typedef -> `auto`. dataBegin()/dataEnd() return raw pointers, which are the
+  array iterator on libstdc++ but a distinct wrapper class on MSVC.
+- opm-common `opm/material/Constants.hpp`: `kb = R/Na` and
+  `hRed = h/(2*std::numbers::pi_v<Scalar>)` fail when Scalar is the compositional
+  autodiff type (its arithmetic isn't constexpr, and `pi_v<Scalar>` instantiates
+  the ill-formed primary template). Compute both in `double` and cast to Scalar.
+
+(Build with `-j 4` max — heavy template TUs are RAM-hungry; see build-module.ps1 -Jobs.)
+
 ## Configure options used for opm-common (MSVC)
 `-DWITH_NATIVE=OFF` (drop `-mtune=native`), `-DCMAKE_DISABLE_FIND_PACKAGE_OpenMP=TRUE`
 (MSVC's OpenMP 2.0 requires *signed* loop indices; OPM uses size_t -> C3016.
