@@ -63,6 +63,7 @@ Once merged, drop `-OpmOrg/-OpmBranch`.
 ## Options
 ```powershell
 .\build-all.ps1 -Mpi                 # parallel build
+.\build-all.ps1 -SimTarget all       # build every flow_* variant (full suite), not just flow_blackoil
 .\build-all.ps1 -SkipClone           # sources already cloned
 .\build-all.ps1 -SkipDeps            # vcpkg packages already installed
 .\build-all.ps1 -DuneVersion v2.10.0

@@ -26,6 +26,9 @@ param(
     [switch]$SkipClone,
     [switch]$SkipDeps,
     [switch]$Mpi,
+    # opm-simulators target to build. Default 'flow_blackoil' (one binary); use
+    # 'all' to build every flow_* variant (the full simulator suite).
+    [string]$SimTarget = 'flow_blackoil',
     [string]$DuneVersion = 'v2.10.0',
     # GitHub org and branch to clone opm-common/opm-grid/opm-simulators from.
     # Until the Windows/MSVC fixes are merged upstream, point these at the fork
@@ -326,7 +329,7 @@ if ($Mpi) {
     Build-Zoltan                        # opm-grid (with MPI) requires Zoltan
     & $buildModule opm-common    -Mpi
     & $buildModule opm-grid      -Mpi
-    & $buildModule opm-simulators -Mpi -Target flow_blackoil
+    & $buildModule opm-simulators -Mpi -Target $SimTarget
     $exe = Join-Path $Root 'build-mpi\opm-simulators\bin\flow_blackoil.exe'
 } else {
     & $buildModule dune-common
@@ -335,7 +338,7 @@ if ($Mpi) {
     & $buildModule dune-grid
     & $buildModule opm-common
     & $buildModule opm-grid
-    & $buildModule opm-simulators -Target flow_blackoil
+    & $buildModule opm-simulators -Target $SimTarget
     $exe = Join-Path $Root 'build\opm-simulators\bin\flow_blackoil.exe'
 }
 
