@@ -243,9 +243,15 @@ vcpkg, installs deps, checks out DUNE, and builds every module in order):
 # after §3 (toolchain) is installed:
 .\build-all.ps1                 # full SERIAL build from scratch
 .\build-all.ps1 -Mpi            # full PARALLEL (MPI) build (see §13)
+.\build-all.ps1 -OpenMP         # SERIAL + OpenMP threading (see §11)
+.\build-all.ps1 -Mpi -OpenMP    # hybrid MPI + OpenMP (see §13)
 .\build-all.ps1 -SkipClone      # sources already present
 .\build-all.ps1 -SkipDeps       # vcpkg packages already installed
+.\build-all.ps1 -SimTarget all  # build every flow_* variant, not just flow_blackoil
 ```
+
+`-OpenMP` and `-Mpi` are independent switches and compose freely; both apply to
+the OPM modules only (DUNE is always built without them).
 
 ---
 
@@ -255,10 +261,14 @@ vcpkg, installs deps, checks out DUNE, and builds every module in order):
   with Windows 10/11). `MSVCP140/VCRUNTIME140` come from the VC++ Redistributable.
   For a self-contained `.exe`, build dependencies with the `x64-windows-static`
   triplet and add `-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded` to static-link the CRT.
-- **OpenMP (parallel):** MSVC's default `/openmp` is OpenMP 2.0 and rejects
-  unsigned/`size_t` loop counters (C3016). Re-enable with `/openmp:llvm` (OpenMP
-  3.0+) instead of disabling, or patch the affected loops to signed indices.
-- **MPI:** install MS-MPI (or Intel MPI) and drop `-DCMAKE_DISABLE_FIND_PACKAGE_MPI`.
+- **OpenMP (threading):** enabled with `build-all.ps1 -OpenMP`. MSVC's default
+  `/openmp` is OpenMP 2.0 and rejects OPM's unsigned/`size_t` parallel-for counters
+  (C3016), and OPM's `ElementChunks` idiom uses OpenMP-5.0 range-based-for (which
+  MSVC does not support at all); the switch uses `/openmp:llvm` (OpenMP 3.1+) and
+  the OPM modules carry index-based loop equivalents. Runtime: `libomp140.x86_64.dll`
+  (ships with MSVC under `VC\Redist\...\Microsoft.VC143.OpenMP.LLVM\`) must sit next
+  to the `.exe` or be on `PATH`. Set threads with `--threads-per-process=N`.
+- **MPI:** enabled with `build-all.ps1 -Mpi` (install MS-MPI first; see §13).
 - **Optional CLI tools** (`opmpack`, `compareECL`, …): currently off via
   `BUILD_EXAMPLES=OFF`; they have their own `path`→`string` / `getopt` fixes
   pending.
@@ -350,14 +360,25 @@ Expect `Using 2 MPI processes`, `ZOLTAN Load balancing method = ... (GRAPH)`, an
 a per-rank owned/overlap cell breakdown. `mpiexec` comes from the MS-MPI runtime
 (`setup-env.ps1` adds it to PATH).
 
+### Hybrid MPI + OpenMP
+
+MPI and OpenMP are independent and compose. Add `-OpenMP` to the MPI build:
+
+```powershell
+.\build-all.ps1 -Mpi -OpenMP -SkipClone -SkipDeps -SimTarget all
+# then: N ranks x M threads each
+mpiexec -n 2 .\build-mpi\opm-simulators\bin\flow_blackoil.exe <deck>.DATA --threads-per-process=3 --output-dir=<dir>
+```
+Expect `Using 2 MPI processes with 3 OMP threads on each`. The binary links both
+`msmpi.dll` and `libomp140.x86_64.dll` (copy the latter next to the `.exe`; see §11).
+Pick `ranks x threads` ~ physical cores.
+
 ### Notes / limits
 
 - MS-MPI is MPI-2-level (CMake reports v2.0). DUNE's `MPI 3.0` requirement and its
   `MPI_CXX_*_COMPLEX` traits were patched out; black-oil doesn't need them.
 - Distribution of an MPI binary also needs the MS-MPI **runtime** (`msmpi.dll`,
   in `System32`) on the target machine.
-- OpenMP is still off; MPI and OpenMP are independent. For hybrid MPI+OpenMP,
-  also enable OpenMP via `/openmp:llvm` (see §11).
 
 ---
 

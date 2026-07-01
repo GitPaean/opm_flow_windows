@@ -26,6 +26,9 @@ param(
     [switch]$SkipClone,
     [switch]$SkipDeps,
     [switch]$Mpi,
+    # Enable OpenMP threading (/openmp:llvm) in the OPM modules. Composes with
+    # -Mpi to produce a hybrid MPI+OpenMP flow. DUNE is always built without it.
+    [switch]$OpenMP,
     # opm-simulators target to build. Default 'flow_blackoil' (one binary); use
     # 'all' to build every flow_* variant (the full simulator suite).
     [string]$SimTarget = 'flow_blackoil',
@@ -315,11 +318,12 @@ if (-not $SkipDeps) {
 }
 
 # --------------------------------------------------------------------------
-Step "4/4  Build DUNE -> opm-common -> opm-grid -> opm-simulators$(if($Mpi){' (MPI)'})"
+Step "4/4  Build DUNE -> opm-common -> opm-grid -> opm-simulators$(if($Mpi){' (MPI)'})$(if($OpenMP){' (OpenMP)'})"
 . (Join-Path $Root 'setup-env.ps1')
 
 $buildModule = Join-Path $Root 'build-module.ps1'
 
+# OpenMP applies to the OPM modules only; DUNE is always built without it.
 if ($Mpi) {
     Ensure-MsMpi
     & $buildModule dune-common   -Mpi
@@ -327,18 +331,18 @@ if ($Mpi) {
     & $buildModule dune-istl     -Mpi
     & $buildModule dune-grid     -Mpi
     Build-Zoltan                        # opm-grid (with MPI) requires Zoltan
-    & $buildModule opm-common    -Mpi
-    & $buildModule opm-grid      -Mpi
-    & $buildModule opm-simulators -Mpi -Target $SimTarget
+    & $buildModule opm-common    -Mpi -OpenMP:$OpenMP
+    & $buildModule opm-grid      -Mpi -OpenMP:$OpenMP
+    & $buildModule opm-simulators -Mpi -OpenMP:$OpenMP -Target $SimTarget
     $exe = Join-Path $Root 'build-mpi\opm-simulators\bin\flow_blackoil.exe'
 } else {
     & $buildModule dune-common
     & $buildModule dune-geometry
     & $buildModule dune-istl
     & $buildModule dune-grid
-    & $buildModule opm-common
-    & $buildModule opm-grid
-    & $buildModule opm-simulators -Target $SimTarget
+    & $buildModule opm-common    -OpenMP:$OpenMP
+    & $buildModule opm-grid      -OpenMP:$OpenMP
+    & $buildModule opm-simulators -OpenMP:$OpenMP -Target $SimTarget
     $exe = Join-Path $Root 'build\opm-simulators\bin\flow_blackoil.exe'
 }
 
