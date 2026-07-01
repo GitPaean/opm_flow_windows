@@ -152,10 +152,10 @@ so the deck and all options were rejected as "unknown parameters".
 - Fix: `find("Opm::Parameters::")` and erase up to past it (handles the prefix).
   This corrects ALL parameter names on MSVC.
 
-## MPI support (work in progress) — MS-MPI on Windows
-Goal: enable MPI. Status: MS-MPI installed; DUNE (all 4) + opm-common build with
-MPI; **blocked at opm-grid because OPM couples MPI => Zoltan and Zoltan has no
-Windows build** (not in vcpkg; part of Trilinos).
+## MPI support — MS-MPI on Windows  (RESOLVED — see "Zoltan for Windows" + "MPI RESULT" below)
+MS-MPI installed; DUNE (all 4) + opm-common build with MPI. opm-grid couples MPI
+=> Zoltan, and Zoltan is not in vcpkg — resolved by building the Zoltan package
+from a Trilinos clone against MS-MPI (see below), not by decoupling.
 
 MPI builds use separate `build-mpi/` + `install-mpi/` trees (build-module.ps1 -Mpi).
 Patches made so far:
@@ -172,13 +172,12 @@ Patches made so far:
   installed modules rather than using dunecontrol. This makes mpi_checks() define
   HAVE_MPI=1; opm-common then built with HAVE_MPI (parallel EclipseState etc.).
 
-BLOCKER: opm-grid `GraphOfGridWrappers.{hpp,cpp}`, `ZoltanGraphFunctions`, etc.
-reference Zoltan types (ZOLTAN_ID_PTR, ZOLTAN_FATAL) under `#if HAVE_MPI` with no
-`HAVE_ZOLTAN` guard, so enabling MPI forces compiling Zoltan code. opm-grid's
-CMake also hard-requires Zoltan when MPI is on (REQUIRE_ZOLTAN). vcpkg has
-metis/parmetis but not zoltan. Decoupling MPI from Zoltan (guarding the Zoltan
-code with HAVE_ZOLTAN and using (Par)METIS for partitioning) is the realistic
-path but is substantial source work + a long MSVC-fix tail in the parallel code.
+Why Zoltan is required: opm-grid `GraphOfGridWrappers.{hpp,cpp}`,
+`ZoltanGraphFunctions`, etc. reference Zoltan types (ZOLTAN_ID_PTR, ZOLTAN_FATAL)
+under `#if HAVE_MPI` with no `HAVE_ZOLTAN` guard, and opm-grid's CMake hard-requires
+Zoltan when MPI is on (REQUIRE_ZOLTAN). Rather than decouple MPI from Zoltan
+(guarding with HAVE_ZOLTAN + using (Par)METIS — a large source change), we build
+Zoltan itself for Windows (next section).
 
 ## Zoltan for Windows (built via Trilinos, against MS-MPI)
 Zoltan is required by opm-grid when MPI is on. It is not in vcpkg. Built the
@@ -229,7 +228,25 @@ Building the default `all` target produced **all 39 production flow_* variants**
 (Build with `-j 4` max — heavy template TUs are RAM-hungry; see build-module.ps1 -Jobs.)
 
 ## Configure options used for opm-common (MSVC)
-`-DWITH_NATIVE=OFF` (drop `-mtune=native`), `-DCMAKE_DISABLE_FIND_PACKAGE_OpenMP=TRUE`
-(MSVC's OpenMP 2.0 requires *signed* loop indices; OPM uses size_t -> C3016.
-Revisit with `/openmp:llvm` for the simulator if OpenMP perf is wanted).
-Result: `opmi.exe` parses SPE1CASE1.DATA end-to-end (exit 0).
+`-DWITH_NATIVE=OFF` (drop `-mtune=native`). OpenMP is off by default
+(`-DCMAKE_DISABLE_FIND_PACKAGE_OpenMP=TRUE`); enable it with `build-all.ps1 -OpenMP`
+(see below). Result: `opmi.exe` parses SPE1CASE1.DATA end-to-end (exit 0).
+
+## OpenMP support (build-all.ps1 -OpenMP)  (RESOLVED)
+MSVC's default `/openmp` is OpenMP 2.0 and rejects OPM's unsigned/`size_t`
+parallel-for counters (C3016); OPM's `ElementChunks` idiom also uses OpenMP-5.0
+range-based-for after `#pragma omp parallel for`, which MSVC does not support at
+all. Enabled via MSVC's **`/openmp:llvm`** (OpenMP 3.1+) plus source changes:
+- opm-grid `ElementChunks.hpp`: added a random-access `operator[]`.
+- opm-simulators (FIBlackoilModel, TracerModel, FacePropertiesTPSA_impl,
+  Transmissibility_impl, getQuasiImpesWeights, tpsamodel) + opm-grid griditer
+  example: converted the range-based `omp parallel for` loops to index-based
+  (`for (size_t ci=0; ci<chunks.size(); ++ci) { auto chunk = chunks[ci]; ... }`).
+- opm-simulators `DILU.hpp`: MSVC C1001 ICE on `row != A_.N()` under omp; hoist
+  the bound and use `<`.
+All index-based/`operator[]` forms are equivalent on GCC (Linux-safe).
+`find_package(OpenMP)` is pre-seeded to `/openmp:llvm` + libomp in build-module.ps1.
+Runtime dep: `libomp140.x86_64.dll` (ships with MSVC). Threads via
+`--threads-per-process=N`; composes with MPI for hybrid runs. VERIFIED:
+`flow_blackoil` runs serial-threaded and `mpiexec -n 2 ... --threads-per-process=3`
+("Using 2 MPI processes with 3 OMP threads on each").
