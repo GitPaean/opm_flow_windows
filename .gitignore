@@ -12,11 +12,9 @@
 # vcpkg checkout + its buildtrees/packages/downloads
 /vcpkg/
 
-# Out-of-source build trees and install prefixes (serial and MPI)
-/build/
-/build-mpi/
-/install/
-/install-mpi/
+# Out-of-source build trees and install prefixes (serial, MPI, OpenMP, ...)
+/build*/
+/install*/
 
 # Build/configure logs and scratch output
 *.log
