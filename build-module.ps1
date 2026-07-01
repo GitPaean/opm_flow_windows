@@ -9,6 +9,11 @@ param(
     [Parameter(Mandatory)] [string]$Module,
     [string]$Target = "install",
     [switch]$Mpi,
+    # Enable OpenMP threading via MSVC's LLVM runtime (/openmp:llvm). The default
+    # /openmp (OpenMP 2.0) is too old for OPM's unsigned/size_t parallel-for
+    # counters; /openmp:llvm (OpenMP 3.1+) handles them. Needs libomp140.x86_64.dll
+    # at runtime (ships with MSVC).
+    [switch]$OpenMP,
     # Parallel compile jobs. Default 4: OPM's heavy template TUs use a lot of RAM,
     # so more than ~4 concurrent cl.exe can exhaust memory on typical machines.
     [int]$Jobs = 4,
@@ -64,13 +69,26 @@ $cmakeArgs = @(
     '-DDUNE_ENABLE_PYTHONBINDINGS=OFF',
     '-DCMAKE_DISABLE_FIND_PACKAGE_Doxygen=TRUE',
     '-DCMAKE_DISABLE_FIND_PACKAGE_LATEX=TRUE',
-    '-DCMAKE_DISABLE_FIND_PACKAGE_OpenMP=TRUE',
     '-DBUILD_TESTING=OFF',
     '-DBUILD_EXAMPLES=OFF',
     '-DWITH_NATIVE=OFF'
 )
 # MPI: when -Mpi is given, let CMake find Microsoft MPI; otherwise disable it.
 if ($Mpi) { $cmakeArgs += '-DUSE_MPI=ON' } else { $cmakeArgs += '-DCMAKE_DISABLE_FIND_PACKAGE_MPI=TRUE' }
+
+# OpenMP: -OpenMP pre-seeds FindOpenMP to use MSVC's /openmp:llvm (the default
+# /openmp is OpenMP 2.0, too old for OPM's unsigned parallel-for counters).
+# Otherwise disable OpenMP entirely.
+if ($OpenMP) {
+    $libomp = Join-Path $env:VCToolsInstallDir 'lib\x64\libomp.lib'
+    $cmakeArgs += @(
+        '-DUSE_OPENMP=ON',
+        '-DOpenMP_CXX_FLAGS=/openmp:llvm', '-DOpenMP_CXX_LIB_NAMES=libomp', "-DOpenMP_libomp_LIBRARY=$libomp",
+        '-DOpenMP_C_FLAGS=/openmp:llvm',   '-DOpenMP_C_LIB_NAMES=libomp'
+    )
+} else {
+    $cmakeArgs += '-DCMAKE_DISABLE_FIND_PACKAGE_OpenMP=TRUE'
+}
 if ($Extra) { $cmakeArgs += $Extra }
 
 Write-Host "==== configure $Module (MPI=$($Mpi.IsPresent)) ====" -ForegroundColor Cyan
