@@ -11,6 +11,7 @@
 #include <process.h>
 #include <direct.h>
 #include <stdlib.h>
+#include <string.h>
 #ifndef F_OK
 #define F_OK 0
 #endif
@@ -41,4 +42,12 @@ __declspec(dllimport) void __stdcall Sleep(unsigned long dwMilliseconds);
 #endif
 static __inline unsigned int sleep(unsigned int seconds) { Sleep(seconds * 1000u); return 0; }
 static __inline int usleep(unsigned int usec) { Sleep(usec / 1000u); return 0; }
+/* POSIX gethostname(): absent on MSVC (winsock only). Best-effort from the
+   COMPUTERNAME environment variable, enough for the log banners OPM uses it for. */
+static __inline int gethostname(char* name, size_t namelen) {
+    const char* cn = getenv("COMPUTERNAME");
+    if (!name || namelen == 0) { return -1; }
+    strncpy_s(name, namelen, cn ? cn : "localhost", _TRUNCATE);
+    return 0;
+}
 #endif /* OPM_COMPAT_UNISTD_H */
