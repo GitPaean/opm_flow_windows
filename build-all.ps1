@@ -29,6 +29,10 @@ param(
     # Enable OpenMP threading (/openmp:llvm) in the OPM modules. Composes with
     # -Mpi to produce a hybrid MPI+OpenMP flow. DUNE is always built without it.
     [switch]$OpenMP,
+    # Also clone + build opm-upscaling: its library plus the upscale_* / cpchop
+    # tools (which live in examples/, so this builds with BUILD_EXAMPLES=ON).
+    # Off by default to keep the core flow build lean.
+    [switch]$Upscaling,
     # opm-simulators target to build. Default 'flow_blackoil' (one binary); use
     # 'all' to build every flow_* variant (the full simulator suite).
     [string]$SimTarget = 'flow_blackoil',
@@ -295,7 +299,9 @@ if (-not $SkipClone) {
     # Apply the DUNE Windows/MSVC patches (DUNE is built from source).
     Apply-DunePatch 'dune-common' 'dune-common-windows.patch'
     Apply-DunePatch 'dune-grid'   'dune-grid-windows.patch'
-    foreach ($m in 'opm-common','opm-grid','opm-simulators') {
+    $opmModules = @('opm-common','opm-grid','opm-simulators')
+    if ($Upscaling) { $opmModules += 'opm-upscaling' }
+    foreach ($m in $opmModules) {
         $dst = Join-Path $Root "src\$m"
         if (-not (Test-Path (Join-Path $dst '.git'))) {
             $url = "https://github.com/$OpmOrg/$m.git"
@@ -327,7 +333,7 @@ if (-not $SkipDeps) {
 }
 
 # --------------------------------------------------------------------------
-Step "4/4  Build DUNE -> opm-common -> opm-grid -> opm-simulators$(if($Mpi){' (MPI)'})$(if($OpenMP){' (OpenMP)'})"
+Step "4/4  Build DUNE -> opm-common -> opm-grid -> opm-simulators$(if($Upscaling){' -> opm-upscaling'})$(if($Mpi){' (MPI)'})$(if($OpenMP){' (OpenMP)'})"
 . (Join-Path $Root 'setup-env.ps1')
 
 $buildModule = Join-Path $Root 'build-module.ps1'
@@ -343,6 +349,8 @@ if ($Mpi) {
     & $buildModule opm-common    -Mpi -OpenMP:$OpenMP
     & $buildModule opm-grid      -Mpi -OpenMP:$OpenMP
     & $buildModule opm-simulators -Mpi -OpenMP:$OpenMP -Target $SimTarget
+    # opm-upscaling tools live in examples/, so build the 'all' target with examples on.
+    if ($Upscaling) { & $buildModule opm-upscaling -Mpi -OpenMP:$OpenMP -Target all -Extra '-DBUILD_EXAMPLES=ON' }
     $exe = Join-Path $Root 'build-mpi\opm-simulators\bin\flow_blackoil.exe'
 } else {
     & $buildModule dune-common
@@ -352,6 +360,8 @@ if ($Mpi) {
     & $buildModule opm-common    -OpenMP:$OpenMP
     & $buildModule opm-grid      -OpenMP:$OpenMP
     & $buildModule opm-simulators -OpenMP:$OpenMP -Target $SimTarget
+    # opm-upscaling tools live in examples/, so build the 'all' target with examples on.
+    if ($Upscaling) { & $buildModule opm-upscaling -OpenMP:$OpenMP -Target all -Extra '-DBUILD_EXAMPLES=ON' }
     $exe = Join-Path $Root 'build\opm-simulators\bin\flow_blackoil.exe'
 }
 
@@ -363,4 +373,14 @@ if (Test-Path $exe) {
     }
 } else {
     throw "flow_blackoil.exe was not produced"
+}
+
+if ($Upscaling) {
+    $usBin = Join-Path $Root ("build$(if($Mpi){'-mpi'})\opm-upscaling\bin")
+    $usTools = @(Get-ChildItem (Join-Path $usBin '*.exe') -ErrorAction SilentlyContinue)
+    if ($usTools.Count -gt 0) {
+        Write-Host "opm-upscaling: $($usTools.Count) tools in $usBin (upscale_perm, upscale_relperm, cpchop, ...)" -ForegroundColor Green
+    } else {
+        throw "opm-upscaling tools were not produced"
+    }
 }

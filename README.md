@@ -52,9 +52,10 @@ Builds Zoltan (from a Trilinos clone) + the MPI modules into separate
 [BUILD_WINDOWS.md](BUILD_WINDOWS.md) §13.
 
 ## Until the OPM fixes are merged upstream
-The Windows/MSVC fixes to opm-common/opm-grid/opm-simulators must be present in the
-sources. Until they land in `OPM/*`, point the build at the fork/branch that has
-them (the DUNE patches in `patches/` are applied automatically regardless):
+The Windows/MSVC fixes to opm-common/opm-grid/opm-simulators (and opm-upscaling,
+with `-Upscaling`) must be present in the sources. Until they land in `OPM/*`,
+point the build at the fork/branch that has them (the DUNE patches in `patches/`
+are applied automatically regardless):
 ```powershell
 .\build-all.ps1 -Mpi -OpmOrg GitPaean -OpmBranch windows
 ```
@@ -66,6 +67,7 @@ Once merged, drop `-OpmOrg/-OpmBranch`.
 .\build-all.ps1 -OpenMP              # OpenMP threading (/openmp:llvm)
 .\build-all.ps1 -Mpi -OpenMP         # hybrid MPI + OpenMP
 .\build-all.ps1 -SimTarget all       # build every flow_* variant (full suite), not just flow_blackoil
+.\build-all.ps1 -Upscaling           # also clone + build opm-upscaling (upscale_* / cpchop tools)
 .\build-all.ps1 -SkipClone           # sources already cloned
 .\build-all.ps1 -SkipDeps            # vcpkg packages already installed
 .\build-all.ps1 -DuneVersion v2.10.0

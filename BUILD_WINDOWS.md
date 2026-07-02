@@ -249,10 +249,14 @@ vcpkg, installs deps, checks out DUNE, and builds every module in order):
 .\build-all.ps1 -SkipClone      # sources already present
 .\build-all.ps1 -SkipDeps       # vcpkg packages already installed
 .\build-all.ps1 -SimTarget all  # build every flow_* variant, not just flow_blackoil
+.\build-all.ps1 -Upscaling      # also clone + build opm-upscaling (upscale_*/cpchop tools)
 ```
 
 `-OpenMP` and `-Mpi` are independent switches and compose freely; both apply to
-the OPM modules only (DUNE is always built without them).
+the OPM modules only (DUNE is always built without them). `-Upscaling` adds
+opm-upscaling (library + the `upscale_*` / `cpchop` tools, built with
+`BUILD_EXAMPLES=ON`); it composes with `-Mpi`/`-OpenMP` too. A fully complete
+build is `.\build-all.ps1 -Mpi -OpenMP -SimTarget all -Upscaling`.
 
 ---
 

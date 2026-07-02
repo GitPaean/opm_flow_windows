@@ -250,3 +250,20 @@ Runtime dep: `libomp140.x86_64.dll` (ships with MSVC). Threads via
 `--threads-per-process=N`; composes with MPI for hybrid runs. VERIFIED:
 `flow_blackoil` runs serial-threaded and `mpiexec -n 2 ... --threads-per-process=3`
 ("Using 2 MPI processes with 3 OMP threads on each").
+
+## opm-upscaling (master) — MSVC build (build-all.ps1 -Upscaling)
+Builds the opmupscaling library plus the upscale_* / cpchop tools, which live in
+examples/ (so this uses BUILD_EXAMPLES=ON). Depends only on opm-common + opm-grid
++ DUNE (not opm-simulators). Fixes:
+- `CMakeLists.txt`: `project(opm-upscaling C CXX Fortran)` made host-conditional
+  (`C CXX` on a Windows host) and the FortranCInterface language_hook gated on
+  `CMAKE_Fortran_COMPILER` — same as opm-grid. MSVC has no Fortran compiler; the
+  FC_GLOBAL macros blas_lapack.cpp needs come from the compat `FCMacros.h` shim.
+- `opm/porsol/mimetic/IncompFlowSolverHybrid.hpp`: `S_[0][0] *= 2` on a
+  `Dune::FieldMatrix<double,1,1>` is an MSVC C2666 overload ambiguity (int vs the
+  scalar/matrix operator*=); use a double literal `*= 2.0` (4 solver-variant sites).
+- compat `unistd.h`: added a `gethostname()` shim (MSVC only provides it via
+  winsock); upscale_elasticity.cpp uses it for a log banner.
+Result: opmupscaling.lib + 24 tools build clean (serial / MPI / OpenMP / hybrid).
+Optional deps cJSON / QuadMath / PTScotch / Boost-iostreams are not required — only
+upscale_relperm_benchmark needs boost-iostreams and is skipped without it.
