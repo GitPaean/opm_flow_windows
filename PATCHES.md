@@ -86,9 +86,11 @@ Result: `opmgrid.lib` + cmake config installed.
   is NOTFOUND on MSVC (no separate libm) and was added unconditionally to the
   UMFPACK try_compile link line, failing configure. Only append it `if(MATH_LIBRARY)`.
 - opm-common `cmake/Modules/OpmLibMain.cmake`: only call `${project}_tests_hook`
-  when `BUILD_TESTING` is ON. With testing off, opm-simulators' modelTests.cmake
-  hook still registered tests that `add_dependencies(test-suite <example-target>)`
-  on example targets that were never created -> configure error.
+  when `BUILD_TESTING` is ON **on Windows** (`AND (BUILD_TESTING OR NOT WIN32)`,
+  so other platforms keep the historical always-call behaviour). With testing
+  off, opm-simulators' modelTests.cmake hook still registered tests that
+  `add_dependencies(test-suite <example-target>)` on example targets that were
+  never created -> configure error.
   (opm-simulators reads opm-common's CMake modules from the source tree.)
 
 ## opm-simulators (master) — compile stage (flow_blackoil)
@@ -114,8 +116,10 @@ Additional source fixes:
 - `terminal.cpp`: guard `{SIGKILL,...}` map entry with `#ifdef SIGKILL`.
 - `Banners.cpp`: replace `sysconf(_SC_PHYS_PAGES)` with `GlobalMemoryStatusEx`
   on `_WIN32` (include <windows.h> with WIN32_LEAN_AND_MEAN+NOMINMAX).
-- `NonlinearSystemBlackOilReservoir.hpp`: `#undef STRICT`/`RELAXED` before the
-  `enum class DebugFlags` (windows.h leaks `#define STRICT 1` -> "1 = 0").
+- `NonlinearSystemBlackOilReservoir.hpp`: renamed the `enum class DebugFlags`
+  enumerators `STRICT/RELAXED/TUNINGDP` -> `Strict/Relaxed/TuningDP`
+  (windows.h leaks `#define STRICT 1` -> "1 = 0"; renaming sidesteps the macro
+  without any `#undef`).
 - path->string: `SimulatorSerializer.cpp` (loadFile_ = path.string()),
   `ParallelFileMerger.cpp` (.native() -> .string(), native() is wstring on Win).
 - `ConvergenceOutputConfiguration.cpp`: construct vector<string> from the
@@ -132,9 +136,9 @@ Batch 3/4 (down to last files):
 - `compat/include/unistd.h`: add POSIX access() mode bits F_OK/R_OK/W_OK/X_OK.
 - `terminal.cpp`: guard `SIGHUP`/`SIGPIPE` signal() calls with `#ifdef` (absent on Windows).
 - `Banners.cpp`: `getlogin()` -> `getenv("USERNAME")` on `_WIN32`.
-- `SatfuncConsistencyChecks.hpp`: `ViolationCollection` std::array -> std::vector
-  (sized to NumLevels); moving the element type out was not enough — MSVC still
-  treated the dependent element of a std::array *member* as incomplete.
+- `SatfuncConsistencyChecks.hpp`: `ViolationCollection` stays a `std::array`
+  (with an explicit `<array>` include); moving the element type out to
+  `Detail::` (previous item) is sufficient for MSVC.
 - `vtkmultiwriter.hh`: `fullPath.filename()` -> `.filename().string()`.
 - `ConvergenceOutputConfiguration.cpp`: pass `options.data()`/`data()+size()`
   (const char*) to cregex_token_iterator — MSVC's string_view::begin() is a
@@ -165,12 +169,14 @@ Patches made so far:
 - dune-common `dune/common/parallel/mpitraits.hh`: guard the
   `MPI_CXX_{DOUBLE,LONG_DOUBLE,FLOAT}_COMPLEX` traits with
   `#ifdef MPI_CXX_DOUBLE_COMPLEX` (these MPI-3 datatypes are absent in MS-MPI).
-- opm-common `CMakeLists.txt` prereqs hook: under `USE_MPI`, explicitly
-  `find_package(MPI COMPONENTS C)` and `target_link_libraries(opmcommon PUBLIC
-  MPI::MPI_C)`. Needed because DUNE does not export MPI on its installed target
-  (MPI lives only in DUNE build-time ALL_PKG_FLAGS) and this build consumes
-  installed modules rather than using dunecontrol. This makes mpi_checks() define
-  HAVE_MPI=1; opm-common then built with HAVE_MPI (parallel EclipseState etc.).
+- opm-common `cmake/Modules/UseMPI.cmake`: new option `OPM_LINK_MPI_DIRECTLY`
+  (default ON on Windows, OFF elsewhere, overridable). When ON and the target
+  does not already get MPI transitively, `mpi_checks()` runs
+  `find_package(MPI COMPONENTS C)` and links `MPI::MPI_C` directly. Needed
+  because DUNE does not export MPI on its installed targets (MPI lives only in
+  DUNE build-time ALL_PKG_FLAGS) and this build consumes installed modules
+  rather than using dunecontrol. This makes mpi_checks() define HAVE_MPI=1 for
+  every OPM module (parallel EclipseState etc.); no per-module CMake hack.
 
 Why Zoltan is required: opm-grid `GraphOfGridWrappers.{hpp,cpp}`,
 `ZoltanGraphFunctions`, etc. reference Zoltan types (ZOLTAN_ID_PTR, ZOLTAN_FATAL)
@@ -257,8 +263,12 @@ examples/ (so this uses BUILD_EXAMPLES=ON). Depends only on opm-common + opm-gri
 + DUNE (not opm-simulators). Fixes:
 - `CMakeLists.txt`: `project(opm-upscaling C CXX Fortran)` made host-conditional
   (`C CXX` on a Windows host) and the FortranCInterface language_hook gated on
-  `CMAKE_Fortran_COMPILER` — same as opm-grid. MSVC has no Fortran compiler; the
-  FC_GLOBAL macros blas_lapack.cpp needs come from the compat `FCMacros.h` shim.
+  `CMAKE_Fortran_COMPILER`. Unlike opm-grid (whose FCMacros.h is never included),
+  opm-upscaling's `blas_lapack.hpp` hard-requires `<FCMacros.h>`, so without a
+  Fortran compiler the hook now writes a fallback FCMacros.h (lowercase +
+  trailing underscore, the gfortran/OpenBLAS ABI) into the build dir — the
+  module builds standalone, without relying on the harness compat shim. (The
+  compat `FCMacros.h` is still needed for opm-common's `blas_lapack.h`.)
 - `opm/porsol/mimetic/IncompFlowSolverHybrid.hpp`: `S_[0][0] *= 2` on a
   `Dune::FieldMatrix<double,1,1>` is an MSVC C2666 overload ambiguity (int vs the
   scalar/matrix operator*=); use a double literal `*= 2.0` (4 solver-variant sites).

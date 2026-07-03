@@ -274,9 +274,12 @@ build is `.\build-all.ps1 -Mpi -OpenMP -SimTarget all -Upscaling`.
   (ships with MSVC under `VC\Redist\...\Microsoft.VC143.OpenMP.LLVM\`) must sit next
   to the `.exe` or be on `PATH`. Set threads with `--threads-per-process=N`.
 - **MPI:** enabled with `build-all.ps1 -Mpi` (install MS-MPI first; see §13).
-- **Optional CLI tools** (`opmpack`, `compareECL`, …): currently off via
-  `BUILD_EXAMPLES=OFF`; they have their own `path`→`string` / `getopt` fixes
-  pending.
+- **Optional CLI tools**: the examples satellite (`opmpack`, `rst_deck`,
+  `opmhash`, `make_ext_smry`, …) builds fine with `-DBUILD_EXAMPLES=ON` (the
+  `path`→`string` / `getopt`-shim fixes are on the windows branch). The
+  `additionals` satellite (`compareECL`, `convertECL`, `summary`, …) is gated
+  off on Windows in `OpmLibMain.cmake` (depends on POSIX `<getopt.h>`, which
+  the repo itself cannot assume).
 
 ---
 
