@@ -14,9 +14,10 @@ param(
     # counters; /openmp:llvm (OpenMP 3.1+) handles them. Needs libomp140.x86_64.dll
     # at runtime (ships with MSVC).
     [switch]$OpenMP,
-    # Parallel compile jobs. Default 4: OPM's heavy template TUs use a lot of RAM,
-    # so more than ~4 concurrent cl.exe can exhaust memory on typical machines.
-    [int]$Jobs = 4,
+    # Parallel compile jobs. OPM's heavy template TUs use a lot of RAM: 8 jobs
+    # suit machines with >= 32 GB; drop to 4 on typical 16 GB machines, where
+    # more concurrent cl.exe processes can exhaust memory.
+    [int]$Jobs = 8,
     [string[]]$Extra = @()
 )
 
@@ -96,6 +97,8 @@ cmake @cmakeArgs
 if ($LASTEXITCODE -ne 0) { throw "$Module configure failed ($LASTEXITCODE)" }
 
 Write-Host "==== build $Module (target=$Target, -j $Jobs) ====" -ForegroundColor Cyan
-cmake --build $Build --target $Target -- -j $Jobs
+# -k 0: keep going after a failing edge so all buildable targets still compile
+# (test/example targets may not all be MSVC-clean; we want a full picture).
+cmake --build $Build --target $Target -- -j $Jobs -k 0
 if ($LASTEXITCODE -ne 0) { throw "$Module build failed ($LASTEXITCODE)" }
 Write-Host "==== $Module OK ====" -ForegroundColor Green
