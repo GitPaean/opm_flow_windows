@@ -400,6 +400,7 @@ DUNE checkout (idempotently).
 | dune-grid | `dune/grid/io/file/gmshreader.hh` | POSIX `ftello`/`fseeko` → `_ftelli64`/`_fseeki64` | **serial + MPI** |
 | dune-common | `cmake/modules/DuneCommonMacros.cmake` | drop `find_package(MPI 3.0)` gate (CMake sees MS-MPI as v2.0) | MPI only |
 | dune-common | `dune/common/parallel/mpitraits.hh` | guard `MPI_CXX_*_COMPLEX` (MPI-3 types absent in MS-MPI) | MPI only |
+| dune-common | `dune/common/poolallocator.hh` | `PoolAllocator::max_size()` returned 1; MSVC's `std::set`/`std::map` throw `length_error("map/set too long")` once `size()` reaches the allocator's `max_size()`, so dune-istl's AMG aggregation (used by the `amg`/`cpr`/`cprw` linear solvers, incl. flow's default) aborted on the first solve | **serial + MPI** |
 
 dune-geometry and dune-istl need **no** patches.
 

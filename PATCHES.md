@@ -267,3 +267,28 @@ examples/ (so this uses BUILD_EXAMPLES=ON). Depends only on opm-common + opm-gri
 Result: opmupscaling.lib + 24 tools build clean (serial / MPI / OpenMP / hybrid).
 Optional deps cJSON / QuadMath / PTScotch / Boost-iostreams are not required — only
 upscale_relperm_benchmark needs boost-iostreams and is skipped without it.
+
+## dune-common PoolAllocator::max_size() — AMG/CPR crash at runtime (MSVC STL)
+Symptom: any AMG-based linear solver (`amg`, `cpr`, `cprw` — flow's default)
+aborts on the very first solve with
+`Error rethrown as CriticalError at [...ISTLSolver.hpp:391]` /
+`Original error: map/set too long`, serial and MPI alike (reproduced on Norne).
+One-level solvers (`ilu0`, `dilu`) are unaffected. The "faulty linear solver
+JSON" hint printed with it is a red herring (generic catch-site text).
+
+Root cause: `dune/common/poolallocator.hh` had a placeholder
+`max_size() const { return 1; }` (comment: "Not correctly implemented, yet!").
+MSVC's `std::_Tree` (std::set/std::map) checks `size() == allocator max_size()`
+on *every* insert and throws `length_error("map/set too long")` when equal —
+so the second insert into any PoolAllocator-backed set throws. libstdc++ never
+performs this per-insert check, which is why Linux builds are unaffected.
+dune-istl's AMG aggregation (`paamg/aggregates.hh`) uses
+`std::set<Vertex,std::less<Vertex>,PoolAllocator<Vertex,100>>`, so every AMG
+hierarchy build died immediately.
+
+Fix (in `patches/dune-common-windows.patch`, applies to serial + MPI):
+`max_size()` now returns `std::numeric_limits<std::size_t>::max() / sizeof(T)`
+— the standard meaning (largest request), matching repeated single-node
+allocations by node-based containers. Upstream-relevant for any MSVC user of
+dune-istl AMG. VERIFIED: Norne (`NORNE_ATW2013.DATA`) runs with the default
+`cprw` solver, serial and `mpiexec -n 4 ... --threads-per-process=2`.

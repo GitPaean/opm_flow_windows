@@ -33,3 +33,34 @@ index 669470d69..f8f6f7826 100644
  
  
  #undef ComposeMPITraits
+diff --git a/dune/common/poolallocator.hh b/dune/common/poolallocator.hh
+index ea0739399..a31e4614c 100644
+--- a/dune/common/poolallocator.hh
++++ b/dune/common/poolallocator.hh
+@@ -9,6 +9,7 @@
+  * \brief An stl-compliant pool allocator
+  */
+ 
++#include <limits>
+ #include <numeric>
+ #include <typeinfo>
+ #include <iostream>
+@@ -332,9 +333,16 @@ namespace Dune
+     inline const_pointer address(const_reference x) const { return &x; }
+ 
+     /**
+-     * @brief Not correctly implemented, yet!
++     * @brief The maximum number of objects that can be requested.
++     *
++     * Even though allocate() serves at most one object per call, standard
++     * containers consult max_size() for the maximum container size (MSVC's
++     * std::set/std::map throw length_error("map/set too long") as soon as
++     * size() reaches allocator max_size()), so it must not understate the
++     * number of objects obtainable through repeated single allocations.
+      */
+-    inline int max_size() const noexcept { return 1; }
++    inline std::size_t max_size() const noexcept
++    { return std::numeric_limits<std::size_t>::max() / sizeof(T); }
+ 
+     /**
+      * @brief Rebind the allocator to another type.
