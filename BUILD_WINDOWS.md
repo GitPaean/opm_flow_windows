@@ -365,6 +365,13 @@ Expect `Using 2 MPI processes`, `ZOLTAN Load balancing method = ... (GRAPH)`, an
 a per-rank owned/overlap cell breakdown. `mpiexec` comes from the MS-MPI runtime
 (`setup-env.ps1` adds it to PATH).
 
+> **Windows Firewall:** each built exe triggers a firewall prompt on its first
+> MPI socket (and a silent Block rule if the prompt is cancelled). Run
+> `allow-firewall.ps1` once from an elevated PowerShell to pre-authorize every
+> exe in the build trees (inbound, LocalSubnet-scoped, rule group
+> "OPM Flow MPI" — removable wholesale with
+> `Get-NetFirewallRule -Group "OPM Flow MPI" | Remove-NetFirewallRule`).
+
 ### Hybrid MPI + OpenMP
 
 MPI and OpenMP are independent and compose. Add `-OpenMP` to the MPI build:
