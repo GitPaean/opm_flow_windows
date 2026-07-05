@@ -231,7 +231,43 @@ pre-authorized by running <span class="mono">allow-firewall.ps1</span> once (ele
 </ol>
 </div>
 
-<h2>5. Reproduce / run</h2>
+<h2>5. GUI front ends: flow-gui and flow-gui-qt</h2>
+<p>
+<span class="mono">flow</span> is a command line program, which is inconvenient as the primary
+interface on Windows. The harness therefore ships two small GUI front ends (modeled on the basic
+functionality of <a>OPMRUN</a> from opm-utilities), letting users queue simulations and watch them
+run without a terminal:
+</p>
+<table class="avoid-break">
+  <tr><th></th><th><span class="mono">flow-gui</span> (FLTK)</th><th><span class="mono">flow-gui-qt</span> (Qt 6)</th></tr>
+  <tr><td>Platforms</td><td>Windows, Linux</td><td>Windows, Linux, macOS</td></tr>
+  <tr><td>Toolkit source</td><td>FLTK 1.4.3 fetched + built statically at configure time (no package needed)</td><td>System Qt on Linux/macOS; official prebuilt Qt (aqtinstall) on Windows</td></tr>
+  <tr><td>Binary</td><td>single static executable</td><td>executable + Qt libraries (<span class="mono">windeployqt</span> on Windows)</td></tr>
+  <tr><td>Extras</td><td>—</td><td>persistent settings; the intended base for extension (Qwt/Qt Charts plots, PRT viewer)</td></tr>
+</table>
+<p><b>Shared functionality:</b> a job queue of <span class="mono">*.DATA</span> decks; simulator
+picker (auto-detects <span class="mono">flow</span> from the harness build tree — any
+<span class="mono">flow_*</span> variant works); MPI rank count and OpenMP
+<span class="mono">--threads-per-process</span>; output directory policy (per-deck
+<span class="mono">&lt;deck&gt;_run</span> or a chosen directory — the chooser can create new
+folders); extra flow options; a live log of the running simulation; and a Stop button that kills
+the <i>entire</i> MPI process tree (Windows Job Object / <span class="mono">taskkill /T</span>;
+POSIX process groups).</p>
+<pre># Windows (from a setup-env.ps1 shell)
+cmake -S flow-gui -B build-gui -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build-gui                       # -> build-gui\flow-gui.exe
+
+# Linux: both are two commands after installing X11 headers (flow-gui) or
+# qt6-base-dev (flow-gui-qt); see each folder's README for the exact lines.</pre>
+<p class="small">Windows note: building Qt <i>from source</i> (e.g. vcpkg's <span class="mono">qtbase</span>)
+executes its own freshly compiled <span class="mono">moc</span>/<span class="mono">rcc</span> tools, which
+Smart App Control blocks where enforced — use the official prebuilt (signed) Qt via
+<span class="mono">aqtinstall</span> instead, as described in <span class="mono">flow-gui-qt/README.md</span>.
+Both GUIs build and launch on Windows, and <span class="mono">flow-gui</span> has driven real
+simulation runs; the Linux/macOS builds use standard mechanisms but were not exercised in this
+session.</p>
+
+<h2>6. Reproduce / run</h2>
 <pre># From C:\opm\opm_flow_windows
 .\build-all.ps1 -Mpi -OpenMP -SimTarget all -Upscaling -OpmOrg GitPaean -OpmBranch windows
 
