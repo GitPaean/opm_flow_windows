@@ -455,9 +455,21 @@ void FlowGui::cb_browse_outdir(Fl_Widget*, void* p)
 {
     auto* self = static_cast<FlowGui*>(p);
     Fl_Native_File_Chooser fc;
-    fc.title("Select output base directory");
-    fc.type(Fl_Native_File_Chooser::BROWSE_DIRECTORY);
+    fc.title("Select or create the output directory");
+    // SAVE_DIRECTORY (as opposed to BROWSE_DIRECTORY) lets the user name a
+    // directory that does not exist yet, and the native dialogs offer a
+    // "New folder" button; we then create the chosen path if needed.
+    fc.type(Fl_Native_File_Chooser::BROWSE_SAVE_DIRECTORY);
+    if (!std::string(self->outdir_in_->value()).empty())
+        fc.preset_file(self->outdir_in_->value());
     if (fc.show() == 0) {
+        std::error_code ec;
+        fs::create_directories(fc.filename(), ec);
+        if (ec) {
+            fl_alert("Could not create directory:\n%s\n%s",
+                     fc.filename(), ec.message().c_str());
+            return;
+        }
         self->outdir_in_->value(fc.filename());
         self->outdir_mode_->value(1);
         self->outdir_in_->activate();
@@ -547,6 +559,18 @@ void FlowGui::run_queue()
                 else cur.push_back(c);
             }
             if (!cur.empty()) argv.push_back(cur);
+        }
+
+        // Make sure the output directory exists (also covers a hand-typed
+        // custom path that was never run through the browse dialog).
+        {
+            std::error_code ec;
+            fs::create_directories(outdir, ec);
+            if (ec) {
+                append_log("FAILED to create output directory " + outdir +
+                           ": " + ec.message() + "\n");
+                continue;
+            }
         }
 
         std::string cmd_show;
