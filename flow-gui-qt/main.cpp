@@ -33,10 +33,12 @@
 #include <QMessageBox>
 #include <QPlainTextEdit>
 #include <QProcess>
+#include <QPalette>
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QSettings>
 #include <QSpinBox>
+#include <QStyleHints>
 #include <QTextCursor>
 #include <QVBoxLayout>
 
@@ -317,12 +319,21 @@ void FlowGuiWindow::onAddDecks()
 
 void FlowGuiWindow::onBrowseOutdir()
 {
-    // getExistingDirectory shows the platform dialog, which offers a
-    // "New Folder" button on Windows, Linux (Qt dialog) and macOS.
-    const QString d = QFileDialog::getExistingDirectory(
-        this, QStringLiteral("Select or create the output directory"),
-        outdirEdit_->text());
-    if (!d.isEmpty()) {
+    // Use Qt's own directory dialog rather than the native one: it has a
+    // guaranteed, always-visible "New Folder" button (top-right toolbar) on
+    // every platform, and new folders can also be created by typing a name.
+    QFileDialog dlg(this, QStringLiteral("Select or create the output directory"),
+                    outdirEdit_->text());
+    dlg.setFileMode(QFileDialog::Directory);
+    dlg.setOption(QFileDialog::ShowDirsOnly);
+    dlg.setOption(QFileDialog::DontUseNativeDialog);
+    if (dlg.exec() == QDialog::Accepted && !dlg.selectedFiles().isEmpty()) {
+        const QString d = dlg.selectedFiles().first();
+        if (!QDir().mkpath(d)) {
+            QMessageBox::warning(this, QLatin1String(kAppName),
+                QStringLiteral("Could not create directory:\n%1").arg(d));
+            return;
+        }
         outdirEdit_->setText(QDir::toNativeSeparators(d));
         outdirMode_->setCurrentIndex(1);
     }
@@ -457,6 +468,30 @@ int main(int argc, char** argv)
     QApplication app(argc, argv);
     QApplication::setOrganizationName(QStringLiteral("OPM"));
     QApplication::setApplicationName(QLatin1String(kAppName));
+
+    // Bright, platform-independent appearance: do not follow a dark system
+    // color scheme; use the Fusion style with an explicit light palette.
+    app.setStyle(QStringLiteral("Fusion"));
+#if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
+    app.styleHints()->setColorScheme(Qt::ColorScheme::Light);
+#endif
+    QPalette pal;
+    pal.setColor(QPalette::Window,          QColor(0xf4, 0xf6, 0xf8));
+    pal.setColor(QPalette::WindowText,      Qt::black);
+    pal.setColor(QPalette::Base,            Qt::white);
+    pal.setColor(QPalette::AlternateBase,   QColor(0xec, 0xf0, 0xf4));
+    pal.setColor(QPalette::Text,            Qt::black);
+    pal.setColor(QPalette::Button,          QColor(0xe8, 0xec, 0xf0));
+    pal.setColor(QPalette::ButtonText,      Qt::black);
+    pal.setColor(QPalette::ToolTipBase,     QColor(0xff, 0xff, 0xe1));
+    pal.setColor(QPalette::ToolTipText,     Qt::black);
+    pal.setColor(QPalette::Highlight,       QColor(0x2f, 0x6f, 0xd0));
+    pal.setColor(QPalette::HighlightedText, Qt::white);
+    pal.setColor(QPalette::PlaceholderText, QColor(0x80, 0x88, 0x90));
+    pal.setColor(QPalette::Disabled, QPalette::Text,       QColor(0x9a, 0xa0, 0xa6));
+    pal.setColor(QPalette::Disabled, QPalette::ButtonText, QColor(0x9a, 0xa0, 0xa6));
+    pal.setColor(QPalette::Disabled, QPalette::WindowText, QColor(0x9a, 0xa0, 0xa6));
+    app.setPalette(pal);
 
     FlowGuiWindow win;
     win.show();
