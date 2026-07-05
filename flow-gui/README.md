@@ -17,7 +17,8 @@ run the queue sequentially, and watch the live simulator log. A running job
 - **Parallel runs** — MPI rank count (spawns `mpiexec -n N ...`) and
   `--threads-per-process` OpenMP threads; both default to 1 (serial).
 - **Output directory policy** — per-deck `<deck>_run` next to the deck
-  (default), or a custom base directory (one subdirectory per deck).
+  (default), or a custom directory used exactly as given (safe to share
+  between decks: output files are named after each deck's stem).
 - **Extra options** passed through to flow verbatim
   (e.g. `--linear-solver=ilu0`).
 - **Live log** — merged stdout/stderr of the simulator streams into the

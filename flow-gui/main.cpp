@@ -518,9 +518,12 @@ void FlowGui::run_queue()
         ++jobno;
 
         const fs::path deckp(deck);
+        // Custom mode writes into exactly the directory the user chose --
+        // Eclipse-style outputs are named after the deck stem, so several
+        // (differently named) decks can share it without collisions.
         std::string outdir;
         if (custom && !outbase.empty()) {
-            outdir = (fs::path(outbase) / deckp.stem()).string();
+            outdir = outbase;
         } else {
             outdir = (deckp.parent_path() / (deckp.stem().string() + "_run")).string();
         }
@@ -550,7 +553,7 @@ void FlowGui::run_queue()
         for (const auto& a : argv) { cmd_show += a; cmd_show += ' '; }
         append_log("\n==================== job " + std::to_string(jobno) + "/" +
                    std::to_string(decks.size()) + " ====================\n" +
-                   cmd_show + "\n\n");
+                   cmd_show + "\noutput directory: " + outdir + "\n\n");
 
         auto child = std::make_unique<ChildProcess>();
         std::string err;
