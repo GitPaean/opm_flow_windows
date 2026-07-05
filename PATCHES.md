@@ -292,3 +292,30 @@ Fix (in `patches/dune-common-windows.patch`, applies to serial + MPI):
 allocations by node-based containers. Upstream-relevant for any MSVC user of
 dune-istl AMG. VERIFIED: Norne (`NORNE_ATW2013.DATA`) runs with the default
 `cprw` solver, serial and `mpiexec -n 4 ... --threads-per-process=2`.
+
+## Unit-test suite on Windows — findings from running full ctest (all 4 modules)
+Prereq: sources must be checked out **byte-exact** — git-for-Windows' default
+`core.autocrlf=true` injects `\r` into the formatted Eclipse test data
+(e.g. `tests/ECLFILE.FINIT`), whose fixed-format readers then reject it
+(EclIO / EclipseGridTests failures). `build-all.ps1` now clones everything
+with `-c core.autocrlf=false`; existing clones can be repaired with
+`git -C src\<mod> config core.autocrlf false` + re-checkout of `tests/`.
+
+Source fixes committed on the `windows` branches:
+- opm-common `Parser.cpp`: absolute-path test was `dataFileName[0] == '/'`
+  (never true for `C:/...`), so absolute deck paths were relativized by the
+  `proximate()` branch → cwd-relative IOConfig output dirs (EclipseStateTests).
+  Now `std::filesystem::path::is_absolute()`.
+- opm-common `TimeService.cpp`: `*std::gmtime(&t)` without a null check; the
+  Windows CRT returns nullptr past year ~3000 (test_timer's deck reaches ~7014)
+  → access violation. Falls back to an explicit civil-from-days conversion.
+- opm-simulators `test_outputdir.cpp`: fixture removed its own cwd while
+  OpmLog held files in it open → throw in noexcept dtor → 0xC0000409.
+  chdir out + drop log backends + non-throwing remove_all.
+
+Remaining, not code bugs:
+- ~85 tests are shell-script driven (`run-vtu-test.sh`, `run-compareUpscaling.sh`)
+  and cannot run under Windows ctest (needs a bash launcher upstream).
+- Windows "Smart App Control" (if enforced) blocks freshly built unsigned test
+  exes with BAD_COMMAND; it has no exclusion mechanism — disable it on build
+  machines (Windows Security > App & browser control), or accept blocked tests.

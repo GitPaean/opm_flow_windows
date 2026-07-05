@@ -288,10 +288,15 @@ if (-not $SkipClone) {
     if (-not (Test-Path (Join-Path $Root 'vcpkg\.git'))) {
         Invoke-Native { git clone https://github.com/microsoft/vcpkg.git (Join-Path $Root 'vcpkg') }
     }
+    # Clone with core.autocrlf=false: git-for-Windows defaults to autocrlf=true,
+    # which rewrites checked-out text files to CRLF. The OPM test data contains
+    # byte-position-sensitive formatted Eclipse files (e.g. tests/ECLFILE.FINIT)
+    # whose readers reject the injected \r, so sources must be checked out
+    # byte-exact.
     foreach ($m in 'dune-common','dune-geometry','dune-grid','dune-istl') {
         $dst = Join-Path $Root "src\$m"
         if (-not (Test-Path (Join-Path $dst '.git'))) {
-            Invoke-Native { git clone "https://gitlab.dune-project.org/core/$m.git" $dst }
+            Invoke-Native { git clone -c core.autocrlf=false "https://gitlab.dune-project.org/core/$m.git" $dst }
         }
         Invoke-Native { git -C $dst fetch --tags --quiet }
         Invoke-Native { git -C $dst checkout --quiet $DuneVersion }
@@ -306,9 +311,9 @@ if (-not $SkipClone) {
         if (-not (Test-Path (Join-Path $dst '.git'))) {
             $url = "https://github.com/$OpmOrg/$m.git"
             if ($OpmBranch) {
-                Invoke-Native { git clone --branch $OpmBranch $url $dst }
+                Invoke-Native { git clone -c core.autocrlf=false --branch $OpmBranch $url $dst }
             } else {
-                Invoke-Native { git clone $url $dst }
+                Invoke-Native { git clone -c core.autocrlf=false $url $dst }
             }
         }
     }
