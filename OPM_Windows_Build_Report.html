@@ -119,8 +119,10 @@ Config: -DCMAKE_BUILD_TYPE=Release  -G Ninja  (static OPM libs, C++20)
   <span class="mono">SLAVES</span> keyword) cannot run — spawning slaves fails at runtime with a clean
   error ("Failed to spawn slave process"). Ordinary domain-decomposed
   <span class="mono">mpiexec</span> runs are unaffected: point-to-point, collectives and communicators
-  are fully supported. Coupled runs would need Intel&nbsp;MPI (implements spawn; unverified with OPM)
-  or an upstream MPMD redesign of the coupling.</li>
+  are fully supported. <b>Intel&nbsp;MPI may bridge this under Windows</b> — it ships natively for
+  Windows, implements dynamic process management, and should slot in via
+  <span class="mono">find_package(MPI)</span> by rebuilding against it (promising but unverified with
+  OPM); the portable alternative is an upstream MPMD redesign of the coupling.</li>
   <li><b>OpenMP</b> (<span class="mono">-OpenMP</span>): uses MSVC's <span class="mono">/openmp:llvm</span> (OpenMP 3.1+); the default <span class="mono">/openmp</span> (2.0) rejects OPM's <span class="mono">size_t</span> parallel-for counters. Needs <span class="mono">libomp140.x86_64.dll</span> at runtime.</li>
   <li>The two switches are independent and compose into a <b>hybrid</b> binary.</li>
 </ul>

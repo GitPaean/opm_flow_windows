@@ -329,7 +329,11 @@ but spawning slaves fails at runtime with a clean error
 (`ReservoirCouplingSpawnSlaves.cpp` logs the MPI error strings and throws
 "Failed to spawn slave process"). Ordinary domain-decomposed `mpiexec` runs
 are unaffected — MS-MPI fully covers point-to-point, collectives and
-communicators. Possible future routes: Intel MPI on Windows (implements
-dynamic process management; unverified with OPM) or an upstream MPMD redesign
-of the coupling that avoids spawn. Worth stating in any upstream PR text and,
-ideally, as a hint appended to that runtime error message.
+communicators. Possible future routes: **Intel MPI may bridge this under
+Windows** — it ships natively for Windows (free, oneAPI HPC toolkit),
+implements dynamic process management incl. `MPI_Comm_spawn` (needs its Hydra
+service), and should slot in via the plain `find_package(MPI)` path by
+rebuilding the MPI tree against it instead of MS-MPI; promising but unverified
+with OPM, so test spawn before relying on it. Otherwise an upstream MPMD
+redesign of the coupling that avoids spawn. Worth stating in any upstream PR
+text and, ideally, as a hint appended to that runtime error message.

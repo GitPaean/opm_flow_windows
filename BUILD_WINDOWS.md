@@ -399,11 +399,16 @@ Pick `ranks x threads` ~ physical cores.
   `"Failed to spawn slave process"`). Everything a normal domain-decomposed
   `mpiexec -n N flow <deck>` run needs — point-to-point, collectives,
   communicators — is fully supported; users who never touch reservoir
-  coupling are unaffected. If coupled runs on Windows are ever required:
-  Intel MPI implements dynamic process management (it should slot in via
-  `find_package(MPI)` — unverified), or the coupling would need an upstream
-  MPMD-style redesign (`mpiexec -n X flow MASTER : -n Y flow SLAVE` +
-  communicator splitting) that avoids `MPI_Comm_spawn` entirely.
+  coupling are unaffected. If coupled runs on Windows are ever required,
+  **Intel MPI may bridge the gap**: it ships natively for Windows (free, part
+  of the oneAPI HPC toolkit), implements dynamic process management including
+  `MPI_Comm_spawn` (its Hydra service must be running), and should slot into
+  this harness via the plain `find_package(MPI)` path by rebuilding the MPI
+  tree against it instead of MS-MPI — promising but **unverified with OPM**;
+  spawn is a lightly-exercised corner of every MPI implementation, so test
+  before relying on it. The fully portable alternative is an upstream
+  MPMD-style redesign of the coupling (`mpiexec -n X flow MASTER : -n Y flow
+  SLAVE` + communicator splitting) that avoids `MPI_Comm_spawn` entirely.
 - Distribution of an MPI binary also needs the MS-MPI **runtime** (`msmpi.dll`,
   in `System32`) on the target machine.
 
