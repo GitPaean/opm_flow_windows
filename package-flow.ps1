@@ -11,7 +11,9 @@
 
   Options:
     -Version    package version string          (default 2026.10-pre)
-    -Simulators simulator exes to include       (default flow, flow_blackoil)
+    -Simulators simulator exes to include       (default: flow — it contains
+                all model variants incl. black-oil; add e.g. flow_blackoil
+                only if a smaller single-model binary is wanted)
     -Zip        also produce dist\opm-flow-<Version>-win64.zip
 
   The staged tree is what installer\opm-flow.iss (Inno Setup) and
@@ -20,7 +22,7 @@
 [CmdletBinding()]
 param(
     [string]  $Version    = '2026.10-pre',
-    [string[]]$Simulators = @('flow', 'flow_blackoil'),
+    [string[]]$Simulators = @('flow'),
     [switch]  $Zip
 )
 
@@ -102,8 +104,8 @@ OPM Flow for Windows - $Version
 ================================
 
 Contents
-  bin\flow.exe            reservoir simulator (all model variants)
-  bin\flow_blackoil.exe   black-oil-only simulator (smaller/faster to load)
+  bin\flow.exe            reservoir simulator (all model variants,
+                          including black-oil)
   bin\flow-gui-qt.exe     graphical front end (job queue, live log)
   redist\                 prerequisite runtime installers
 

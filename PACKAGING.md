@@ -11,7 +11,8 @@ tiers, from simplest to Store-ready — all start from the same staging step.
 ## 0. Stage: `package-flow.ps1`
 
 ```powershell
-.\package-flow.ps1 -Zip          # -Version <v>  -Simulators flow,flow_blackoil
+.\package-flow.ps1 -Zip          # -Version <v>; default simulator: flow
+                                 # (contains every model variant incl. black-oil)
 ```
 
 Stages `dist\opm-flow-<version>\`:
