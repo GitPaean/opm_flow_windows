@@ -64,7 +64,6 @@ protected:
 
 private:
     // widgets
-    QLineEdit*      exeEdit_      = nullptr;
     QListWidget*    queueList_    = nullptr;
     QSpinBox*       ranksSpin_    = nullptr;
     QSpinBox*       threadsSpin_  = nullptr;
@@ -77,6 +76,7 @@ private:
     QPlainTextEdit* logView_      = nullptr;
 
     // run state
+    QString     exePath_;         // the flow executable shipped with this GUI
     QProcess*   proc_    = nullptr;
     QStringList pending_;         // decks still to run
     int         jobNo_   = 0;
@@ -84,7 +84,7 @@ private:
     bool        aborted_ = false;
 
     // helpers
-    static QString defaultFlowExe();
+    static QString findFlowExe();
     void loadSettings();
     void saveSettings();
     void appendLog(const QString& text);
@@ -94,13 +94,14 @@ private:
 
     // slots (connected via lambdas; no moc needed for a Q_OBJECT-free class)
     void onAddDecks();
-    void onBrowseExe();
     void onBrowseOutdir();
     void onRun();
 };
 
-// Find a plausible default flow executable next to / above this program.
-QString FlowGuiWindow::defaultFlowExe()
+// The GUI always drives the flow executable it ships with: next to this
+// program in a distribution, or in the harness build tree when run from a
+// development checkout.
+QString FlowGuiWindow::findFlowExe()
 {
 #ifdef Q_OS_WIN
     const QString exeName = QStringLiteral("flow.exe");
@@ -120,7 +121,7 @@ QString FlowGuiWindow::defaultFlowExe()
         }
         if (!base.cdUp()) break;
     }
-    return exeName;   // hope for PATH
+    return QString();   // not found -- reported at startup and on Run
 }
 
 FlowGuiWindow::FlowGuiWindow()
@@ -130,18 +131,6 @@ FlowGuiWindow::FlowGuiWindow()
 
     auto* central = new QWidget(this);
     auto* top = new QVBoxLayout(central);
-
-    // --- simulator row ---------------------------------------------------
-    {
-        auto* row = new QHBoxLayout;
-        row->addWidget(new QLabel(QStringLiteral("Simulator:")));
-        exeEdit_ = new QLineEdit;
-        row->addWidget(exeEdit_, 1);
-        auto* b = new QPushButton(QStringLiteral("Browse..."));
-        connect(b, &QPushButton::clicked, this, [this] { onBrowseExe(); });
-        row->addWidget(b);
-        top->addLayout(row);
-    }
 
     // --- job queue ---------------------------------------------------------
     {
@@ -235,21 +224,23 @@ FlowGuiWindow::FlowGuiWindow()
     setCentralWidget(central);
 
     loadSettings();
-    if (exeEdit_->text().isEmpty()) exeEdit_->setText(defaultFlowExe());
+    exePath_ = findFlowExe();
 
     appendLog(QString::fromLatin1("%1 %2 - queue OPM Flow simulations and watch them run.\n")
                   .arg(QLatin1String(kAppName), QLatin1String(kVersion)));
+    if (exePath_.isEmpty()) {
+        appendLog(QStringLiteral("WARNING: no flow executable found next to this "
+                                 "program - simulations cannot be started.\n"));
+    } else {
+        appendLog(QStringLiteral("simulator: %1\n")
+                      .arg(QDir::toNativeSeparators(exePath_)));
+    }
 }
 
 // -- settings persistence ------------------------------------------------------
 void FlowGuiWindow::loadSettings()
 {
     QSettings s(QStringLiteral("OPM"), QLatin1String(kAppName));
-    // Respect a remembered simulator only while it still exists; otherwise
-    // (first run, moved installation, copied settings) auto-detect -- which
-    // prefers the flow executable shipped next to this GUI.
-    const QString savedExe = s.value(QStringLiteral("exe")).toString();
-    exeEdit_->setText(QFileInfo::exists(savedExe) ? savedExe : QString());
     ranksSpin_->setValue(s.value(QStringLiteral("ranks"), 1).toInt());
     threadsSpin_->setValue(s.value(QStringLiteral("threads"), 1).toInt());
     outdirMode_->setCurrentIndex(s.value(QStringLiteral("outmode"), 0).toInt());
@@ -261,7 +252,6 @@ void FlowGuiWindow::loadSettings()
 void FlowGuiWindow::saveSettings()
 {
     QSettings s(QStringLiteral("OPM"), QLatin1String(kAppName));
-    s.setValue(QStringLiteral("exe"),     exeEdit_->text());
     s.setValue(QStringLiteral("ranks"),   ranksSpin_->value());
     s.setValue(QStringLiteral("threads"), threadsSpin_->value());
     s.setValue(QStringLiteral("outmode"), outdirMode_->currentIndex());
@@ -301,19 +291,6 @@ void FlowGuiWindow::setRunning(bool on)
 }
 
 // -- callbacks -----------------------------------------------------------------
-void FlowGuiWindow::onBrowseExe()
-{
-#ifdef Q_OS_WIN
-    const QString filter = QStringLiteral("Programs (*.exe);;All files (*)");
-#else
-    const QString filter = QStringLiteral("All files (*)");
-#endif
-    const QString f = QFileDialog::getOpenFileName(
-        this, QStringLiteral("Select the flow executable"),
-        QFileInfo(exeEdit_->text()).absolutePath(), filter);
-    if (!f.isEmpty()) exeEdit_->setText(QDir::toNativeSeparators(f));
-}
-
 void FlowGuiWindow::onAddDecks()
 {
     const QStringList files = QFileDialog::getOpenFileNames(
@@ -353,6 +330,15 @@ void FlowGuiWindow::onRun()
         QMessageBox::information(this, QLatin1String(kAppName),
             QStringLiteral("Add at least one input deck (*.DATA) to the queue first."));
         return;
+    }
+    if (exePath_.isEmpty() || !QFileInfo::exists(exePath_)) {
+        exePath_ = findFlowExe();   // re-probe (e.g. files restored meanwhile)
+        if (exePath_.isEmpty()) {
+            QMessageBox::critical(this, QLatin1String(kAppName),
+                QStringLiteral("No flow executable was found next to this program.\n"
+                               "Reinstall the package or place flow(.exe) beside the GUI."));
+            return;
+        }
     }
     pending_.clear();
     for (int i = 0; i < queueList_->count(); ++i)
@@ -397,9 +383,9 @@ void FlowGuiWindow::startNextJob()
     QStringList args;
     if (ranks > 1) {
         program = QStringLiteral("mpiexec");
-        args << QStringLiteral("-n") << QString::number(ranks) << exeEdit_->text();
+        args << QStringLiteral("-n") << QString::number(ranks) << exePath_;
     } else {
-        program = exeEdit_->text();
+        program = exePath_;
     }
     args << deck << (QStringLiteral("--output-dir=") + outdir);
     if (threads > 1)

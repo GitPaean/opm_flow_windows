@@ -127,17 +127,27 @@ License and source code
 "@ | Set-Content -Encoding utf8 (Join-Path $Stage 'README.txt')
 
 @"
-OPM Flow is Copyright (C) the Open Porous Media project contributors,
-licensed under the GNU General Public License, version 3 or later
+OPM Flow is developed by the Open Porous Media (OPM) initiative
+  https://opm-project.org        https://github.com/OPM
+and is Copyright (C) the OPM project contributors, licensed under the
+GNU General Public License, version 3 or later
 (https://www.gnu.org/licenses/gpl-3.0.html).
 
-This binary distribution was produced with the opm_flow_windows build
-harness. Complete corresponding source code is available at:
-  https://github.com/GitPaean/opm_flow_windows        (build harness + GUI)
-  https://github.com/GitPaean/opm-common               (branch: windows)
-  https://github.com/GitPaean/opm-grid                 (branch: windows)
-  https://github.com/GitPaean/opm-simulators           (branch: windows)
-  https://github.com/OPM                               (upstream project)
+Source code
+  The project's home is the upstream OPM repositories:
+    https://github.com/OPM/opm-common
+    https://github.com/OPM/opm-grid
+    https://github.com/OPM/opm-simulators
+  These Windows binaries additionally contain a small set of
+  Windows/MSVC-specific patches that are pending upstream merge. The
+  complete corresponding source for exactly these binaries (upstream
+  code + those patches + the build harness and GUI) is available at:
+    https://github.com/GitPaean/opm_flow_windows
+    https://github.com/GitPaean/opm-common      (branch: windows)
+    https://github.com/GitPaean/opm-grid        (branch: windows)
+    https://github.com/GitPaean/opm-simulators  (branch: windows)
+  Once the patches are merged upstream, the OPM repositories alone are
+  the source.
 
 Third-party redistributables in this package: Microsoft Visual C++
 runtime and Microsoft MPI (their own licenses apply); Qt 6 (LGPLv3,

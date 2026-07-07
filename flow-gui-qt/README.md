@@ -11,8 +11,10 @@ the queue sequentially, and watch the live simulator log. A running job
 
 ## Features
 - **Job queue** of `*.DATA` input decks (add / remove / clear, multi-select).
-- **Simulator picker** — defaults to `flow`(`.exe`) found near the program
-  (this harness' `build-mpi\opm-simulators\bin` layout); any flow variant works.
+- **Simulator** — always the `flow`(`.exe`) shipped next to the GUI (in a
+  development checkout it falls back to the harness build tree); the resolved
+  path is shown in the log at startup. `flow` contains every model variant,
+  so no picker is needed.
 - **Parallel runs** — MPI rank count (spawns `mpiexec -n N ...`) and
   `--threads-per-process` OpenMP threads; both default to 1 (serial).
 - **Output directory policy** — per-deck `<deck>_run` next to the deck
@@ -67,13 +69,12 @@ open build-gui-qt/flow-gui-qt.app
 ```
 
 ## Usage
-1. Check the **Simulator** path (auto-detected from the harness build tree,
-   remembered afterwards).
-2. **Add deck...** one or more `*.DATA` files to the queue.
-3. Choose **MPI ranks** / **OMP threads** (1/1 = serial), output policy and
+1. **Add deck...** one or more `*.DATA` files to the queue (the simulator is
+   the `flow` executable shipped with the GUI — see the log's first lines).
+2. Choose **MPI ranks** / **OMP threads** (1/1 = serial), output policy and
    any extra flow options.
-4. **Run queue** — jobs run one after another; the log streams live.
-5. **Stop job** kills the currently running job and aborts the remainder of
+3. **Run queue** — jobs run one after another; the log streams live.
+4. **Stop job** kills the currently running job and aborts the remainder of
    the queue.
 
 `flow-gui-qt --version` prints the version and exits (headless smoke test).
