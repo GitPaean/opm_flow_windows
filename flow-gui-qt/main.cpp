@@ -107,8 +107,10 @@ QString FlowGuiWindow::defaultFlowExe()
 #else
     const QString exeName = QStringLiteral("flow");
 #endif
+    // "." first: in an installed/portable distribution flow.exe sits right
+    // next to this GUI; the build-tree locations are development fallbacks.
     const char* candidates[] = {
-        "build-mpi/opm-simulators/bin", "build/opm-simulators/bin", "."
+        ".", "build-mpi/opm-simulators/bin", "build/opm-simulators/bin"
     };
     QDir base(QCoreApplication::applicationDirPath());
     for (int up = 0; up < 4; ++up) {
@@ -243,7 +245,11 @@ FlowGuiWindow::FlowGuiWindow()
 void FlowGuiWindow::loadSettings()
 {
     QSettings s(QStringLiteral("OPM"), QLatin1String(kAppName));
-    exeEdit_->setText(s.value(QStringLiteral("exe")).toString());
+    // Respect a remembered simulator only while it still exists; otherwise
+    // (first run, moved installation, copied settings) auto-detect -- which
+    // prefers the flow executable shipped next to this GUI.
+    const QString savedExe = s.value(QStringLiteral("exe")).toString();
+    exeEdit_->setText(QFileInfo::exists(savedExe) ? savedExe : QString());
     ranksSpin_->setValue(s.value(QStringLiteral("ranks"), 1).toInt());
     threadsSpin_->setValue(s.value(QStringLiteral("threads"), 1).toInt());
     outdirMode_->setCurrentIndex(s.value(QStringLiteral("outmode"), 0).toInt());
