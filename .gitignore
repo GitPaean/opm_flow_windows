@@ -14,7 +14,8 @@
 
 # Out-of-source build trees and install prefixes (serial, MPI, OpenMP, ...)
 /build*/
-/install*/
+/install/
+/install-*/
 
 # Build/configure logs and scratch output
 *.log
@@ -23,3 +24,4 @@
 Thumbs.db
 .DS_Store
 *.swp
+dist/

@@ -86,6 +86,10 @@ Once merged, drop `-OpmOrg/-OpmBranch`.
 | `patches/` | DUNE Windows patches, auto-applied after the DUNE checkout |
 | `flow-gui/` | Cross-platform (Windows/Linux) GUI front end for running flow — deck queue, MPI/OpenMP options, live log (see its README) |
 | `flow-gui-qt/` | Qt 6 version of the GUI (Windows/Linux/macOS) — same features plus persistent settings; the base for further extension (see its README) |
+| `package-flow.ps1` | Stage a redistributable package (bin + runtimes + prerequisites) and zip it |
+| `installer/` | Inno Setup script producing `OPM-Flow-<ver>-Setup.exe` (see [PACKAGING.md](PACKAGING.md)) |
+| `packaging/` | MSIX build script for sideloading / Microsoft Store (see [PACKAGING.md](PACKAGING.md)) |
+| `PACKAGING.md` | Distribution guide: portable zip, installer, MSIX/Store, licensing notes |
 | `ci/windows.yml` | GitHub Actions workflow |
 | `BUILD_WINDOWS.md` | Full step-by-step guide (§1–14): toolchain, deps, flags, MPI, patches, CI |
 | `PATCHES.md` | Record of every source-level Windows/MSVC fix |

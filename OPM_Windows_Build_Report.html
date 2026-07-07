@@ -267,7 +267,34 @@ Both GUIs build and launch on Windows, and <span class="mono">flow-gui</span> ha
 simulation runs; the Linux/macOS builds use standard mechanisms but were not exercised in this
 session.</p>
 
-<h2>6. Reproduce / run</h2>
+<h2>6. Packaging &amp; distribution</h2>
+<p>The harness can package the simulators and the Qt GUI for end users who have no build
+environment — three tiers, all driven from <span class="mono">package-flow.ps1</span> and documented
+in detail in <span class="mono">PACKAGING.md</span>:</p>
+<table class="avoid-break">
+  <tr><th>Tier</th><th>Artifact</th><th>How</th><th>Best for</th></tr>
+  <tr><td>Portable ZIP</td><td><span class="mono">opm-flow-&lt;ver&gt;-win64.zip</span> (~78 MB)</td>
+      <td><span class="mono">.\package-flow.ps1 -Zip</span></td><td>colleagues, quick sharing</td></tr>
+  <tr><td>Installer</td><td><span class="mono">OPM-Flow-&lt;ver&gt;-Setup.exe</span> (~58 MB)</td>
+      <td>Inno Setup (<span class="mono">installer\opm-flow.iss</span>)</td><td>general distribution</td></tr>
+  <tr><td>MSIX</td><td><span class="mono">OPM-Flow-&lt;x.x.x.x&gt;.msix</span> (~50 MB)</td>
+      <td><span class="mono">packaging\build-msix.ps1</span></td><td>sideloading, Microsoft Store</td></tr>
+</table>
+<p>The staged package bundles the simulators with their runtime DLLs (OpenBLAS/SuiteSparse/fmt,
+MSVC CRT, OpenMP), the GUI with its Qt runtime, and the two prerequisite installers
+(<span class="mono">vc_redist.x64.exe</span>, <span class="mono">msmpisetup.exe</span> — MS-MPI is
+required even for serial runs since the simulators link <span class="mono">msmpi.dll</span>). The
+installer runs both silently when missing; the packaged binaries were verified to run from the
+staged tree.</p>
+<p class="small"><b>Store notes:</b> submission needs a Partner Center account (the Store assigns the
+package identity and signs uploads); an MSIX cannot install MS-MPI, so the listing must direct users
+to install it (or ship a serial-only build); OPM Flow is GPLv3 — the package's
+<span class="mono">LICENSE.txt</span> states where the complete corresponding source lives, and the
+published branches must stay in sync with shipped binaries. For non-Store distribution, code-sign
+the installer to avoid SmartScreen warnings. See <span class="mono">PACKAGING.md</span> §Licensing
+for the redistribution terms of each bundled runtime.</p>
+
+<h2>7. Reproduce / run</h2>
 <pre># From C:\opm\opm_flow_windows
 .\build-all.ps1 -Mpi -OpenMP -SimTarget all -Upscaling -OpmOrg GitPaean -OpmBranch windows
 
