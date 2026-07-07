@@ -389,6 +389,21 @@ Pick `ranks x threads` ~ physical cores.
 
 - MS-MPI is MPI-2-level (CMake reports v2.0). DUNE's `MPI 3.0` requirement and its
   `MPI_CXX_*_COMPLEX` traits were patched out; black-oil doesn't need them.
+- **Reservoir coupling does not work under MS-MPI.** MS-MPI never implemented
+  MPI's *dynamic process management* (`MPI_Comm_spawn`,
+  `MPI_Comm_connect`/`accept`, `MPI_Open_port`) and, being in maintenance mode,
+  never will. The symbols exist in `msmpi.dll`, so coupled-run code compiles
+  and links — but a master deck using the `SLAVES` keyword fails at runtime
+  when spawning slaves, with a clean, attributable error (the MPI error
+  strings are logged, then `ReservoirCouplingSpawnSlaves.cpp` throws
+  `"Failed to spawn slave process"`). Everything a normal domain-decomposed
+  `mpiexec -n N flow <deck>` run needs — point-to-point, collectives,
+  communicators — is fully supported; users who never touch reservoir
+  coupling are unaffected. If coupled runs on Windows are ever required:
+  Intel MPI implements dynamic process management (it should slot in via
+  `find_package(MPI)` — unverified), or the coupling would need an upstream
+  MPMD-style redesign (`mpiexec -n X flow MASTER : -n Y flow SLAVE` +
+  communicator splitting) that avoids `MPI_Comm_spawn` entirely.
 - Distribution of an MPI binary also needs the MS-MPI **runtime** (`msmpi.dll`,
   in `System32`) on the target machine.
 

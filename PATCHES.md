@@ -319,3 +319,17 @@ Remaining, not code bugs:
 - Windows "Smart App Control" (if enforced) blocks freshly built unsigned test
   exes with BAD_COMMAND; it has no exclusion mechanism — disable it on build
   machines (Windows Security > App & browser control), or accept blocked tests.
+
+## Known MS-MPI limitation: reservoir coupling (MPI_Comm_spawn)
+MS-MPI does not implement MPI dynamic process management (`MPI_Comm_spawn`,
+`MPI_Comm_connect`/`accept`, `MPI_Open_port`) and will not gain it. Coupled
+reservoir runs (master decks with the `SLAVES` keyword) therefore cannot work
+under MS-MPI: the code compiles and links (the symbols exist in msmpi.dll)
+but spawning slaves fails at runtime with a clean error
+(`ReservoirCouplingSpawnSlaves.cpp` logs the MPI error strings and throws
+"Failed to spawn slave process"). Ordinary domain-decomposed `mpiexec` runs
+are unaffected — MS-MPI fully covers point-to-point, collectives and
+communicators. Possible future routes: Intel MPI on Windows (implements
+dynamic process management; unverified with OPM) or an upstream MPMD redesign
+of the coupling that avoids spawn. Worth stating in any upstream PR text and,
+ideally, as a hint appended to that runtime error message.
