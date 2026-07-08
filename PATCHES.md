@@ -231,7 +231,9 @@ Building the default `all` target produced **all 39 production flow_* variants**
   autodiff type (its arithmetic isn't constexpr, and `pi_v<Scalar>` instantiates
   the ill-formed primary template). Compute both in `double` and cast to Scalar.
 
-(Build with `-j 4` max — heavy template TUs are RAM-hungry; see build-module.ps1 -Jobs.)
+(Parallel jobs default to 4 — OPM's template-heavy TUs are RAM-hungry — but both
+`build-all.ps1` and `build-module.ps1` take `-Jobs N`; a ≥ 32 GB machine handles
+`-Jobs 6`–`8` comfortably.)
 
 ## Configure options used for opm-common (MSVC)
 `-DWITH_NATIVE=OFF` (drop `-mtune=native`). OpenMP is off by default

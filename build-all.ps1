@@ -36,6 +36,10 @@ param(
     # opm-simulators target to build. Default 'flow_blackoil' (one binary); use
     # 'all' to build every flow_* variant (the full simulator suite).
     [string]$SimTarget = 'flow_blackoil',
+    # Parallel compile jobs forwarded to each module build. Default 4 (OPM's
+    # heavy template TUs are RAM-hungry; more than ~4 cl.exe can exhaust memory
+    # on typical machines). Raise on a machine with more RAM, e.g. -Jobs 6.
+    [int]$Jobs = 4,
     [string]$DuneVersion = 'v2.10.0',
     # GitHub org and branch to clone opm-common/opm-grid/opm-simulators from.
     # Until the Windows/MSVC fixes are merged upstream, point these at the fork
@@ -103,7 +107,7 @@ function Build-Zoltan {
         -DTPL_MPI_LIBRARIES="$env:MSMPI_LIB64\msmpi.lib" `
         -DTPL_ENABLE_DLlib=OFF `
         -DTPL_ENABLE_Pthread=OFF }
-    Invoke-Native { cmake --build $bld --target install -- -j 4 }
+    Invoke-Native { cmake --build $bld --target install -- -j $Jobs }
 }
 
 # Apply a Windows/MSVC patch to a DUNE module (DUNE is built from source, so the
@@ -346,27 +350,27 @@ $buildModule = Join-Path $Root 'build-module.ps1'
 # OpenMP applies to the OPM modules only; DUNE is always built without it.
 if ($Mpi) {
     Ensure-MsMpi
-    & $buildModule dune-common   -Mpi
-    & $buildModule dune-geometry -Mpi
-    & $buildModule dune-istl     -Mpi
-    & $buildModule dune-grid     -Mpi
+    & $buildModule dune-common   -Mpi -Jobs $Jobs
+    & $buildModule dune-geometry -Mpi -Jobs $Jobs
+    & $buildModule dune-istl     -Mpi -Jobs $Jobs
+    & $buildModule dune-grid     -Mpi -Jobs $Jobs
     Build-Zoltan                        # opm-grid (with MPI) requires Zoltan
-    & $buildModule opm-common    -Mpi -OpenMP:$OpenMP
-    & $buildModule opm-grid      -Mpi -OpenMP:$OpenMP
-    & $buildModule opm-simulators -Mpi -OpenMP:$OpenMP -Target $SimTarget
+    & $buildModule opm-common    -Mpi -OpenMP:$OpenMP -Jobs $Jobs
+    & $buildModule opm-grid      -Mpi -OpenMP:$OpenMP -Jobs $Jobs
+    & $buildModule opm-simulators -Mpi -OpenMP:$OpenMP -Target $SimTarget -Jobs $Jobs
     # opm-upscaling tools live in examples/, so build the 'all' target with examples on.
-    if ($Upscaling) { & $buildModule opm-upscaling -Mpi -OpenMP:$OpenMP -Target all -Extra '-DBUILD_EXAMPLES=ON' }
+    if ($Upscaling) { & $buildModule opm-upscaling -Mpi -OpenMP:$OpenMP -Target all -Extra '-DBUILD_EXAMPLES=ON' -Jobs $Jobs }
     $exe = Join-Path $Root 'build-mpi\opm-simulators\bin\flow_blackoil.exe'
 } else {
-    & $buildModule dune-common
-    & $buildModule dune-geometry
-    & $buildModule dune-istl
-    & $buildModule dune-grid
-    & $buildModule opm-common    -OpenMP:$OpenMP
-    & $buildModule opm-grid      -OpenMP:$OpenMP
-    & $buildModule opm-simulators -OpenMP:$OpenMP -Target $SimTarget
+    & $buildModule dune-common   -Jobs $Jobs
+    & $buildModule dune-geometry -Jobs $Jobs
+    & $buildModule dune-istl     -Jobs $Jobs
+    & $buildModule dune-grid     -Jobs $Jobs
+    & $buildModule opm-common    -OpenMP:$OpenMP -Jobs $Jobs
+    & $buildModule opm-grid      -OpenMP:$OpenMP -Jobs $Jobs
+    & $buildModule opm-simulators -OpenMP:$OpenMP -Target $SimTarget -Jobs $Jobs
     # opm-upscaling tools live in examples/, so build the 'all' target with examples on.
-    if ($Upscaling) { & $buildModule opm-upscaling -OpenMP:$OpenMP -Target all -Extra '-DBUILD_EXAMPLES=ON' }
+    if ($Upscaling) { & $buildModule opm-upscaling -OpenMP:$OpenMP -Target all -Extra '-DBUILD_EXAMPLES=ON' -Jobs $Jobs }
     $exe = Join-Path $Root 'build\opm-simulators\bin\flow_blackoil.exe'
 }
 

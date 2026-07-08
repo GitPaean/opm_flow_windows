@@ -96,4 +96,6 @@ ran the WHOLE all-targets build twice — serial and MPI:
 
 **VERDICT: the instructions + patches build the entire opm-common/opm-grid/
 opm-simulators target set (GPU off), serial and parallel, clean from the fork with
-zero manual steps.** Build with -j 4 (RAM); compositional+MPI compiles cleanly.
+zero manual steps.** Parallel jobs default to 4 (RAM); pass `-Jobs N` to
+`build-all.ps1`/`build-module.ps1` to raise it (a ≥ 32 GB machine handles 6–8).
+compositional+MPI compiles cleanly.

@@ -49,7 +49,7 @@
 
 <h1>OPM Flow — Native Windows Build</h1>
 <p class="sub">Building all targets from the <span class="mono">opm_flow_windows</span> harness (MSVC, hybrid MPI + OpenMP)</p>
-<p class="meta">Prepared 2026-07-04, updated 2026-07-05 &nbsp;•&nbsp; Machine: Windows 11 Pro, 24 logical CPUs, 55.8 GB RAM &nbsp;•&nbsp; Toolchain: VS 2022 Build Tools 17.14 (MSVC 14.4x), CMake 4.x, Ninja, MS-MPI 10.1 &nbsp;•&nbsp; Build root: <span class="mono">C:\opm\opm_flow_windows</span></p>
+<p class="meta">Prepared 2026-07-04, updated 2026-07-09 &nbsp;•&nbsp; Machine: Windows 11 Pro, 24 logical CPUs, 55.8 GB RAM &nbsp;•&nbsp; Toolchain: VS 2022 Build Tools 17.14 (MSVC 14.4x), CMake 4.x, Ninja, MS-MPI 10.1 &nbsp;•&nbsp; Build root: <span class="mono">C:\opm\opm_flow_windows</span></p>
 
 <h2>1. Overview</h2>
 <p>
@@ -143,7 +143,7 @@ variant plus the opm-upscaling tools, across all four OPM repos, from
 <ol>
   <li><b>Installed toolchain</b> (winget): VS 2022 Build Tools (VCTools + Win11 SDK 22621 + CMake + Ninja), MS-MPI runtime + SDK.</li>
   <li><b>Cloned</b> vcpkg, DUNE 2.10.0 (×4), and all 4 OPM repos on the <span class="mono">GitPaean</span> <span class="mono">windows</span> branch.</li>
-  <li><b>Capped parallelism at 8 jobs</b> (<span class="mono">build-module.ps1</span>; OPM's template-heavy TUs are memory-hungry — 8 jobs suit a ≥ 32 GB machine).</li>
+  <li><b>Set parallelism with <span class="mono">-Jobs N</span></b> (default 4; <span class="mono">build-all.ps1</span> forwards it to every module and <span class="mono">build-module.ps1</span> accepts it directly). OPM's template-heavy TUs are memory-hungry — 4 suits a smaller box, while this ≥ 32 GB machine ran 8 (a from-scratch re-validation on 2026-07-09 used <span class="mono">-Jobs 6</span>: 45 <span class="mono">flow_*</span> variants + 24 upscaling tools, 0 errors, 38 min).</li>
   <li><b>Ran the one-shot build:</b></li>
 </ol>
 <pre>.\build-all.ps1 -Mpi -OpenMP -SimTarget all -Upscaling -OpmOrg GitPaean -OpmBranch windows</pre>

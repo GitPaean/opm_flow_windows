@@ -70,6 +70,7 @@ Once merged, drop `-OpmOrg/-OpmBranch`.
 .\build-all.ps1 -Upscaling           # also clone + build opm-upscaling (upscale_* / cpchop tools)
 .\build-all.ps1 -SkipClone           # sources already cloned
 .\build-all.ps1 -SkipDeps            # vcpkg packages already installed
+.\build-all.ps1 -Jobs 6              # parallel compile jobs per module (default 4; raise on a high-RAM machine)
 .\build-all.ps1 -DuneVersion v2.10.0
 .\build-all.ps1 -OpmOrg <user> -OpmBranch <branch>
 ```
