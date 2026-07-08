@@ -107,12 +107,14 @@ Contents
   bin\flow.exe            reservoir simulator (all model variants,
                           including black-oil)
   bin\flow-gui-qt.exe     graphical front end (job queue, live log)
-  redist\                 prerequisite runtime installers
+  redist\                 Microsoft runtime installers (see prerequisite below)
 
-One-time prerequisites (skip any already installed)
-  1. redist\vc_redist.x64.exe     Microsoft Visual C++ runtime
-  2. redist\msmpisetup.exe        Microsoft MPI runtime (needed even for
-                                  serial runs: the simulators link msmpi.dll)
+Prerequisite: Microsoft MPI
+  The simulator links msmpi.dll (needed even for serial runs). It is a Windows
+  system component and is NOT bundled, so if MS-MPI is not already installed:
+      run  redist\msmpisetup.exe  once      (or:  winget install Microsoft.msmpi)
+  The Visual C++ and OpenMP runtimes ship inside bin\, so no VC++ install is
+  needed; redist\vc_redist.x64.exe is included only as a fallback.
 
 Running
   GUI:       double-click bin\flow-gui-qt.exe, add a *.DATA deck, Run.

@@ -25,9 +25,13 @@ Stages `dist\opm-flow-<version>\`:
 
 `-Zip` also emits `dist\opm-flow-<version>-win64.zip`.
 
-**Tier 1 — portable ZIP.** Ship that zip. Users unzip, run the two
-`redist\` installers once, then double-click `bin\flow-gui-qt.exe`.
-MS-MPI is required even for serial runs (the simulators link `msmpi.dll`).
+**Tier 1 — portable ZIP.** Ship that zip. Users unzip and double-click
+`bin\flow-gui-qt.exe`. The VC++ and OpenMP runtimes are bundled in `bin\`, so
+the only external prerequisite is **MS-MPI** — required even for serial runs
+(the simulators link `msmpi.dll`, a system component that is not bundled). If it
+isn't already installed, run `redist\msmpisetup.exe` once (or `winget install
+Microsoft.msmpi`). `redist\vc_redist.x64.exe` is included only as a fallback;
+the app-local CRT means it is not normally needed.
 
 ## Tier 2 — installer: `installer\opm-flow.iss` (Inno Setup)
 
