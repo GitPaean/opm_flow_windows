@@ -122,6 +122,15 @@ Running
 Windows Firewall may prompt on the first parallel run - allow access
 (private networks) so the MPI ranks can communicate locally.
 
+First run on Windows (SmartScreen)
+  These binaries are not code-signed, so Microsoft SmartScreen may warn when
+  you download or first launch them. This is a reputation warning, not a virus
+  detection. To proceed:
+    - Downloading in a browser: if it says "isn't commonly downloaded", open
+      the download's "..." menu and choose Keep, then Keep anyway.
+    - First launch: if "Windows protected your PC" appears, click "More info"
+      then "Run anyway".
+
 License and source code
   OPM Flow is free software under the GNU GPL v3+ (see LICENSE.txt).
 "@ | Set-Content -Encoding utf8 (Join-Path $Stage 'README.txt')

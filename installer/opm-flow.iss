@@ -7,6 +7,19 @@
 ; The installer copies the staged bin\ tree to Program Files, creates Start
 ; menu shortcuts, and silently installs the VC++ and MS-MPI runtimes when
 ; they are missing.
+;
+; Sign (optional): pass /DSignExe plus a named SignTool "opmsign" to ISCC to
+; code-sign the installer (and its embedded uninstaller) during compile
+; (PowerShell; `$f is Inno's placeholder for the file, escaped so PowerShell
+; passes it through literally):
+;   ISCC /DSignExe `
+;        /Sopmsign="\"<path-to>\signtool.exe\" sign /fd SHA256 /a /t http://timestamp.digicert.com `$f" `
+;        installer\opm-flow.iss
+; With a real OV/EV code-signing certificate this removes the SmartScreen
+; "isn't commonly downloaded" / "Windows protected your PC" warnings (an EV cert
+; earns reputation immediately; OV builds it up over time/downloads). A
+; SELF-SIGNED cert does NOT help SmartScreen. Without /DSignExe the installer is
+; built unsigned and those warnings are expected but dismissible (see README).
 
 #ifndef AppVersion
   #define AppVersion "2026.10-pre"
@@ -30,6 +43,13 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 WizardStyle=modern
 PrivilegesRequired=admin
+
+#ifdef SignExe
+; Code-sign the installer and its embedded uninstaller with the named SignTool
+; "opmsign" supplied on the ISCC command line (see the header for the invocation).
+SignTool=opmsign
+SignedUninstaller=yes
+#endif
 
 [Files]
 Source: "{#StageDir}\bin\*";    DestDir: "{app}\bin"; Flags: recursesubdirs

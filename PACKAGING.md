@@ -42,9 +42,32 @@ shortcuts to the GUI, shows the GPL license page, and **silently installs
 the VC++ and MS-MPI runtimes only when missing** (registry / `msmpi.dll`
 checks). Override the version with `ISCC /DAppVersion=<v> ...`.
 
-For public distribution, **code-sign the setup exe** (`signtool sign /fd
-SHA256 /a /t <timestamp-url> <exe>`) with an OV/EV certificate — unsigned
-installers trip SmartScreen on end-user machines.
+**Unsigned installers trip SmartScreen** on end-user machines — a dismissible
+*reputation* warning at download ("isn't commonly downloaded" → Keep / Keep
+anyway) and first run ("Windows protected your PC" → More info → Run anyway).
+The packaged `README.txt` and the repo README document these click-throughs for
+users.
+
+For public distribution, **code-sign the setup exe** to remove the warnings.
+Either sign the built exe directly:
+
+```powershell
+signtool sign /fd SHA256 /a /t <timestamp-url> dist\OPM-Flow-<ver>-Setup.exe
+```
+
+or have Inno sign it during compile — pass `/DSignExe` and a named SignTool
+`opmsign` to ISCC (see the header of `installer\opm-flow.iss`):
+
+```powershell
+ISCC /DSignExe `
+     /Sopmsign="\"<path-to>\signtool.exe\" sign /fd SHA256 /a /t http://timestamp.digicert.com `$f" `
+     installer\opm-flow.iss
+```
+
+Use an **OV or EV** certificate from a CA: an **EV** cert earns SmartScreen
+reputation immediately, an **OV** cert builds it up as downloads accumulate. A
+**self-signed** cert does *not* help — SmartScreen reputation is independent of
+the local trust store (self-signing only matters for the MSIX path below).
 
 ## Tier 3 — MSIX / Microsoft Store: `packaging\build-msix.ps1`
 
