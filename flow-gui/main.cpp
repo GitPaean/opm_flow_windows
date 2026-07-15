@@ -549,8 +549,9 @@ void FlowGui::run_queue()
         argv.push_back(exe);
         argv.push_back(deck);
         argv.push_back("--output-dir=" + outdir);
-        if (threads > 1)
-            argv.push_back("--threads-per-process=" + std::to_string(threads));
+        // Always pass the thread count: without the option an OpenMP-enabled
+        // flow defaults to 2 threads per process, so "1" must be explicit.
+        argv.push_back("--threads-per-process=" + std::to_string(threads));
         if (!extra.empty()) {
             // naive whitespace split of the extra options
             std::string cur;

@@ -388,8 +388,9 @@ void FlowGuiWindow::startNextJob()
         program = exePath_;
     }
     args << deck << (QStringLiteral("--output-dir=") + outdir);
-    if (threads > 1)
-        args << (QStringLiteral("--threads-per-process=") + QString::number(threads));
+    // Always pass the thread count: without the option an OpenMP-enabled
+    // flow defaults to 2 threads per process, so "1" must be explicit.
+    args << (QStringLiteral("--threads-per-process=") + QString::number(threads));
     const QString extra = extraEdit_->text().trimmed();
     if (!extra.isEmpty())
         args << extra.split(QRegularExpression(QStringLiteral("\\s+")),
