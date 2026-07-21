@@ -1,18 +1,96 @@
 cmake_minimum_required(VERSION 3.21)
 project(flow-gui-qt CXX)
 
-set(CMAKE_CXX_STANDARD 17)
+# C++20: the opm-common headers used by the Results tab require it (and Qt 6
+# is fine with it everywhere).
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Qt 6 Widgets. On Windows the harness' vcpkg provides it
-# (vcpkg install qtbase --triplet x64-windows); on Linux/macOS use the distro
-# package (qt6-base-dev / brew install qt) or an official Qt installation and
-# point CMAKE_PREFIX_PATH at it if needed.
+# Qt 6 Widgets (+ Charts for the Results tab, optional). On Windows use the
+# official prebuilt Qt (see README); on Linux/macOS the distro/homebrew Qt.
 find_package(Qt6 REQUIRED COMPONENTS Widgets)
+find_package(Qt6 QUIET COMPONENTS Charts)
 qt_standard_project_setup()
 
-qt_add_executable(flow-gui-qt WIN32 MACOSX_BUNDLE main.cpp)
+set(FLOWGUI_SOURCES main.cpp FlowGuiWindow.cpp FlowGuiWindow.h)
+
+# --- optional summary plotting: Qt Charts + opm-common's EclIO::ESmry -------
+# Auto-detected from this harness' layout (../install-mpi + vcpkg); can be
+# pointed elsewhere with -DFLOWGUI_OPM_PREFIX=<opm install prefix> and
+# -DFLOWGUI_FMT_LIB=<fmt library>.
+set(FLOWGUI_OPM_PREFIX "${CMAKE_CURRENT_SOURCE_DIR}/../install-mpi"
+    CACHE PATH "opm-common install prefix providing EclIO::ESmry")
+
+if(WIN32)
+    set(_opmlib "${FLOWGUI_OPM_PREFIX}/lib/opmcommon.lib")
+    set(_fmt_default "${CMAKE_CURRENT_SOURCE_DIR}/../vcpkg/installed/x64-windows/lib/fmt.lib")
+else()
+    set(_opmlib "${FLOWGUI_OPM_PREFIX}/lib/libopmcommon.a")
+    set(_fmt_default "fmt")
+endif()
+set(FLOWGUI_FMT_LIB "${_fmt_default}" CACHE STRING "fmt library for opmcommon")
+
+set(FLOWGUI_HAVE_SUMMARY OFF)
+if(Qt6Charts_FOUND AND EXISTS "${_opmlib}"
+   AND EXISTS "${FLOWGUI_OPM_PREFIX}/include/opm/io/eclipse/ESmry.hpp")
+    set(FLOWGUI_HAVE_SUMMARY ON)
+    list(APPEND FLOWGUI_SOURCES SummaryPlotWidget.cpp SummaryPlotWidget.h)
+endif()
+message(STATUS "flow-gui-qt summary plotting: ${FLOWGUI_HAVE_SUMMARY}")
+
+qt_add_executable(flow-gui-qt WIN32 MACOSX_BUNDLE ${FLOWGUI_SOURCES})
 target_link_libraries(flow-gui-qt PRIVATE Qt6::Widgets)
+
+if(FLOWGUI_HAVE_SUMMARY)
+    target_compile_definitions(flow-gui-qt PRIVATE FLOWGUI_HAVE_SUMMARY)
+    target_include_directories(flow-gui-qt PRIVATE "${FLOWGUI_OPM_PREFIX}/include")
+    target_link_libraries(flow-gui-qt PRIVATE Qt6::Charts "${_opmlib}" "${FLOWGUI_FMT_LIB}")
+    if(MSVC)
+        # opm-common headers need the conformance switches; the static lib was
+        # built with /openmp:llvm and (for the harness build) MS-MPI.
+        target_compile_options(flow-gui-qt PRIVATE /permissive- /Zc:__cplusplus /bigobj)
+        target_compile_definitions(flow-gui-qt PRIVATE NOMINMAX _USE_MATH_DEFINES)
+        if(DEFINED ENV{VCToolsInstallDir})
+            target_link_libraries(flow-gui-qt PRIVATE "$ENV{VCToolsInstallDir}lib/x64/libomp.lib")
+        endif()
+        if(DEFINED ENV{MSMPI_LIB64})
+            target_link_libraries(flow-gui-qt PRIVATE "$ENV{MSMPI_LIB64}msmpi.lib")
+        endif()
+        # vcpkg include dir (fmt headers referenced by some opm-common headers)
+        target_include_directories(flow-gui-qt PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/../vcpkg/installed/x64-windows/include")
+        # runtime DLLs the summary linkage needs next to the exe
+        set(_fmtdll "${CMAKE_CURRENT_SOURCE_DIR}/../vcpkg/installed/x64-windows/bin/fmt.dll")
+        # libomp140 release DLL: full VS puts it under <redist>/x64/..., the
+        # Build Tools under <redist>/debug_nonredist/x64/... (quirk).
+        file(TO_CMAKE_PATH "$ENV{VCToolsRedistDir}" _redist)
+        set(_ompdll "")
+        foreach(_cand
+                "${_redist}/x64/Microsoft.VC143.OpenMP.LLVM/libomp140.x86_64.dll"
+                "${_redist}/debug_nonredist/x64/Microsoft.VC143.OpenMP.LLVM/libomp140.x86_64.dll")
+            if(NOT _ompdll AND EXISTS "${_cand}")
+                set(_ompdll "${_cand}")
+            endif()
+        endforeach()
+        message(STATUS "flow-gui-qt runtime DLLs: fmt=${_fmtdll} omp=${_ompdll}")
+        foreach(_dll IN LISTS _fmtdll _ompdll)
+            if(EXISTS "${_dll}")
+                add_custom_command(TARGET flow-gui-qt POST_BUILD
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                            "${_dll}" "$<TARGET_FILE_DIR:flow-gui-qt>")
+            endif()
+        endforeach()
+    else()
+        find_package(OpenMP QUIET)
+        if(OpenMP_CXX_FOUND)
+            target_link_libraries(flow-gui-qt PRIVATE OpenMP::OpenMP_CXX)
+        endif()
+        find_package(MPI QUIET COMPONENTS C)
+        if(MPI_C_FOUND)
+            target_link_libraries(flow-gui-qt PRIVATE MPI::MPI_C)
+        endif()
+    endif()
+endif()
 
 # A WIN32 (non-console) app: keep main() as the entry point with MSVC.
 if(MSVC)

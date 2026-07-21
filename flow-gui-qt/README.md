@@ -10,11 +10,23 @@ the queue sequentially, and watch the live simulator log. A running job
 (including all of its MPI ranks) can be stopped at any time.
 
 ## Features
-- **Job queue** of `*.DATA` input decks (add / remove / clear, multi-select).
+- **Job queue table** of `*.DATA` input decks (add / remove / clear,
+  multi-select, **drag & drop** onto the window) with per-job **status,
+  progress bar, elapsed time and ETA** parsed live from flow's
+  `Report step X/N at day Y/Z` output, plus **Open folder** and **View PRT**
+  for the selected job.
+- **Results tab** (when built with summary support): plot summary vectors
+  (FOPR, WBHP, ...) straight from a run's `SMSPEC`/`UNSMRY` via opm-common's
+  `EclIO::ESmry` — case selector fed by the queue, wildcard vector filter,
+  multi-curve Qt Charts plot, and 10 s auto-refresh while a simulation is
+  still writing. Any external `SMSPEC` can be opened too.
 - **Simulator** — always the `flow`(`.exe`) shipped next to the GUI (in a
   development checkout it falls back to the harness build tree); the resolved
   path is shown in the log at startup. `flow` contains every model variant,
   so no picker is needed.
+- **Completion notification** — a system-tray toast when the queue finishes,
+  and an oversubscription note in the log when ranks × threads exceed the
+  machine's logical cores.
 - **Parallel runs** — MPI rank count (spawns `mpiexec -n N ...`) and
   `--threads-per-process` OpenMP threads; both default to 1 (serial).
 - **Output directory policy** — per-deck `<deck>_run` next to the deck
@@ -39,7 +51,7 @@ it is enforced — the same applies to vcpkg's `qtbase` port):
 ```powershell
 winget install -e --id Python.Python.3.12
 python -m pip install aqtinstall
-python -m aqt install-qt windows desktop 6.8.3 win64_msvc2022_64 --archives qtbase -O C:\Qt
+python -m aqt install-qt windows desktop 6.8.3 win64_msvc2022_64 -m qtcharts --archives qtbase qtcharts -O C:\Qt
 
 . .\setup-env.ps1
 cmake -S flow-gui-qt -B build-gui-qt -G Ninja -DCMAKE_BUILD_TYPE=Release `
@@ -50,6 +62,14 @@ build-gui-qt\flow-gui-qt.exe
 ```
 `windeployqt` copies the required Qt DLLs and the platform plugin next to
 the executable.
+
+**Summary plotting** is enabled automatically when the harness'
+`install-mpi` (opm-common with `EclIO::ESmry`) and Qt Charts are found at
+configure time — watch for `flow-gui-qt summary plotting: ON`. Build from a
+`setup-env.ps1` shell (the opm-common linkage needs the MSVC/MS-MPI env);
+the needed runtime DLLs (`fmt.dll`, `libomp140.x86_64.dll`) are copied next
+to the exe automatically. On Linux point `-DFLOWGUI_OPM_PREFIX` at an
+opm-common install prefix and install `qt6-charts-dev` (or equivalent).
 
 ### Linux
 ```bash
