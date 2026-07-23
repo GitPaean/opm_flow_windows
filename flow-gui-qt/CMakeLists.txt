@@ -9,7 +9,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Qt 6 Widgets (+ Charts for the Results tab, optional). On Windows use the
 # official prebuilt Qt (see README); on Linux/macOS the distro/homebrew Qt.
 find_package(Qt6 REQUIRED COMPONENTS Widgets)
-find_package(Qt6 QUIET COMPONENTS Charts)
+find_package(Qt6 QUIET COMPONENTS Charts OpenGLWidgets)
 qt_standard_project_setup()
 
 set(FLOWGUI_SOURCES main.cpp FlowGuiWindow.cpp FlowGuiWindow.h)
@@ -38,13 +38,31 @@ if(Qt6Charts_FOUND AND EXISTS "${_opmlib}"
 endif()
 message(STATUS "flow-gui-qt summary plotting: ${FLOWGUI_HAVE_SUMMARY}")
 
+# 3D results viewer: needs opm-common (EGrid/EInit/ERst) + Qt OpenGLWidgets
+# (part of qtbase on every platform).
+set(FLOWGUI_HAVE_3D OFF)
+if(Qt6OpenGLWidgets_FOUND AND EXISTS "${_opmlib}"
+   AND EXISTS "${FLOWGUI_OPM_PREFIX}/include/opm/io/eclipse/EGrid.hpp")
+    set(FLOWGUI_HAVE_3D ON)
+    list(APPEND FLOWGUI_SOURCES Viewer3D.cpp Viewer3D.h)
+endif()
+message(STATUS "flow-gui-qt 3D viewer: ${FLOWGUI_HAVE_3D}")
+
 qt_add_executable(flow-gui-qt WIN32 MACOSX_BUNDLE ${FLOWGUI_SOURCES})
 target_link_libraries(flow-gui-qt PRIVATE Qt6::Widgets)
 
-if(FLOWGUI_HAVE_SUMMARY)
-    target_compile_definitions(flow-gui-qt PRIVATE FLOWGUI_HAVE_SUMMARY)
+if(FLOWGUI_HAVE_3D)
+    target_compile_definitions(flow-gui-qt PRIVATE FLOWGUI_HAVE_3D)
+    target_link_libraries(flow-gui-qt PRIVATE Qt6::OpenGLWidgets)
+endif()
+
+if(FLOWGUI_HAVE_SUMMARY OR FLOWGUI_HAVE_3D)
+    if(FLOWGUI_HAVE_SUMMARY)
+        target_compile_definitions(flow-gui-qt PRIVATE FLOWGUI_HAVE_SUMMARY)
+        target_link_libraries(flow-gui-qt PRIVATE Qt6::Charts)
+    endif()
     target_include_directories(flow-gui-qt PRIVATE "${FLOWGUI_OPM_PREFIX}/include")
-    target_link_libraries(flow-gui-qt PRIVATE Qt6::Charts "${_opmlib}" "${FLOWGUI_FMT_LIB}")
+    target_link_libraries(flow-gui-qt PRIVATE "${_opmlib}" "${FLOWGUI_FMT_LIB}")
     if(MSVC)
         # opm-common headers need the conformance switches; the static lib was
         # built with /openmp:llvm and (for the harness build) MS-MPI.

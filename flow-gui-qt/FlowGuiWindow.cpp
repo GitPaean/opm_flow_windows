@@ -6,6 +6,9 @@
 #ifdef FLOWGUI_HAVE_SUMMARY
   #include "SummaryPlotWidget.h"
 #endif
+#ifdef FLOWGUI_HAVE_3D
+  #include "Viewer3D.h"
+#endif
 
 #include <QApplication>
 #include <QCloseEvent>
@@ -250,6 +253,19 @@ FlowGuiWindow::FlowGuiWindow()
 #ifdef FLOWGUI_HAVE_SUMMARY
     summary_ = new SummaryPlotWidget;
     tabs_->addTab(summary_, QStringLiteral("Results"));
+#endif
+
+    // ================= 3D view tab ==========================================
+#ifdef FLOWGUI_HAVE_3D
+    viewer3D_ = new Viewer3DWidget;
+    tabs_->addTab(viewer3D_, QStringLiteral("3D View"));
+#ifdef FLOWGUI_HAVE_SUMMARY
+    if (summary_)
+        connect(summary_, &SummaryPlotWidget::caseAdded, viewer3D_,
+                [this](const QString& label, const QString& path) {
+                    viewer3D_->addCase(label, path);
+                });
+#endif
 #endif
 
     setCentralWidget(tabs_);

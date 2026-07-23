@@ -32,6 +32,7 @@ namespace Opm { namespace EclIO { class ESmry; } }
 
 class SummaryPlotWidget : public QWidget
 {
+    Q_OBJECT
 public:
     SummaryPlotWidget(QWidget* parent = nullptr);
     ~SummaryPlotWidget();
@@ -47,6 +48,11 @@ public:
     struct CaseInfo { QString label; QString path; bool checked; };
     QList<CaseInfo> caseInfos() const;
     void clearCases();
+
+signals:
+    // Emitted for every newly registered case (dedup already applied) so
+    // other views (e.g. the 3D viewer) can mirror the case list.
+    void caseAdded(const QString& label, const QString& smspecPath);
 
 private:
     // one plottable summary vector, parsed from an ESmry SummaryNode

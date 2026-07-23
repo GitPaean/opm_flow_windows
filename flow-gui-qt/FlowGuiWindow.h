@@ -28,6 +28,7 @@ class QTableWidget;
 class QTabWidget;
 class QTimer;
 class SummaryPlotWidget;
+class Viewer3DWidget;
 
 class FlowGuiWindow : public QMainWindow
 {
@@ -67,6 +68,7 @@ private:
     QPlainTextEdit* logView_     = nullptr;
     QSystemTrayIcon* tray_       = nullptr;
     SummaryPlotWidget* summary_  = nullptr;   // null when built without summary
+    Viewer3DWidget*    viewer3D_ = nullptr;   // null when built without 3D
 
     // run state
     QString       exePath_;       // the flow executable shipped with this GUI

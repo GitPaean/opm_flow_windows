@@ -523,6 +523,7 @@ void SummaryPlotWidget::addCase(const QString& label, const QString& smspecPath,
     caseList_->addItem(it);
     caseList_->blockSignals(false);
     if (caseList_->count() == 1) caseList_->setCurrentItem(it);
+    emit caseAdded(shown, smspecPath);
 }
 
 QList<SummaryPlotWidget::CaseInfo> SummaryPlotWidget::caseInfos() const

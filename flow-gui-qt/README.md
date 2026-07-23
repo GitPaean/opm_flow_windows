@@ -34,6 +34,13 @@ the queue sequentially, and watch the live simulator log. A running job
   updates the plot while a simulation is still writing. Drag to zoom
   (Reset zoom button to restore), optional calendar-date X axis, and
   Save PNG for reports. Any external `SMSPEC` can be opened too.
+- **3D View tab** (when built with opm-common): the corner-point grid
+  rendered with a self-contained OpenGL widget (no external engine) —
+  colored by any selectable static (INIT) or dynamic (UNRST) cell property,
+  well trajectories from the restart well/connection arrays, report-step
+  animation with play button and date display, vertical exaggeration,
+  orbit/pan/zoom camera, and a color legend. Cases mirror the Results tab
+  (or open any `.EGRID` directly).
 - **Simulator** — always the `flow`(`.exe`) shipped next to the GUI (in a
   development checkout it falls back to the harness build tree); the resolved
   path is shown in the log at startup. `flow` contains every model variant,
