@@ -26,8 +26,9 @@ the queue sequentially, and watch the live simulator log. A running job
   tree grouped by quantity with human-readable names (WOPR → "Oil Production
   Rate", ~130 mnemonics). Multi-select plots several curves, with a second
   Y axis when units differ (e.g. rate vs. pressure); 10 s auto-refresh
-  updates the plot while a simulation is still writing. Any external
-  `SMSPEC` can be opened too.
+  updates the plot while a simulation is still writing. Drag to zoom
+  (Reset zoom button to restore), optional calendar-date X axis, and
+  Save PNG for reports. Any external `SMSPEC` can be opened too.
 - **Simulator** — always the `flow`(`.exe`) shipped next to the GUI (in a
   development checkout it falls back to the harness build tree); the resolved
   path is shown in the log at startup. `flow` contains every model variant,

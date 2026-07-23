@@ -12,6 +12,10 @@
 #include <QChart>
 #include <QChartView>
 #include <QComboBox>
+#include <QDateTime>
+#include <QDateTimeAxis>
+#include <QDir>
+#include <QTimeZone>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QHBoxLayout>
@@ -31,6 +35,7 @@
 #include <QValueAxis>
 
 #include <algorithm>
+#include <chrono>
 #include <exception>
 #include <string>
 #include <utility>
@@ -346,13 +351,22 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
         auto* bbrowse  = new QPushButton(QStringLiteral("Open SMSPEC..."));
         auto* brefresh = new QPushButton(QStringLiteral("Refresh"));
         autoRef_ = new QCheckBox(QStringLiteral("auto-refresh (10 s)"));
+        dateAxis_ = new QCheckBox(QStringLiteral("date axis"));
+        auto* bzoom = new QPushButton(QStringLiteral("Reset zoom"));
+        auto* bpng  = new QPushButton(QStringLiteral("Save PNG..."));
         row->addWidget(bbrowse);
         row->addWidget(brefresh);
         row->addWidget(autoRef_);
+        row->addWidget(dateAxis_);
+        row->addWidget(bzoom);
+        row->addWidget(bpng);
         top->addLayout(row);
 
         connect(bbrowse,  &QPushButton::clicked, this, [this] { browseCase(); });
         connect(brefresh, &QPushButton::clicked, this, [this] { reload(true); });
+        connect(dateAxis_, &QCheckBox::toggled, this, [this](bool) { replot(); });
+        connect(bzoom, &QPushButton::clicked, this, [this] { chart_->zoomReset(); });
+        connect(bpng,  &QPushButton::clicked, this, [this] { savePng(); });
         connect(caseBox_, &QComboBox::currentIndexChanged, this, [this](int) { reload(false); });
         timer_ = new QTimer(this);
         timer_->setInterval(10000);
@@ -404,6 +418,7 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
         chart_->legend()->setAlignment(Qt::AlignBottom);
         chartView_ = new QChartView(chart_);
         chartView_->setRenderHint(QPainter::Antialiasing);
+        chartView_->setRubberBand(QChartView::RectangleRubberBand);   // drag to zoom
         split->addWidget(chartView_);
         split->setStretchFactor(0, 0);
         split->setStretchFactor(1, 1);
@@ -421,6 +436,20 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
 SummaryPlotWidget::~SummaryPlotWidget() = default;
 
 void SummaryPlotWidget::setStatus(const QString& s) { status_->setText(s); }
+
+void SummaryPlotWidget::savePng()
+{
+    QString suggested = caseBox_->currentText();
+    if (suggested.isEmpty()) suggested = QStringLiteral("summary");
+    const QString f = QFileDialog::getSaveFileName(
+        this, QStringLiteral("Save chart as PNG"), suggested + QStringLiteral(".png"),
+        QStringLiteral("PNG image (*.png)"));
+    if (f.isEmpty()) return;
+    if (chartView_->grab().save(f))
+        setStatus(QStringLiteral("chart saved to %1").arg(QDir::toNativeSeparators(f)));
+    else
+        setStatus(QStringLiteral("could not save %1").arg(QDir::toNativeSeparators(f)));
+}
 
 void SummaryPlotWidget::addCase(const QString& label, const QString& smspecPath)
 {
@@ -733,7 +762,30 @@ void SummaryPlotWidget::replot()
 
     double lmin = 0, lmax = 0, rmin = 0, rmax = 0; bool lset = false, rset = false;
 
-    auto* ax = new QValueAxis; ax->setTitleText(QStringLiteral("time [days]"));
+    // X axis: simulated days, or calendar dates (UTC) when toggled on. Series
+    // x-values are stored to match the axis type (days vs ms-since-epoch).
+    const bool useDates = dateAxis_ && dateAxis_->isChecked();
+    double startMs = 0.0;
+    if (useDates) {
+        const auto tp = smry_->startdate();
+        startMs = double(std::chrono::duration_cast<std::chrono::milliseconds>(
+                             tp.time_since_epoch()).count());
+    }
+    auto xval = [&](float days) {
+        return useDates ? startMs + double(days) * 86400.0e3 : double(days);
+    };
+
+    QAbstractAxis* ax = nullptr;
+    if (useDates) {
+        auto* a = new QDateTimeAxis;
+        a->setFormat(QStringLiteral("yyyy-MM-dd"));
+        a->setTitleText(QStringLiteral("date"));
+        ax = a;
+    } else {
+        auto* a = new QValueAxis;
+        a->setTitleText(QStringLiteral("time [days]"));
+        ax = a;
+    }
     chart_->addAxis(ax, Qt::AlignBottom);
     QValueAxis* ayL = new QValueAxis;
     ayL->setTitleText(genericLeft ? QStringLiteral("value") : unitL);
@@ -755,7 +807,7 @@ void SummaryPlotWidget::replot()
         s->setName(v.key);
         const size_t n = std::min(time.size(), data.size());
         for (size_t k = 0; k < n; ++k) {
-            s->append(time[k], data[k]);
+            s->append(xval(time[k]), data[k]);
             if (side == 1) {
                 rmin = rset ? std::min<double>(rmin, data[k]) : data[k];
                 rmax = rset ? std::max<double>(rmax, data[k]) : data[k];
@@ -771,7 +823,15 @@ void SummaryPlotWidget::replot()
         s->attachAxis(side == 1 ? ayR : ayL);
     }
 
-    if (!time.empty()) ax->setRange(time.front(), time.back());
+    if (!time.empty()) {
+        if (useDates) {
+            static_cast<QDateTimeAxis*>(ax)->setRange(
+                QDateTime::fromMSecsSinceEpoch(qint64(xval(time.front())), QTimeZone::utc()),
+                QDateTime::fromMSecsSinceEpoch(qint64(xval(time.back())),  QTimeZone::utc()));
+        } else {
+            static_cast<QValueAxis*>(ax)->setRange(time.front(), time.back());
+        }
+    }
     auto pad = [](QValueAxis* a, double lo, double hi) {
         if (hi > lo) a->setRange(lo - 0.05 * (hi - lo), hi + 0.05 * (hi - lo));
         else         a->setRange(lo - 1.0, hi + 1.0);

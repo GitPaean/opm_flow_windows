@@ -34,9 +34,11 @@
 #include <QProgressBar>
 #include <QPushButton>
 #include <QRegularExpression>
+#include <QScrollBar>
 #include <QSettings>
 #include <QSpinBox>
 #include <QSystemTrayIcon>
+#include <QTimer>
 #include <QTabWidget>
 #include <QTableWidget>
 #include <QTextCursor>
@@ -138,6 +140,8 @@ FlowGuiWindow::FlowGuiWindow()
         });
         connect(bopen, &QPushButton::clicked, this, [this] { openJobFolder(jobTable_->currentRow()); });
         connect(bprt,  &QPushButton::clicked, this, [this] { viewJobPrt(jobTable_->currentRow()); });
+        connect(jobTable_, &QTableWidget::cellDoubleClicked, this,
+                [this](int row, int) { openJobFolder(row); });
         for (auto* b : { badd, brem, bclr, bopen, bprt }) col->addWidget(b);
         col->addStretch(1);
         row->addLayout(col);
@@ -214,6 +218,17 @@ FlowGuiWindow::FlowGuiWindow()
 #endif
 
     setCentralWidget(tabs_);
+
+    // Tick the running job's Elapsed/ETA once a second so they advance even
+    // while flow is quiet between report steps.
+    auto* tick = new QTimer(this);
+    tick->setInterval(1000);
+    connect(tick, &QTimer::timeout, this, [this] {
+        if (current_ >= 0 && current_ < jobs_.size() &&
+            jobs_[current_].state == Job::Running)
+            refreshRow(current_);
+    });
+    tick->start();
 
     loadSettings();
     exePath_ = findFlowExe();
@@ -331,11 +346,17 @@ void FlowGuiWindow::onBrowseOutdir()
 // ---------------------------------------------------------------------------
 void FlowGuiWindow::appendLog(const QString& text)
 {
-    logView_->moveCursor(QTextCursor::End);
     QString clean = text;
     clean.remove(QLatin1Char('\r'));
-    logView_->insertPlainText(clean);
-    logView_->moveCursor(QTextCursor::End);
+
+    // Append without disturbing the user's scroll position: stick to the
+    // bottom only if the view is already at (or near) the bottom.
+    auto* sb = logView_->verticalScrollBar();
+    const bool atBottom = sb->value() >= sb->maximum() - 4;
+    QTextCursor c(logView_->document());
+    c.movePosition(QTextCursor::End);
+    c.insertText(clean);
+    if (atBottom) sb->setValue(sb->maximum());
 }
 
 void FlowGuiWindow::setRunning(bool on)

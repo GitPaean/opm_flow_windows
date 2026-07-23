@@ -63,6 +63,7 @@ private:
     QChartView*  chartView_ = nullptr;
     QChart*      chart_     = nullptr;
     QCheckBox*   autoRef_   = nullptr;
+    QCheckBox*   dateAxis_  = nullptr;
     QLabel*      status_    = nullptr;
     QTimer*      timer_     = nullptr;
 
@@ -77,6 +78,7 @@ private:
     void populateSubItemBox();
     void rebuildTree(const QStringList& reselect);
     void replot();
+    void savePng();
     void setStatus(const QString& s);
     static QString friendlyName(const QString& keyword,
                                 Opm::EclIO::SummaryNode::Category cat);
