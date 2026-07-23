@@ -22,9 +22,12 @@
 #include <QHash>
 #include <QLabel>
 #include <QLineEdit>
+#include <QLegendMarker>
 #include <QLineSeries>
 #include <QListWidget>
 #include <QListWidgetItem>
+#include <QPen>
+#include <QScatterSeries>
 #include <QPainter>
 #include <QPushButton>
 #include <QRegularExpression>
@@ -901,7 +904,20 @@ void SummaryPlotWidget::replot()
     double xmin = 0, xmax = 0; bool xset = false;
     int skipped = 0;
 
-    for (const PlotCase& pc : plotCases) {
+    // Marker shapes cycle PER CASE, so overlapping runs stay distinguishable
+    // by shape even where the curves coincide.
+    static const QScatterSeries::MarkerShape kShapes[] = {
+        QScatterSeries::MarkerShapeCircle,
+        QScatterSeries::MarkerShapeRectangle,
+        QScatterSeries::MarkerShapeTriangle,
+        QScatterSeries::MarkerShapeStar,
+        QScatterSeries::MarkerShapePentagon,
+        QScatterSeries::MarkerShapeRotatedRectangle,
+    };
+    constexpr int kShapeCount = int(sizeof(kShapes) / sizeof(kShapes[0]));
+
+    for (int ci = 0; ci < plotCases.size(); ++ci) {
+        const PlotCase& pc = plotCases[ci];
         std::vector<float> time;
         try {
             if (pc.smry->hasKey("TIME")) time = pc.smry->get(std::string("TIME"));
@@ -953,13 +969,27 @@ void SummaryPlotWidget::replot()
                     lset = true;
                 }
             }
-            if (showPts) {
-                s->setPointsVisible(true);
-                s->setMarkerSize(6.0);
-            }
             chart_->addSeries(s);
             s->attachAxis(ax);
             s->attachAxis(side == 1 ? ayR : ayL);
+
+            if (showPts) {
+                // Overlay a small scatter with a per-case shape in the line's
+                // color; keep it out of the legend (the line represents both).
+                auto* sc = new QScatterSeries;
+                sc->replace(s->points());
+                sc->setMarkerShape(kShapes[ci % kShapeCount]);
+                sc->setMarkerSize(6.0);
+                chart_->addSeries(sc);
+                sc->attachAxis(ax);
+                sc->attachAxis(side == 1 ? ayR : ayL);
+                const QColor col = s->color();
+                sc->setColor(col);
+                sc->setPen(QPen(col, 1));
+                sc->setBrush(col);
+                const auto lms = chart_->legend()->markers(sc);
+                for (auto* m : lms) m->setVisible(false);
+            }
         }
     }
 
