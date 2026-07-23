@@ -157,10 +157,10 @@ void GridGLWidget::setZScale(double s)
 void GridGLWidget::resetCamera()
 {
     const QVector3D d = bboxMax_ - bboxMin_;
-    dist_ = std::max(1.0f, d.length()) * 1.5f;
-    // three-quarter aerial view: looking down at the reservoir from ~38
-    // degrees elevation, rotated so I/J axes are both visible
-    yaw_ = -50.f; pitch_ = 38.f;
+    dist_ = std::max(1.0f, d.length()) * 1.8f;
+    // like looking at a mountain from afar: from a distance, somewhat to the
+    // side and moderately above (~22 degrees elevation)
+    yaw_ = -50.f; pitch_ = 22.f;
     panOffset_ = QVector3D();
     update();
 }
@@ -630,6 +630,12 @@ void Viewer3DWidget::populateProperties()
         for (const auto& [name, typ, size] : rst_->listOfRstArrays(steps_.back()))
             if (typ == Opm::EclIO::REAL && size == grid_->activeCells())
                 dynBox_->addItem(QString::fromStdString(name));
+        // SOIL is usually not stored in the restart; offer it synthesized
+        // from the stored saturations (SOIL = 1 - SWAT - SGAS).
+        if (dynBox_->findText(QStringLiteral("SOIL")) < 0 &&
+            (rst_->hasArray("SWAT", steps_.back()) ||
+             rst_->hasArray("SGAS", steps_.back())))
+            dynBox_->addItem(QStringLiteral("SOIL"));
         const int p = dynBox_->findText(QStringLiteral("PRESSURE"));
         if (p >= 0) dynBox_->setCurrentIndex(p);
     }
@@ -670,7 +676,24 @@ void Viewer3DWidget::stepChanged(int sliderPos)
     const QString name = dynBox_->currentText();
     if (name.isEmpty()) return;
     try {
-        const auto& v = rst_->getRestartData<float>(name.toStdString(), step);
+        std::vector<float> v;
+        const std::string n = name.toStdString();
+        if (rst_->hasArray(n, step)) {
+            v = rst_->getRestartData<float>(n, step);
+        } else if (name == QLatin1String("SOIL")) {
+            // synthesized oil saturation: 1 - SWAT - SGAS, with a phase
+            // that is not stored treated as absent (two-phase runs)
+            v.assign(size_t(grid_->activeCells()), 1.0f);
+            for (const char* sat : { "SWAT", "SGAS" }) {
+                if (!rst_->hasArray(sat, step)) continue;
+                const auto& s = rst_->getRestartData<float>(sat, step);
+                const size_t nn = std::min(v.size(), s.size());
+                for (size_t i = 0; i < nn; ++i) v[i] -= s[i];
+            }
+            for (float& x : v) x = std::clamp(x, 0.0f, 1.0f);
+        } else {
+            return;   // property not available at this step
+        }
         gl_->setCellValues(v, name);
 
         // date from INTEHEAD when plausible
