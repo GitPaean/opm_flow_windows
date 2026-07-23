@@ -23,6 +23,7 @@ class QCheckBox;
 class QComboBox;
 class QLabel;
 class QLineEdit;
+class QListWidget;
 class QTreeWidget;
 class QTreeWidgetItem;
 class QTimer;
@@ -56,7 +57,8 @@ private:
         Opm::EclIO::SummaryNode::Type     type{};
     };
 
-    QComboBox*   caseBox_    = nullptr;
+    QListWidget* caseList_   = nullptr;   // checkable: checked = plotted;
+                                          // highlighted row = active case
     QComboBox*   catBox_     = nullptr;
     QComboBox*   typeBox_    = nullptr;
     QComboBox*   itemBox_    = nullptr;
@@ -68,7 +70,6 @@ private:
     QChart*      chart_     = nullptr;
     QCheckBox*   autoRef_   = nullptr;
     QCheckBox*   dateAxis_  = nullptr;
-    QCheckBox*   compare_   = nullptr;   // overlay all loaded cases
     QCheckBox*   markers_   = nullptr;   // show data points on the curves
     QLabel*      status_    = nullptr;
     QTimer*      timer_     = nullptr;
@@ -80,6 +81,10 @@ private:
     // cleared on every reload so refreshes see fresh data
     std::map<QString, std::unique_ptr<Opm::EclIO::ESmry>> others_;
 
+    QString activePath() const;
+    QString activeLabel() const;
+    void removeCurrentCase();
+    void clearActiveCase();
     void browseCase();
     void reload(bool keepSelection);
     void rebuildFilters();

@@ -38,12 +38,14 @@ the queue sequentially, and watch the live simulator log. A running job
   deck* parse-and-initializes the selected deck (`flow --enable-dry-run`)
   without running the simulation. The queue itself is remembered between
   sessions.
-- **Case comparison** — the *all cases* toggle overlays the selected vectors
-  from every loaded case (legend shows `case | vector`); the *markers* toggle
-  marks the actual data points on each curve. Finished runs can be opened by
-  dropping an `.SMSPEC` on the window (or *Open SMSPEC...*), and adding a
-  deck whose `<deck>_run` output already exists registers its case
-  automatically.
+- **Case manager & comparison** — loaded cases appear in a checkable list:
+  **checked cases are plotted together** (legend shows `case | vector`), the
+  highlighted case drives the vector tree, and *Remove* drops a case from
+  the list. Same-named cases from different runs are disambiguated with the
+  run directory (full path in the tooltip). The *markers* toggle marks the
+  actual data points on each curve. Finished runs can be opened by dropping
+  an `.SMSPEC` on the window (or *Open SMSPEC...*), and adding a deck whose
+  `<deck>_run` output already exists registers its case automatically.
 - **Completion notification** — a system-tray toast when the queue finishes
   (clicking it opens the finished case in the Results tab), and an
   oversubscription note in the log when ranks × threads exceed the machine's

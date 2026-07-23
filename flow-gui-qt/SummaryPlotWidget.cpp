@@ -23,6 +23,8 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QLineSeries>
+#include <QListWidget>
+#include <QListWidgetItem>
 #include <QPainter>
 #include <QPushButton>
 #include <QRegularExpression>
@@ -341,20 +343,13 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
 {
     auto* top = new QVBoxLayout(this);
 
-    // --- case row ------------------------------------------------------------
+    // --- toolbar row ---------------------------------------------------------
     {
         auto* row = new QHBoxLayout;
-        row->addWidget(new QLabel(QStringLiteral("Case:")));
-        caseBox_ = new QComboBox;
-        caseBox_->setMinimumWidth(280);
-        row->addWidget(caseBox_, 1);
         auto* bbrowse  = new QPushButton(QStringLiteral("Open SMSPEC..."));
         auto* brefresh = new QPushButton(QStringLiteral("Refresh"));
         autoRef_ = new QCheckBox(QStringLiteral("auto-refresh (10 s)"));
         dateAxis_ = new QCheckBox(QStringLiteral("date axis"));
-        compare_  = new QCheckBox(QStringLiteral("all cases"));
-        compare_->setToolTip(QStringLiteral(
-            "plot the selected vectors from every loaded case, not just the active one"));
         markers_  = new QCheckBox(QStringLiteral("markers"));
         markers_->setToolTip(QStringLiteral("mark the data points on each curve"));
         auto* bzoom = new QPushButton(QStringLiteral("Reset zoom"));
@@ -363,8 +358,8 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
         row->addWidget(brefresh);
         row->addWidget(autoRef_);
         row->addWidget(dateAxis_);
-        row->addWidget(compare_);
         row->addWidget(markers_);
+        row->addStretch(1);
         row->addWidget(bzoom);
         row->addWidget(bpng);
         top->addLayout(row);
@@ -372,11 +367,9 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
         connect(bbrowse,  &QPushButton::clicked, this, [this] { browseCase(); });
         connect(brefresh, &QPushButton::clicked, this, [this] { reload(true); });
         connect(dateAxis_, &QCheckBox::toggled, this, [this](bool) { replot(); });
-        connect(compare_,  &QCheckBox::toggled, this, [this](bool) { replot(); });
         connect(markers_,  &QCheckBox::toggled, this, [this](bool) { replot(); });
         connect(bzoom, &QPushButton::clicked, this, [this] { chart_->zoomReset(); });
         connect(bpng,  &QPushButton::clicked, this, [this] { savePng(); });
-        connect(caseBox_, &QComboBox::currentIndexChanged, this, [this](int) { reload(false); });
         timer_ = new QTimer(this);
         timer_->setInterval(10000);
         connect(timer_, &QTimer::timeout, this, [this] { reload(true); });
@@ -413,14 +406,39 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
         connect(filter_,  &QLineEdit::textChanged,         this, [this] { rebuildTree({}); });
     }
 
-    // --- tree + chart --------------------------------------------------------
+    // --- cases + tree + chart ------------------------------------------------
     auto* split = new QSplitter;
     {
+        auto* left = new QWidget;
+        auto* ll = new QVBoxLayout(left);
+        ll->setContentsMargins(0, 0, 0, 0);
+
+        // Case manager: checked cases are plotted; the highlighted row is the
+        // ACTIVE case whose vectors fill the tree below.
+        auto* crow = new QHBoxLayout;
+        crow->addWidget(new QLabel(QStringLiteral("Cases  (checked = plotted):")), 1);
+        auto* bremove = new QPushButton(QStringLiteral("Remove"));
+        bremove->setToolTip(QStringLiteral("remove the highlighted case from the list"));
+        crow->addWidget(bremove);
+        ll->addLayout(crow);
+
+        caseList_ = new QListWidget;
+        caseList_->setMaximumHeight(110);
+        caseList_->setSelectionMode(QAbstractItemView::SingleSelection);
+        ll->addWidget(caseList_);
+
         tree_ = new QTreeWidget;
         tree_->setHeaderHidden(true);
         tree_->setSelectionMode(QAbstractItemView::ExtendedSelection);
         tree_->setUniformRowHeights(true);
-        split->addWidget(tree_);
+        ll->addWidget(tree_, 1);
+        split->addWidget(left);
+
+        connect(bremove, &QPushButton::clicked, this, [this] { removeCurrentCase(); });
+        connect(caseList_, &QListWidget::currentItemChanged, this,
+                [this](QListWidgetItem*, QListWidgetItem*) { reload(false); });
+        connect(caseList_, &QListWidget::itemChanged, this,
+                [this](QListWidgetItem*) { replot(); });   // check toggles
 
         chart_ = new QChart;
         chart_->legend()->setVisible(true);
@@ -448,7 +466,7 @@ void SummaryPlotWidget::setStatus(const QString& s) { status_->setText(s); }
 
 void SummaryPlotWidget::savePng()
 {
-    QString suggested = caseBox_->currentText();
+    QString suggested = activeLabel();
     if (suggested.isEmpty()) suggested = QStringLiteral("summary");
     const QString f = QFileDialog::getSaveFileName(
         this, QStringLiteral("Save chart as PNG"), suggested + QStringLiteral(".png"),
@@ -460,21 +478,80 @@ void SummaryPlotWidget::savePng()
         setStatus(QStringLiteral("could not save %1").arg(QDir::toNativeSeparators(f)));
 }
 
+QString SummaryPlotWidget::activePath() const
+{
+    auto* it = caseList_->currentItem();
+    return it ? it->data(Qt::UserRole).toString() : QString();
+}
+
+QString SummaryPlotWidget::activeLabel() const
+{
+    auto* it = caseList_->currentItem();
+    return it ? it->text() : QString();
+}
+
 void SummaryPlotWidget::addCase(const QString& label, const QString& smspecPath)
 {
-    for (int i = 0; i < caseBox_->count(); ++i)
-        if (caseBox_->itemData(i).toString() == smspecPath) return;
-    caseBox_->addItem(label, smspecPath);
-    if (caseBox_->count() == 1) caseBox_->setCurrentIndex(0);
+    for (int i = 0; i < caseList_->count(); ++i)
+        if (caseList_->item(i)->data(Qt::UserRole).toString() == smspecPath) return;
+
+    // Same-named cases from different runs: disambiguate with the run
+    // directory, and as a last resort with a counter. Full path in tooltip.
+    QString shown = label;
+    auto labelTaken = [this](const QString& l) {
+        for (int i = 0; i < caseList_->count(); ++i)
+            if (caseList_->item(i)->text() == l) return true;
+        return false;
+    };
+    if (labelTaken(shown)) {
+        const QString dir = QFileInfo(smspecPath).absoluteDir().dirName();
+        if (!dir.isEmpty()) shown = label + QStringLiteral(" [") + dir + QLatin1Char(']');
+    }
+    for (int n = 2; labelTaken(shown); ++n)
+        shown = label + QStringLiteral(" (%1)").arg(n);
+
+    auto* it = new QListWidgetItem(shown);
+    it->setData(Qt::UserRole, smspecPath);
+    it->setToolTip(smspecPath);
+    it->setFlags(it->flags() | Qt::ItemIsUserCheckable);
+    it->setCheckState(Qt::Checked);
+    caseList_->blockSignals(true);       // no premature replot from itemChanged
+    caseList_->addItem(it);
+    caseList_->blockSignals(false);
+    if (caseList_->count() == 1) caseList_->setCurrentItem(it);
 }
 
 void SummaryPlotWidget::activateCase(const QString& smspecPath)
 {
-    for (int i = 0; i < caseBox_->count(); ++i)
-        if (caseBox_->itemData(i).toString() == smspecPath) {
-            caseBox_->setCurrentIndex(i);   // triggers reload of the active case
+    for (int i = 0; i < caseList_->count(); ++i)
+        if (caseList_->item(i)->data(Qt::UserRole).toString() == smspecPath) {
+            caseList_->setCurrentItem(caseList_->item(i));  // triggers reload
             return;
         }
+}
+
+void SummaryPlotWidget::removeCurrentCase()
+{
+    const int row = caseList_->currentRow();
+    if (row < 0) return;
+    QListWidgetItem* it = caseList_->takeItem(row);   // fires currentItemChanged
+    if (it) {
+        others_.erase(it->data(Qt::UserRole).toString());
+        delete it;
+    }
+    if (caseList_->count() == 0) clearActiveCase();
+    else replot();     // plotted set may have changed even if active did not
+}
+
+void SummaryPlotWidget::clearActiveCase()
+{
+    smry_.reset();
+    others_.clear();
+    vecs_.clear();
+    tree_->clear();
+    rebuildFilters();
+    replot();
+    setStatus(QStringLiteral("no case loaded - run a job or open an SMSPEC"));
 }
 
 void SummaryPlotWidget::browseCase()
@@ -484,14 +561,14 @@ void SummaryPlotWidget::browseCase()
         QStringLiteral("Summary spec (*.SMSPEC);;All files (*)"));
     if (!f.isEmpty()) {
         addCase(QFileInfo(f).completeBaseName(), f);
-        caseBox_->setCurrentIndex(caseBox_->count() - 1);
+        activateCase(f);
     }
 }
 
 // ---------------------------------------------------------------------------
 void SummaryPlotWidget::reload(bool keepSelection)
 {
-    const QString path = caseBox_->currentData().toString();
+    const QString path = activePath();
     if (path.isEmpty()) return;
     if (!QFileInfo::exists(path)) {
         setStatus(QStringLiteral("waiting for %1 ...").arg(path));
@@ -747,30 +824,34 @@ void SummaryPlotWidget::replot()
         const QVariant idx = it->data(0, RoleVecIndex + 1);
         if (idx.isValid()) sel << idx.toInt();
     }
-    if (sel.isEmpty()) { chart_->setTitle(caseBox_->currentText()); return; }
+    if (sel.isEmpty()) { chart_->setTitle(activeLabel()); return; }
 
-    // The cases to plot: the active one, plus - in compare mode - every other
-    // loaded case (opened lazily, silently skipped while unreadable).
+    // The cases to plot: every CHECKED case in the list. The active one uses
+    // the already-open reader; others open lazily and are skipped silently
+    // while unreadable (e.g. still being written).
     struct PlotCase { QString label; Opm::EclIO::ESmry* smry; };
     QVector<PlotCase> plotCases;
-    plotCases.push_back({ caseBox_->currentText(), smry_.get() });
-    const bool multi = compare_ && compare_->isChecked() && caseBox_->count() > 1;
-    if (multi) {
-        const QString activePath = caseBox_->currentData().toString();
-        for (int i = 0; i < caseBox_->count(); ++i) {
-            const QString p = caseBox_->itemData(i).toString();
-            if (p == activePath) continue;
-            auto it = others_.find(p);
-            if (it == others_.end()) {
-                std::unique_ptr<Opm::EclIO::ESmry> s;
-                try { s = std::make_unique<Opm::EclIO::ESmry>(p.toStdString()); }
-                catch (...) { continue; }
-                it = others_.emplace(p, std::move(s)).first;
-            }
-            if (it->second)
-                plotCases.push_back({ caseBox_->itemText(i), it->second.get() });
+    const QString active = activePath();
+    for (int i = 0; i < caseList_->count(); ++i) {
+        auto* item = caseList_->item(i);
+        if (item->checkState() != Qt::Checked) continue;
+        const QString p = item->data(Qt::UserRole).toString();
+        if (p == active) {
+            if (smry_) plotCases.push_back({ item->text(), smry_.get() });
+            continue;
         }
+        auto it = others_.find(p);
+        if (it == others_.end()) {
+            std::unique_ptr<Opm::EclIO::ESmry> s;
+            try { s = std::make_unique<Opm::EclIO::ESmry>(p.toStdString()); }
+            catch (...) { continue; }
+            it = others_.emplace(p, std::move(s)).first;
+        }
+        if (it->second)
+            plotCases.push_back({ item->text(), it->second.get() });
     }
+    if (plotCases.isEmpty()) { chart_->setTitle(activeLabel()); return; }
+    const bool multi = plotCases.size() > 1;
 
     // Two Y axes at most, keyed by unit (from the active case). The left axis
     // carries the first distinct unit (or a generic "value" axis when the
@@ -898,7 +979,7 @@ void SummaryPlotWidget::replot()
     if (lset) pad(ayL, lmin, lmax);
     if (ayR && rset) pad(ayR, rmin, rmax);
     chart_->setTitle(multi ? QStringLiteral("%1 cases").arg(plotCases.size())
-                           : caseBox_->currentText());
+                           : plotCases.first().label);
     if (skipped > 0)
         setStatus(QStringLiteral("%1 selected vector(s) not shown - a plot mixes at "
                                  "most two units; deselect to change the pair").arg(skipped));
