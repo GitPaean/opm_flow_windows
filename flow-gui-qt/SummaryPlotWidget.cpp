@@ -5,6 +5,8 @@
 #include "SummaryPlotWidget.h"
 
 #include <opm/io/eclipse/ESmry.hpp>
+#include <opm/io/eclipse/EclFile.hpp>
+#include <opm/io/eclipse/EclUtil.hpp>
 
 #include <QCheckBox>
 #include <QChart>
@@ -81,10 +83,22 @@ bool hasScopeLetter(Cat c)
     return c != Cat::Miscellaneous;
 }
 
-// the item label for a node: well/group name, or region/block number, etc.
-// Category-aware: Field and Miscellaneous vectors have no item (their number
-// field is 0, not a meaningful identifier).
-QString itemLabel(const Opm::EclIO::SummaryNode& n)
+// ECLIPSE natural cell number -> 1-based I,J,K (mirrors ESmry's own
+// ijk_from_global_index); falls back to the plain number without grid dims.
+QString ijkLabel(int number, int nx, int ny)
+{
+    if (nx <= 0 || ny <= 0 || number <= 0) return QString::number(number);
+    int g = number - 1;
+    const int i = 1 + (g % nx);  g /= nx;
+    const int j = 1 + (g % ny);
+    const int k = 1 + (g / ny);
+    return QStringLiteral("%1,%2,%3").arg(i).arg(j).arg(k);
+}
+
+// the item label for a node: well/group name, region number, block/connection
+// I,J,K, inter-region pair, ... Category-aware: Field and Miscellaneous
+// vectors have no item (their number field is 0, not an identifier).
+QString itemLabel(const Opm::EclIO::SummaryNode& n, int nx, int ny)
 {
     const bool haveName = !n.wgname.empty() && n.wgname != ":+:+:+:+";
     const QString name  = haveName ? QString::fromStdString(n.wgname) : QString();
@@ -94,10 +108,26 @@ QString itemLabel(const Opm::EclIO::SummaryNode& n)
     switch (n.category) {
     case Cat::Well: case Cat::Group: case Cat::Node:
         return name;
-    case Cat::Region: case Cat::Block: case Cat::Aquifer:
+    case Cat::Region:
+        // inter-region flow vectors (R?F..., e.g. ROFR) carry a packed
+        // region pair; display it as "r1-r2" like ESmry does
+        if (haveNum && n.keyword.size() > 2 && n.keyword[2] == 'F') {
+            const auto [r1, r2] = Opm::EclIO::splitSummaryNumber(n.number);
+            return QStringLiteral("%1-%2").arg(r1).arg(r2);
+        }
         return num;
-    case Cat::Connection: case Cat::Completion: case Cat::Segment:
-        // per-well AND numbered: combine so different wells' items stay unique
+    case Cat::Aquifer:
+        return num;
+    case Cat::Block:
+        return haveNum ? ijkLabel(n.number, nx, ny) : QString();
+    case Cat::Connection:
+        // per-well AND per-cell: combine so different wells' items stay
+        // unique, with the cell shown as grid indices
+        if (!name.isEmpty() && !haveNum)  return name;
+        if (name.isEmpty())               return ijkLabel(n.number, nx, ny);
+        return name + QLatin1Char(':') + ijkLabel(n.number, nx, ny);
+    case Cat::Completion: case Cat::Segment:
+        // per-well numbered (completion/segment id, not a cell)
         if (!name.isEmpty() && !haveNum)  return name;
         if (name.isEmpty())               return num;
         return name + QLatin1Char(':') + num;
@@ -401,13 +431,24 @@ void SummaryPlotWidget::reload(bool keepSelection)
     }
     smry_ = std::move(next);
 
+    // Grid dimensions from the SMSPEC's DIMENS array (needed to show block /
+    // connection cells as I,J,K); tolerated to fail -> plain numbers.
+    nx_ = ny_ = nz_ = 0;
+    try {
+        Opm::EclIO::EclFile spec(path.toStdString());
+        if (spec.hasKey("DIMENS")) {
+            const auto dims = spec.get<int>("DIMENS");
+            if (dims.size() >= 4) { nx_ = dims[1]; ny_ = dims[2]; nz_ = dims[3]; }
+        }
+    } catch (...) {}
+
     // Parse every summary node into a plottable Vec.
     vecs_.clear();
     for (const auto& node : smry_->summaryNodeList()) {
         Vec v;
         v.node    = node;
         v.keyword = QString::fromStdString(node.keyword);
-        v.item    = itemLabel(node);
+        v.item    = itemLabel(node, nx_, ny_);
         v.cat     = node.category;
         v.type    = node.type;
         v.key     = v.item.isEmpty() ? v.keyword : (v.keyword + QLatin1Char(':') + v.item);
@@ -471,16 +512,28 @@ void SummaryPlotWidget::populateItemBox()
         if ((selCat < 0 || int(v.cat) == selCat) && !v.item.isEmpty())
             items.insert(v.item);
     QStringList sorted(items.begin(), items.end());
-    std::sort(sorted.begin(), sorted.end(), [](const QString& a, const QString& b) {
-        // Strict weak ordering over a mix of numeric and textual items:
-        // numeric items form one partition (sorted numerically) ahead of the
-        // textual partition (sorted locale-aware). Comparing across the
-        // partitions by numeric-ness keeps the ordering transitive.
-        bool ao, bo;
-        const int ai = a.toInt(&ao), bi = b.toInt(&bo);
-        if (ao != bo) return ao;                  // numbers before names
-        if (ao)       return ai < bi;             // number vs number
-        return a.localeAwareCompare(b) < 0;       // name vs name
+    // Strict weak ordering over a mix of item styles: numeric tuples
+    // ("7", "12,22,7", "2-3") form one partition sorted component-wise,
+    // ahead of the textual partition (well names) sorted locale-aware.
+    auto asTuple = [](const QString& s) -> QVector<int> {
+        QVector<int> t;
+        const QStringList parts = s.split(QRegularExpression(QStringLiteral("[,-]")));
+        for (const QString& p : parts) {
+            bool ok = false;
+            const int v = p.toInt(&ok);
+            if (!ok) return {};
+            t.push_back(v);
+        }
+        return t;
+    };
+    std::sort(sorted.begin(), sorted.end(),
+              [&asTuple](const QString& a, const QString& b) {
+        const QVector<int> ta = asTuple(a), tb = asTuple(b);
+        if (ta.isEmpty() != tb.isEmpty()) return !ta.isEmpty();  // tuples first
+        if (!ta.isEmpty())
+            return std::lexicographical_compare(ta.begin(), ta.end(),
+                                                tb.begin(), tb.end());
+        return a.localeAwareCompare(b) < 0;
     });
     itemBox_->blockSignals(true);
     itemBox_->clear();

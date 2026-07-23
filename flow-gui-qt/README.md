@@ -21,7 +21,8 @@ the queue sequentially, and watch the live simulator log. A running job
   opm-common's own `SummaryNode` classification it offers **Category**
   (Field / Well / Group / Region / Block / ... — only those present),
   **Type** (Rate / Total / Ratio / Pressure / ...), an **Item** dropdown
-  (the wells / groups / region numbers that exist) and a text search, then a
+  (the wells / groups / region numbers that exist; block and connection cells
+  are shown as grid `I,J,K` indices) and a text search, then a
   tree grouped by quantity with human-readable names (WOPR → "Oil Production
   Rate", ~130 mnemonics). Multi-select plots several curves, with a second
   Y axis when units differ (e.g. rate vs. pressure); 10 s auto-refresh

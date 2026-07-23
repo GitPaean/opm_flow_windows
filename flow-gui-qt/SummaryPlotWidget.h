@@ -64,6 +64,7 @@ private:
 
     std::unique_ptr<Opm::EclIO::ESmry> smry_;
     QVector<Vec> vecs_;
+    int nx_ = 0, ny_ = 0, nz_ = 0;   // grid dims from SMSPEC DIMENS (0 = unknown)
 
     void browseCase();
     void reload(bool keepSelection);
