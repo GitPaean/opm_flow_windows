@@ -44,16 +44,20 @@ private:
         Opm::EclIO::SummaryNode node;               // used for get()/get_unit()
         QString key;                                // identity + display, e.g. WOPR:P1
         QString keyword;                            // WOPR
-        QString item;                               // P1 / region no. / "" for field
+        QString item;                               // full item, e.g. C-1H:26,44,3
+        QString itemMain;                           // first level, e.g. C-1H
+        QString itemSub;                            // second level, e.g. 26,44,3 ("" if none)
         QString unit;                               // e.g. SM3/DAY
         Opm::EclIO::SummaryNode::Category cat{};
         Opm::EclIO::SummaryNode::Type     type{};
     };
 
-    QComboBox*   caseBox_   = nullptr;
-    QComboBox*   catBox_    = nullptr;
-    QComboBox*   typeBox_   = nullptr;
-    QComboBox*   itemBox_   = nullptr;
+    QComboBox*   caseBox_    = nullptr;
+    QComboBox*   catBox_     = nullptr;
+    QComboBox*   typeBox_    = nullptr;
+    QComboBox*   itemBox_    = nullptr;
+    QLabel*      subLabel_   = nullptr;
+    QComboBox*   subItemBox_ = nullptr;
     QLineEdit*   filter_    = nullptr;
     QTreeWidget* tree_      = nullptr;
     QChartView*  chartView_ = nullptr;
@@ -70,6 +74,7 @@ private:
     void reload(bool keepSelection);
     void rebuildFilters();
     void populateItemBox();
+    void populateSubItemBox();
     void rebuildTree(const QStringList& reselect);
     void replot();
     void setStatus(const QString& s);

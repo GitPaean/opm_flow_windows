@@ -95,11 +95,14 @@ QString ijkLabel(int number, int nx, int ny)
     return QStringLiteral("%1,%2,%3").arg(i).arg(j).arg(k);
 }
 
-// the item label for a node: well/group name, region number, block/connection
-// I,J,K, inter-region pair, ... Category-aware: Field and Miscellaneous
-// vectors have no item (their number field is 0, not an identifier).
-QString itemLabel(const Opm::EclIO::SummaryNode& n, int nx, int ny)
+// Split a node's item into up to two levels: `main` (well/group name, region
+// number, block cell, ...) and `sub` (the cell / completion / segment within
+// a well for the compound categories). Field and Miscellaneous vectors have
+// no item (their number field is 0, not an identifier).
+void splitItem(const Opm::EclIO::SummaryNode& n, int nx, int ny,
+               QString& main, QString& sub)
 {
+    main.clear(); sub.clear();
     const bool haveName = !n.wgname.empty() && n.wgname != ":+:+:+:+";
     const QString name  = haveName ? QString::fromStdString(n.wgname) : QString();
     const bool haveNum  = n.number != Opm::EclIO::SummaryNode::default_number;
@@ -107,35 +110,64 @@ QString itemLabel(const Opm::EclIO::SummaryNode& n, int nx, int ny)
 
     switch (n.category) {
     case Cat::Well: case Cat::Group: case Cat::Node:
-        return name;
+        main = name; return;
     case Cat::Region:
         // inter-region flow vectors (R?F..., e.g. ROFR) carry a packed
         // region pair; display it as "r1-r2" like ESmry does
         if (haveNum && n.keyword.size() > 2 && n.keyword[2] == 'F') {
             const auto [r1, r2] = Opm::EclIO::splitSummaryNumber(n.number);
-            return QStringLiteral("%1-%2").arg(r1).arg(r2);
+            main = QStringLiteral("%1-%2").arg(r1).arg(r2);
+            return;
         }
-        return num;
+        main = num; return;
     case Cat::Aquifer:
-        return num;
+        main = num; return;
     case Cat::Block:
-        return haveNum ? ijkLabel(n.number, nx, ny) : QString();
+        if (haveNum) main = ijkLabel(n.number, nx, ny);
+        return;
     case Cat::Connection:
-        // per-well AND per-cell: combine so different wells' items stay
-        // unique, with the cell shown as grid indices
-        if (!name.isEmpty() && !haveNum)  return name;
-        if (name.isEmpty())               return ijkLabel(n.number, nx, ny);
-        return name + QLatin1Char(':') + ijkLabel(n.number, nx, ny);
+        // per-well AND per-cell: two levels, cell shown as grid indices
+        main = name;
+        if (haveNum) sub = ijkLabel(n.number, nx, ny);
+        if (main.isEmpty()) { main = sub; sub.clear(); }
+        return;
     case Cat::Completion: case Cat::Segment:
         // per-well numbered (completion/segment id, not a cell)
-        if (!name.isEmpty() && !haveNum)  return name;
-        if (name.isEmpty())               return num;
-        return name + QLatin1Char(':') + num;
+        main = name;
+        sub  = num;
+        if (main.isEmpty()) { main = sub; sub.clear(); }
+        return;
     case Cat::Field: case Cat::Miscellaneous:
     default:
-        return QString();
+        return;
     }
-    return QString();
+}
+
+// Strict weak ordering over a mix of item styles: numeric tuples
+// ("7", "12,22,7", "2-3") form one partition sorted component-wise, ahead of
+// the textual partition (well names) sorted locale-aware.
+void sortItems(QStringList& items)
+{
+    auto asTuple = [](const QString& s) -> QVector<int> {
+        QVector<int> t;
+        const QStringList parts = s.split(QRegularExpression(QStringLiteral("[,-]")));
+        for (const QString& p : parts) {
+            bool ok = false;
+            const int v = p.toInt(&ok);
+            if (!ok) return {};
+            t.push_back(v);
+        }
+        return t;
+    };
+    std::sort(items.begin(), items.end(),
+              [&asTuple](const QString& a, const QString& b) {
+        const QVector<int> ta = asTuple(a), tb = asTuple(b);
+        if (ta.isEmpty() != tb.isEmpty()) return !ta.isEmpty();  // tuples first
+        if (!ta.isEmpty())
+            return std::lexicographical_compare(ta.begin(), ta.end(),
+                                                tb.begin(), tb.end());
+        return a.localeAwareCompare(b) < 0;
+    });
 }
 
 } // namespace
@@ -339,16 +371,22 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
         typeBox_ = new QComboBox; row->addWidget(typeBox_);
         row->addWidget(new QLabel(QStringLiteral("Item:")));
         itemBox_ = new QComboBox; itemBox_->setMinimumWidth(120); row->addWidget(itemBox_);
+        subLabel_ = new QLabel(QStringLiteral("Cell:"));
+        subItemBox_ = new QComboBox; subItemBox_->setMinimumWidth(110);
+        subLabel_->hide(); subItemBox_->hide();
+        row->addWidget(subLabel_); row->addWidget(subItemBox_);
         filter_ = new QLineEdit;
         filter_->setPlaceholderText(QStringLiteral("search..."));
         row->addWidget(filter_, 1);
         top->addLayout(row);
 
-        // Category change also repopulates the (category-dependent) item box.
+        // Cascade: category -> item -> cell; each level repopulates the next.
         connect(catBox_,  &QComboBox::currentIndexChanged, this,
                 [this](int) { populateItemBox(); rebuildTree({}); });
         connect(typeBox_, &QComboBox::currentIndexChanged, this, [this](int) { rebuildTree({}); });
-        connect(itemBox_, &QComboBox::currentIndexChanged, this, [this](int) { rebuildTree({}); });
+        connect(itemBox_, &QComboBox::currentIndexChanged, this,
+                [this](int) { populateSubItemBox(); rebuildTree({}); });
+        connect(subItemBox_, &QComboBox::currentIndexChanged, this, [this](int) { rebuildTree({}); });
         connect(filter_,  &QLineEdit::textChanged,         this, [this] { rebuildTree({}); });
     }
 
@@ -448,7 +486,9 @@ void SummaryPlotWidget::reload(bool keepSelection)
         Vec v;
         v.node    = node;
         v.keyword = QString::fromStdString(node.keyword);
-        v.item    = itemLabel(node, nx_, ny_);
+        splitItem(node, nx_, ny_, v.itemMain, v.itemSub);
+        v.item    = v.itemSub.isEmpty() ? v.itemMain
+                                        : v.itemMain + QLatin1Char(':') + v.itemSub;
         v.cat     = node.category;
         v.type    = node.type;
         v.key     = v.item.isEmpty() ? v.keyword : (v.keyword + QLatin1Char(':') + v.item);
@@ -501,40 +541,20 @@ void SummaryPlotWidget::rebuildFilters()
     populateItemBox();
 }
 
-// Item box lists only the items (well/group names, region numbers, ...) that
-// belong to the currently selected category, "All items" first.
+// Item box lists the FIRST-LEVEL items (well/group names, region numbers,
+// block cells, ...) of the selected category, "All items" first. The second
+// level (cells of a well, for Connection/Completion/Segment) lives in the
+// cascading Cell box, populated by populateSubItemBox().
 void SummaryPlotWidget::populateItemBox()
 {
     const QString prevItem = itemBox_->currentText();
     const int selCat = catBox_->currentData().toInt();
     QSet<QString> items;
     for (const auto& v : vecs_)
-        if ((selCat < 0 || int(v.cat) == selCat) && !v.item.isEmpty())
-            items.insert(v.item);
+        if ((selCat < 0 || int(v.cat) == selCat) && !v.itemMain.isEmpty())
+            items.insert(v.itemMain);
     QStringList sorted(items.begin(), items.end());
-    // Strict weak ordering over a mix of item styles: numeric tuples
-    // ("7", "12,22,7", "2-3") form one partition sorted component-wise,
-    // ahead of the textual partition (well names) sorted locale-aware.
-    auto asTuple = [](const QString& s) -> QVector<int> {
-        QVector<int> t;
-        const QStringList parts = s.split(QRegularExpression(QStringLiteral("[,-]")));
-        for (const QString& p : parts) {
-            bool ok = false;
-            const int v = p.toInt(&ok);
-            if (!ok) return {};
-            t.push_back(v);
-        }
-        return t;
-    };
-    std::sort(sorted.begin(), sorted.end(),
-              [&asTuple](const QString& a, const QString& b) {
-        const QVector<int> ta = asTuple(a), tb = asTuple(b);
-        if (ta.isEmpty() != tb.isEmpty()) return !ta.isEmpty();  // tuples first
-        if (!ta.isEmpty())
-            return std::lexicographical_compare(ta.begin(), ta.end(),
-                                                tb.begin(), tb.end());
-        return a.localeAwareCompare(b) < 0;
-    });
+    sortItems(sorted);
     itemBox_->blockSignals(true);
     itemBox_->clear();
     itemBox_->addItem(QStringLiteral("All items"), QString());
@@ -542,6 +562,47 @@ void SummaryPlotWidget::populateItemBox()
     int ii = itemBox_->findText(prevItem);
     itemBox_->setCurrentIndex(ii < 0 ? 0 : ii);
     itemBox_->blockSignals(false);
+
+    populateSubItemBox();
+}
+
+// Cell box: visible only when the current category selection carries
+// two-level items (connections/completions/segments); enabled once a
+// specific first-level item (well) is chosen, listing that well's cells.
+void SummaryPlotWidget::populateSubItemBox()
+{
+    const int     selCat  = catBox_->currentData().toInt();
+    const QString selMain = itemBox_->currentData().toString();
+    const QString prevSub = subItemBox_->currentText();
+
+    bool anySub = false;
+    QSet<QString> subs;
+    for (const auto& v : vecs_) {
+        if (selCat >= 0 && int(v.cat) != selCat) continue;
+        if (v.itemSub.isEmpty()) continue;
+        anySub = true;
+        if (!selMain.isEmpty() && v.itemMain == selMain) subs.insert(v.itemSub);
+    }
+
+    subItemBox_->blockSignals(true);
+    subItemBox_->clear();
+    if (!anySub) {
+        subLabel_->hide(); subItemBox_->hide();
+    } else {
+        subLabel_->show(); subItemBox_->show();
+        subItemBox_->addItem(QStringLiteral("All"), QString());
+        if (selMain.isEmpty()) {
+            subItemBox_->setEnabled(false);   // pick a well first
+        } else {
+            subItemBox_->setEnabled(true);
+            QStringList sorted(subs.begin(), subs.end());
+            sortItems(sorted);
+            for (const QString& s : sorted) subItemBox_->addItem(s, s);
+            int si = subItemBox_->findText(prevSub);
+            subItemBox_->setCurrentIndex(si < 0 ? 0 : si);
+        }
+    }
+    subItemBox_->blockSignals(false);
 }
 
 void SummaryPlotWidget::rebuildTree(const QStringList& reselect)
@@ -549,6 +610,8 @@ void SummaryPlotWidget::rebuildTree(const QStringList& reselect)
     const int     selCat  = catBox_->currentData().toInt();
     const int     selType = typeBox_->currentData().toInt();
     const QString selItem = itemBox_->currentData().toString();
+    const QString selSub  = (subItemBox_->isVisible() && subItemBox_->isEnabled())
+                                ? subItemBox_->currentData().toString() : QString();
     const QString search  = filter_->text().trimmed();
 
     // Preserve the selection across any rebuild (filter change or refresh):
@@ -571,7 +634,8 @@ void SummaryPlotWidget::rebuildTree(const QStringList& reselect)
         const Vec& v = vecs_[i];
         if (selCat  >= 0 && int(v.cat)  != selCat)  continue;
         if (selType >= 0 && int(v.type) != selType) continue;
-        if (!selItem.isEmpty() && v.item != selItem) continue;
+        if (!selItem.isEmpty() && v.itemMain != selItem) continue;
+        if (!selSub.isEmpty()  && v.itemSub  != selSub)  continue;
         if (!search.isEmpty()) {
             const QString fn = friendlyName(v.keyword, v.cat);
             if (!v.key.contains(search, Qt::CaseInsensitive) &&
