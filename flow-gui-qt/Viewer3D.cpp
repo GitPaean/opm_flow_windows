@@ -157,8 +157,10 @@ void GridGLWidget::setZScale(double s)
 void GridGLWidget::resetCamera()
 {
     const QVector3D d = bboxMax_ - bboxMin_;
-    dist_ = std::max(1.0f, d.length()) * 1.6f;
-    yaw_ = -35.f; pitch_ = 25.f;
+    dist_ = std::max(1.0f, d.length()) * 1.5f;
+    // three-quarter aerial view: looking down at the reservoir from ~38
+    // degrees elevation, rotated so I/J axes are both visible
+    yaw_ = -50.f; pitch_ = 38.f;
     panOffset_ = QVector3D();
     update();
 }
@@ -281,6 +283,32 @@ void GridGLWidget::paintGL()
         p.setPen(Qt::black);
         p.drawText(14, height() - 14, stepText_);
     }
+
+    // ---- orientation gizmo (bottom right): X east, Y north, Z depth -------
+    if (vertCount_ > 0) {
+        QMatrix4x4 rot;
+        rot.rotate(pitch_, 1, 0, 0);
+        rot.rotate(yaw_,   0, 0, 1);
+        const struct { QVector3D axis; QColor color; const char* name; } axes[] = {
+            { { 1, 0, 0 },  QColor(0xc0, 0x39, 0x2b), "X" },
+            { { 0, 1, 0 },  QColor(0x27, 0x8a, 0x3c), "Y" },
+            { { 0, 0, -1 }, QColor(0x2b, 0x50, 0xc0), "Z" },   // depth (down)
+        };
+        const QPointF origin(width() - 58.0, height() - 46.0);
+        const float L = 30.0f;
+        QFont f = p.font(); f.setBold(true); p.setFont(f);
+        for (const auto& a : axes) {
+            const QVector3D v = rot.map(a.axis);
+            const QPointF tip(origin.x() + v.x() * L, origin.y() - v.y() * L);
+            QPen pen(a.color, 2);
+            p.setPen(pen);
+            p.drawLine(origin, tip);
+            // nudge the label past the tip so it does not sit on the line
+            const QPointF lbl(origin.x() + v.x() * (L + 11) - 4,
+                              origin.y() - v.y() * (L + 11) + 4);
+            p.drawText(lbl, QLatin1String(a.name));
+        }
+    }
     if (!wells_.isEmpty()) {
         // Project each well's top point with the same transform the shader
         // uses (z is scaled by the vertical exaggeration before the MVP).
@@ -366,6 +394,9 @@ Viewer3DWidget::Viewer3DWidget(QWidget* parent)
         zscale_->setValue(3.0);
         zscale_->setSingleStep(0.5);
         row->addWidget(zscale_);
+        auto* bview = new QPushButton(QStringLiteral("Reset view"));
+        row->addWidget(bview);
+        connect(bview, &QPushButton::clicked, this, [this] { gl_->resetCamera(); });
         top->addLayout(row);
 
         connect(bopen, &QPushButton::clicked, this, [this] {
@@ -391,12 +422,15 @@ Viewer3DWidget::Viewer3DWidget(QWidget* parent)
     // --- animation row --------------------------------------------------------
     {
         auto* row = new QHBoxLayout;
+        auto* rewindBtn = new QPushButton(QStringLiteral("|<< Rewind"));
+        rewindBtn->setToolTip(QStringLiteral("stop and go back to the first report step"));
         playBtn_ = new QPushButton(QStringLiteral("Play"));
         playBtn_->setCheckable(true);
         stepSlider_ = new QSlider(Qt::Horizontal);
         stepSlider_->setEnabled(false);
         stepLabel_ = new QLabel(QStringLiteral("-"));
         stepLabel_->setMinimumWidth(160);
+        row->addWidget(rewindBtn);
         row->addWidget(playBtn_);
         row->addWidget(stepSlider_, 1);
         row->addWidget(stepLabel_);
@@ -412,7 +446,19 @@ Viewer3DWidget::Viewer3DWidget(QWidget* parent)
         });
         connect(playBtn_, &QPushButton::toggled, this, [this](bool on) {
             dynSel_->setChecked(true);
-            if (on) playTimer_->start(); else playTimer_->stop();
+            playBtn_->setText(on ? QStringLiteral("Pause") : QStringLiteral("Play"));
+            if (on) {
+                // pressing Play at the end starts over from the beginning
+                if (stepSlider_->value() >= stepSlider_->maximum())
+                    stepSlider_->setValue(0);
+                playTimer_->start();
+            } else {
+                playTimer_->stop();
+            }
+        });
+        connect(rewindBtn, &QPushButton::clicked, this, [this] {
+            playBtn_->setChecked(false);          // stops the timer, text -> Play
+            stepSlider_->setValue(0);
         });
         connect(stepSlider_, &QSlider::valueChanged, this,
                 [this](int v) { stepChanged(v); });
