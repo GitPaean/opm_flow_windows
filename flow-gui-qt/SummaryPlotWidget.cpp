@@ -493,7 +493,8 @@ QString SummaryPlotWidget::activeLabel() const
     return it ? it->text() : QString();
 }
 
-void SummaryPlotWidget::addCase(const QString& label, const QString& smspecPath)
+void SummaryPlotWidget::addCase(const QString& label, const QString& smspecPath,
+                                bool checked)
 {
     for (int i = 0; i < caseList_->count(); ++i)
         if (caseList_->item(i)->data(Qt::UserRole).toString() == smspecPath) return;
@@ -517,11 +518,30 @@ void SummaryPlotWidget::addCase(const QString& label, const QString& smspecPath)
     it->setData(Qt::UserRole, smspecPath);
     it->setToolTip(smspecPath);
     it->setFlags(it->flags() | Qt::ItemIsUserCheckable);
-    it->setCheckState(Qt::Checked);
+    it->setCheckState(checked ? Qt::Checked : Qt::Unchecked);
     caseList_->blockSignals(true);       // no premature replot from itemChanged
     caseList_->addItem(it);
     caseList_->blockSignals(false);
     if (caseList_->count() == 1) caseList_->setCurrentItem(it);
+}
+
+QList<SummaryPlotWidget::CaseInfo> SummaryPlotWidget::caseInfos() const
+{
+    QList<CaseInfo> out;
+    for (int i = 0; i < caseList_->count(); ++i) {
+        const auto* it = caseList_->item(i);
+        out.push_back({ it->text(), it->data(Qt::UserRole).toString(),
+                        it->checkState() == Qt::Checked });
+    }
+    return out;
+}
+
+void SummaryPlotWidget::clearCases()
+{
+    caseList_->blockSignals(true);
+    caseList_->clear();
+    caseList_->blockSignals(false);
+    clearActiveCase();
 }
 
 void SummaryPlotWidget::activateCase(const QString& smspecPath)

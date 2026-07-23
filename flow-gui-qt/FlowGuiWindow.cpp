@@ -23,10 +23,18 @@
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonParseError>
+#include <QKeySequence>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMenu>
+#include <QMenuBar>
 #include <QMessageBox>
 #include <QMimeData>
+#include <QSaveFile>
 #include <QPainter>
 #include <QPixmap>
 #include <QPlainTextEdit>
@@ -89,9 +97,25 @@ QString FlowGuiWindow::findFlowExe()
 
 FlowGuiWindow::FlowGuiWindow()
 {
-    setWindowTitle(QStringLiteral("OPM Flow GUI (Qt)"));
+    updateWindowTitle();
     resize(1000, 720);
     setAcceptDrops(true);
+
+    // --- Project menu: save/restore the whole session setup ----------------
+    {
+        QMenu* m = menuBar()->addMenu(QStringLiteral("&Project"));
+        auto* aNew  = m->addAction(QStringLiteral("&New"));
+        auto* aOpen = m->addAction(QStringLiteral("&Open..."));
+        aOpen->setShortcut(QKeySequence::Open);
+        m->addSeparator();
+        auto* aSave = m->addAction(QStringLiteral("&Save"));
+        aSave->setShortcut(QKeySequence::Save);
+        auto* aSaveAs = m->addAction(QStringLiteral("Save &As..."));
+        connect(aNew,    &QAction::triggered, this, [this] { newProject(); });
+        connect(aOpen,   &QAction::triggered, this, [this] { openProject(); });
+        connect(aSave,   &QAction::triggered, this, [this] { saveProject(); });
+        connect(aSaveAs, &QAction::triggered, this, [this] { saveProjectAs(); });
+    }
 
     tabs_ = new QTabWidget(this);
 
@@ -766,6 +790,184 @@ void FlowGuiWindow::viewJobPrt(int row)
 
     dlg->show();
     searchEdit->setFocus();
+}
+
+// ---------------------------------------------------------------------------
+// Projects: a human-readable .opmproj JSON file holding the deck queue, the
+// run options (ranks/threads/output/extra args) and the Results-tab cases.
+void FlowGuiWindow::updateWindowTitle()
+{
+    QString t = QStringLiteral("OPM Flow GUI (Qt)");
+    if (!projectPath_.isEmpty())
+        t += QStringLiteral("  -  ") + QFileInfo(projectPath_).fileName();
+    setWindowTitle(t);
+}
+
+void FlowGuiWindow::newProject()
+{
+    if (proc_) { QMessageBox::information(this, QLatin1String(kAppName),
+        QStringLiteral("Stop the running queue first.")); return; }
+    jobs_.clear();
+    jobTable_->setRowCount(0);
+    current_ = -1;
+#ifdef FLOWGUI_HAVE_SUMMARY
+    if (summary_) summary_->clearCases();
+#endif
+    projectPath_.clear();
+    updateWindowTitle();
+    appendLog(QStringLiteral("\nnew project - queue and cases cleared\n"));
+}
+
+void FlowGuiWindow::openProject()
+{
+    if (proc_) { QMessageBox::information(this, QLatin1String(kAppName),
+        QStringLiteral("Stop the running queue first.")); return; }
+    QSettings s(QStringLiteral("OPM"), QLatin1String(kAppName));
+    const QString f = QFileDialog::getOpenFileName(
+        this, QStringLiteral("Open project"),
+        s.value(QStringLiteral("lastProjectDir")).toString(),
+        QStringLiteral("OPM Flow GUI project (*.opmproj);;All files (*)"));
+    if (f.isEmpty()) return;
+    if (readProject(f)) {
+        projectPath_ = f;
+        s.setValue(QStringLiteral("lastProjectDir"), QFileInfo(f).absolutePath());
+        updateWindowTitle();
+    }
+}
+
+void FlowGuiWindow::saveProject()
+{
+    if (projectPath_.isEmpty()) { saveProjectAs(); return; }
+    if (writeProject(projectPath_))
+        appendLog(QStringLiteral("project saved: %1\n")
+                      .arg(QDir::toNativeSeparators(projectPath_)));
+}
+
+void FlowGuiWindow::saveProjectAs()
+{
+    QSettings s(QStringLiteral("OPM"), QLatin1String(kAppName));
+    QString f = QFileDialog::getSaveFileName(
+        this, QStringLiteral("Save project as"),
+        s.value(QStringLiteral("lastProjectDir")).toString(),
+        QStringLiteral("OPM Flow GUI project (*.opmproj)"));
+    if (f.isEmpty()) return;
+    if (!f.endsWith(QStringLiteral(".opmproj"), Qt::CaseInsensitive))
+        f += QStringLiteral(".opmproj");
+    if (writeProject(f)) {
+        projectPath_ = f;
+        s.setValue(QStringLiteral("lastProjectDir"), QFileInfo(f).absolutePath());
+        updateWindowTitle();
+        appendLog(QStringLiteral("project saved: %1\n").arg(QDir::toNativeSeparators(f)));
+    }
+}
+
+bool FlowGuiWindow::writeProject(const QString& path)
+{
+    QJsonObject root;
+    root[QStringLiteral("format")]  = QStringLiteral("opm-flow-gui-project");
+    root[QStringLiteral("version")] = 1;
+
+    QJsonArray decks;
+    for (const Job& j : jobs_) decks.append(QDir::fromNativeSeparators(j.deck));
+    root[QStringLiteral("decks")] = decks;
+
+    root[QStringLiteral("ranks")]      = ranksSpin_->value();
+    root[QStringLiteral("threads")]    = threadsSpin_->value();
+    root[QStringLiteral("outputMode")] = outdirMode_->currentIndex();
+    root[QStringLiteral("outputDir")]  = QDir::fromNativeSeparators(outdirEdit_->text());
+    root[QStringLiteral("extraOptions")] = extraEdit_->text();
+
+#ifdef FLOWGUI_HAVE_SUMMARY
+    if (summary_) {
+        QJsonArray cases;
+        for (const auto& c : summary_->caseInfos()) {
+            QJsonObject o;
+            o[QStringLiteral("label")]   = c.label;
+            o[QStringLiteral("path")]    = QDir::fromNativeSeparators(c.path);
+            o[QStringLiteral("checked")] = c.checked;
+            cases.append(o);
+        }
+        root[QStringLiteral("cases")] = cases;
+    }
+#endif
+
+    QSaveFile file(path);
+    if (!file.open(QIODevice::WriteOnly)) {
+        QMessageBox::warning(this, QLatin1String(kAppName),
+            QStringLiteral("Could not write %1").arg(QDir::toNativeSeparators(path)));
+        return false;
+    }
+    file.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
+    if (!file.commit()) {
+        QMessageBox::warning(this, QLatin1String(kAppName),
+            QStringLiteral("Could not write %1").arg(QDir::toNativeSeparators(path)));
+        return false;
+    }
+    return true;
+}
+
+bool FlowGuiWindow::readProject(const QString& path)
+{
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly)) {
+        QMessageBox::warning(this, QLatin1String(kAppName),
+            QStringLiteral("Could not open %1").arg(QDir::toNativeSeparators(path)));
+        return false;
+    }
+    QJsonParseError perr{};
+    const QJsonDocument doc = QJsonDocument::fromJson(f.readAll(), &perr);
+    const QJsonObject root = doc.object();
+    if (perr.error != QJsonParseError::NoError ||
+        root[QStringLiteral("format")].toString() != QLatin1String("opm-flow-gui-project")) {
+        QMessageBox::warning(this, QLatin1String(kAppName),
+            QStringLiteral("%1 is not an OPM Flow GUI project file")
+                .arg(QFileInfo(path).fileName()));
+        return false;
+    }
+
+    // replace the queue
+    jobs_.clear();
+    jobTable_->setRowCount(0);
+    current_ = -1;
+    int missingDecks = 0;
+    QStringList deckFiles;
+    for (const auto& v : root[QStringLiteral("decks")].toArray()) {
+        const QString d = v.toString();
+        if (QFileInfo::exists(d)) deckFiles << d; else ++missingDecks;
+    }
+
+    // options
+    ranksSpin_->setValue(root[QStringLiteral("ranks")].toInt(1));
+    threadsSpin_->setValue(root[QStringLiteral("threads")].toInt(1));
+    outdirMode_->setCurrentIndex(root[QStringLiteral("outputMode")].toInt(0));
+    outdirEdit_->setText(QDir::toNativeSeparators(root[QStringLiteral("outputDir")].toString()));
+    outdirEdit_->setEnabled(outdirMode_->currentIndex() == 1);
+    extraEdit_->setText(root[QStringLiteral("extraOptions")].toString());
+
+    // cases (before decks: addDecks may auto-register cases, dedup handles it)
+    int missingCases = 0;
+#ifdef FLOWGUI_HAVE_SUMMARY
+    if (summary_) {
+        summary_->clearCases();
+        for (const auto& v : root[QStringLiteral("cases")].toArray()) {
+            const QJsonObject o = v.toObject();
+            const QString p = o[QStringLiteral("path")].toString();
+            if (!QFileInfo::exists(p)) { ++missingCases; continue; }
+            summary_->addCase(o[QStringLiteral("label")].toString(), p,
+                              o[QStringLiteral("checked")].toBool(true));
+        }
+    }
+#endif
+    addDecks(deckFiles);
+
+    QString msg = QStringLiteral("\nproject loaded: %1 (%2 decks, %3 cases")
+        .arg(QFileInfo(path).fileName())
+        .arg(deckFiles.size())
+        .arg(root[QStringLiteral("cases")].toArray().size() - missingCases);
+    if (missingDecks) msg += QStringLiteral("; %1 missing deck(s) skipped").arg(missingDecks);
+    if (missingCases) msg += QStringLiteral("; %1 missing case(s) skipped").arg(missingCases);
+    appendLog(msg + QStringLiteral(")\n"));
+    return true;
 }
 
 void FlowGuiWindow::notifyQueueDone(int okCount, int failCount)

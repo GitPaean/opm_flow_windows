@@ -38,10 +38,15 @@ public:
 
     // Register a run so it appears in the case selector. Called when a job
     // starts (the SMSPEC appears shortly after); missing files are fine.
-    void addCase(const QString& label, const QString& smspecPath);
+    void addCase(const QString& label, const QString& smspecPath, bool checked = true);
 
     // Make the given registered case the active one (no-op if unknown).
     void activateCase(const QString& smspecPath);
+
+    // Project support: enumerate / clear the loaded cases.
+    struct CaseInfo { QString label; QString path; bool checked; };
+    QList<CaseInfo> caseInfos() const;
+    void clearCases();
 
 private:
     // one plottable summary vector, parsed from an ESmry SummaryNode

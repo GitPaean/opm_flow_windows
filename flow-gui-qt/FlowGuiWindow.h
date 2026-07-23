@@ -80,6 +80,7 @@ private:
     QString       lastFinishedSmspec_;  // for the notification click
     QString       logPend_;       // batched log text (flushed every 100 ms)
     QTimer*       logTimer_ = nullptr;
+    QString       projectPath_;   // current .opmproj file ("" = unsaved)
 
     // helpers
     static QString findFlowExe();
@@ -97,6 +98,15 @@ private:
     void skipCurrentJob();      // kill current job, continue with the next
     void validateSelectedDeck();
     void flushLog();
+
+    // projects (.opmproj)
+    void newProject();
+    void openProject();
+    void saveProject();
+    void saveProjectAs();
+    bool writeProject(const QString& path);
+    bool readProject(const QString& path);
+    void updateWindowTitle();
     void openJobFolder(int row);
     void viewJobPrt(int row);
     void notifyQueueDone(int okCount, int failCount);

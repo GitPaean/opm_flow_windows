@@ -10,6 +10,11 @@ the queue sequentially, and watch the live simulator log. A running job
 (including all of its MPI ranks) can be stopped at any time.
 
 ## Features
+- **Projects** — the *Project* menu saves/loads a `.opmproj` file (readable
+  JSON) holding the deck queue, MPI ranks / OMP threads, output policy and
+  directory, extra flow arguments, and the Results-tab cases with their
+  checked state — so a whole study setup is one *Open* away (Ctrl+O/Ctrl+S;
+  missing decks/cases are skipped with a note in the log).
 - **Job queue table** of `*.DATA` input decks (add / remove / clear,
   multi-select, **drag & drop** onto the window) with per-job **status,
   progress bar, elapsed time and ETA** parsed live from flow's
