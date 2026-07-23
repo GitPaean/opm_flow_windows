@@ -17,9 +17,16 @@ the queue sequentially, and watch the live simulator log. A running job
   for the selected job.
 - **Results tab** (when built with summary support): plot summary vectors
   (FOPR, WBHP, ...) straight from a run's `SMSPEC`/`UNSMRY` via opm-common's
-  `EclIO::ESmry` — case selector fed by the queue, wildcard vector filter,
-  multi-curve Qt Charts plot, and 10 s auto-refresh while a simulation is
-  still writing. Any external `SMSPEC` can be opened too.
+  `EclIO::ESmry`. The **vector picker is grouped and filtered** — using
+  opm-common's own `SummaryNode` classification it offers **Category**
+  (Field / Well / Group / Region / Block / ... — only those present),
+  **Type** (Rate / Total / Ratio / Pressure / ...), an **Item** dropdown
+  (the wells / groups / region numbers that exist) and a text search, then a
+  tree grouped by quantity with human-readable names (WOPR → "Oil Production
+  Rate", ~130 mnemonics). Multi-select plots several curves, with a second
+  Y axis when units differ (e.g. rate vs. pressure); 10 s auto-refresh
+  updates the plot while a simulation is still writing. Any external
+  `SMSPEC` can be opened too.
 - **Simulator** — always the `flow`(`.exe`) shipped next to the GUI (in a
   development checkout it falls back to the harness build tree); the resolved
   path is shown in the log at startup. `flow` contains every model variant,
