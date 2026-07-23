@@ -11,6 +11,7 @@
 */
 #pragma once
 
+#include <QColor>
 #include <QMatrix4x4>
 #include <QOpenGLBuffer>
 #include <QOpenGLFunctions>
@@ -48,6 +49,7 @@ public:
     struct WellPath {
         QString              name;
         QVector<QVector3D>   points;    // center-relative coordinates
+        QColor               color { 0x55, 0x00, 0x00 };
     };
 
     // Geometry: 36 vertices per cell (6 faces x 2 triangles), center-relative.

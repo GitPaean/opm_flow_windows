@@ -244,10 +244,12 @@ void GridGLWidget::paintGL()
         prog_->disableAttributeArray(1);
         prog_->disableAttributeArray(2);
         prog_->setAttributeValue(1, QVector3D(0, 0, 1));
-        prog_->setAttributeValue(2, QVector3D(0.55f, 0.0f, 0.0f));
         vboPos_.release();
         for (const WellPath& w : wells_) {
             if (w.points.size() < 2) continue;
+            prog_->setAttributeValue(2, QVector3D(float(w.color.redF()),
+                                                  float(w.color.greenF()),
+                                                  float(w.color.blueF())));
             std::vector<float> tmp;
             tmp.reserve(size_t(w.points.size()) * 3);
             for (const auto& p : w.points) { tmp.push_back(p.x()); tmp.push_back(p.y()); tmp.push_back(p.z()); }
@@ -284,6 +286,23 @@ void GridGLWidget::paintGL()
         p.drawText(14, height() - 14, stepText_);
     }
 
+    // ---- well type legend (top right) --------------------------------------
+    if (!wells_.isEmpty()) {
+        struct { QColor c; const char* t; } entries[] = {
+            { QColor(0x1e, 0x8a, 0x3c), "producer" },
+            { QColor(0x1f, 0x4f, 0xc0), "water inj" },
+            { QColor(0xc0, 0x29, 0x1e), "gas inj" },
+        };
+        int ly = 22;
+        for (const auto& e : entries) {
+            p.setPen(QPen(e.c, 3));
+            p.drawLine(width() - 92, ly - 4, width() - 72, ly - 4);
+            p.setPen(Qt::black);
+            p.drawText(width() - 66, ly, QLatin1String(e.t));
+            ly += 17;
+        }
+    }
+
     // ---- orientation gizmo (bottom right): X east, Y north, Z depth -------
     if (vertCount_ > 0) {
         QMatrix4x4 rot;
@@ -313,7 +332,6 @@ void GridGLWidget::paintGL()
         // Project each well's top point with the same transform the shader
         // uses (z is scaled by the vertical exaggeration before the MVP).
         const QMatrix4x4 m2 = mvp();
-        p.setPen(QColor(0x55, 0x00, 0x00));
         for (const WellPath& w : wells_) {
             if (w.points.isEmpty()) continue;
             const QVector3D& t = w.points.front();
@@ -322,6 +340,7 @@ void GridGLWidget::paintGL()
             if (clip.w() <= 0) continue;
             const float sx = (clip.x() / clip.w() * 0.5f + 0.5f) * width();
             const float sy = (1.0f - (clip.y() / clip.w() * 0.5f + 0.5f)) * height();
+            p.setPen(w.color.darker(120));
             p.drawText(QPointF(sx + 4, sy - 4), w.name);
         }
     }
@@ -702,6 +721,15 @@ void Viewer3DWidget::showWells()
         for (int w = 0; w < nwells; ++w) {
             GridGLWidget::WellPath wp;
             wp.name = QString::fromStdString(zwel[size_t(w) * nzwelz]).trimmed();
+            // IWEL well type (verified against Norne): 1 producer,
+            // 2 oil injector, 3 water injector, 4 gas injector
+            switch (iwel[size_t(w) * niwelz + 6]) {
+            case 1:  wp.color = QColor(0x1e, 0x8a, 0x3c); break;   // producer: green
+            case 2:  wp.color = QColor(0xd0, 0x7c, 0x1a); break;   // oil inj: orange
+            case 3:  wp.color = QColor(0x1f, 0x4f, 0xc0); break;   // water inj: blue
+            case 4:  wp.color = QColor(0xc0, 0x29, 0x1e); break;   // gas inj: red
+            default: wp.color = QColor(0x55, 0x55, 0x55); break;   // unknown: grey
+            }
             const int hi = iwel[size_t(w) * niwelz],
                       hj = iwel[size_t(w) * niwelz + 1];
             for (int c = 0; c < ncwmax; ++c) {
