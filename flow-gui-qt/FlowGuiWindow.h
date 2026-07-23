@@ -26,6 +26,7 @@ class QSpinBox;
 class QSystemTrayIcon;
 class QTableWidget;
 class QTabWidget;
+class QTimer;
 class SummaryPlotWidget;
 
 class FlowGuiWindow : public QMainWindow
@@ -62,6 +63,7 @@ private:
     QLineEdit*      extraEdit_   = nullptr;
     QPushButton*    runBtn_      = nullptr;
     QPushButton*    stopBtn_     = nullptr;
+    QPushButton*    skipBtn_     = nullptr;
     QPlainTextEdit* logView_     = nullptr;
     QSystemTrayIcon* tray_       = nullptr;
     SummaryPlotWidget* summary_  = nullptr;   // null when built without summary
@@ -69,11 +71,15 @@ private:
     // run state
     QString       exePath_;       // the flow executable shipped with this GUI
     QProcess*     proc_    = nullptr;
+    QProcess*     vproc_   = nullptr;   // one-off deck validation run
     QVector<Job>  jobs_;
     int           current_ = -1;  // index into jobs_ of the running job
     bool          aborted_ = false;
     QElapsedTimer jobTimer_;
     QString       lineBuf_;       // partial last line of process output
+    QString       lastFinishedSmspec_;  // for the notification click
+    QString       logPend_;       // batched log text (flushed every 100 ms)
+    QTimer*       logTimer_ = nullptr;
 
     // helpers
     static QString findFlowExe();
@@ -86,7 +92,11 @@ private:
     void parseProgress(const QString& chunk);
     QString jobEta(const Job& j) const;
     void startNextJob();
-    void stopCurrentJob();
+    void killCurrentTree();
+    void stopCurrentJob();      // kill current job AND abort the queue
+    void skipCurrentJob();      // kill current job, continue with the next
+    void validateSelectedDeck();
+    void flushLog();
     void openJobFolder(int row);
     void viewJobPrt(int row);
     void notifyQueueDone(int okCount, int failCount);

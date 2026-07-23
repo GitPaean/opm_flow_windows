@@ -12,6 +12,7 @@
 #include <QString>
 #include <QVector>
 
+#include <map>
 #include <memory>
 
 #include <opm/io/eclipse/SummaryNode.hpp>
@@ -37,6 +38,9 @@ public:
     // Register a run so it appears in the case selector. Called when a job
     // starts (the SMSPEC appears shortly after); missing files are fine.
     void addCase(const QString& label, const QString& smspecPath);
+
+    // Make the given registered case the active one (no-op if unknown).
+    void activateCase(const QString& smspecPath);
 
 private:
     // one plottable summary vector, parsed from an ESmry SummaryNode
@@ -64,12 +68,17 @@ private:
     QChart*      chart_     = nullptr;
     QCheckBox*   autoRef_   = nullptr;
     QCheckBox*   dateAxis_  = nullptr;
+    QCheckBox*   compare_   = nullptr;   // overlay all loaded cases
+    QCheckBox*   markers_   = nullptr;   // show data points on the curves
     QLabel*      status_    = nullptr;
     QTimer*      timer_     = nullptr;
 
-    std::unique_ptr<Opm::EclIO::ESmry> smry_;
-    QVector<Vec> vecs_;
+    std::unique_ptr<Opm::EclIO::ESmry> smry_;   // the ACTIVE case
+    QVector<Vec> vecs_;                          // parsed from the active case
     int nx_ = 0, ny_ = 0, nz_ = 0;   // grid dims from SMSPEC DIMENS (0 = unknown)
+    // lazily-opened other cases for comparison plots (path -> reader);
+    // cleared on every reload so refreshes see fresh data
+    std::map<QString, std::unique_ptr<Opm::EclIO::ESmry>> others_;
 
     void browseCase();
     void reload(bool keepSelection);

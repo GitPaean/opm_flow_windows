@@ -189,13 +189,24 @@ FlowGuiWindow::FlowGuiWindow()
     {
         auto* row = new QHBoxLayout;
         runBtn_  = new QPushButton(QStringLiteral("Run queue"));
-        stopBtn_ = new QPushButton(QStringLiteral("Stop job"));
-        auto* bclear = new QPushButton(QStringLiteral("Clear log"));
+        stopBtn_ = new QPushButton(QStringLiteral("Stop queue"));
+        auto* skipBtn = new QPushButton(QStringLiteral("Skip job"));
+        auto* valBtn  = new QPushButton(QStringLiteral("Validate deck"));
+        auto* bclear  = new QPushButton(QStringLiteral("Clear log"));
         stopBtn_->setEnabled(false);
+        skipBtn->setEnabled(false);
+        stopBtn_->setToolTip(QStringLiteral("kill the running job and abort the remaining queue"));
+        skipBtn->setToolTip(QStringLiteral("kill the running job and continue with the next one"));
+        valBtn->setToolTip(QStringLiteral("parse-and-initialize the selected deck without running "
+                                          "the simulation (flow --enable-dry-run)"));
         connect(runBtn_,  &QPushButton::clicked, this, [this] { onRun(); });
         connect(stopBtn_, &QPushButton::clicked, this, [this] { stopCurrentJob(); });
+        connect(skipBtn,  &QPushButton::clicked, this, [this] { skipCurrentJob(); });
+        connect(valBtn,   &QPushButton::clicked, this, [this] { validateSelectedDeck(); });
         connect(bclear,   &QPushButton::clicked, this, [this] { logView_->clear(); });
-        row->addWidget(runBtn_); row->addWidget(stopBtn_); row->addWidget(bclear);
+        skipBtn_ = skipBtn;   // enabled/disabled together with Stop in setRunning()
+        row->addWidget(runBtn_); row->addWidget(stopBtn_); row->addWidget(skipBtn);
+        row->addWidget(valBtn);  row->addWidget(bclear);
         row->addStretch(1);
         top->addLayout(row);
     }
@@ -252,6 +263,12 @@ void FlowGuiWindow::loadSettings()
     outdirEdit_->setText(s.value(QStringLiteral("outdir")).toString());
     outdirEdit_->setEnabled(outdirMode_->currentIndex() == 1);
     extraEdit_->setText(s.value(QStringLiteral("extra")).toString());
+
+    // Restore the job queue from the previous session (decks that still exist).
+    QStringList restored;
+    for (const QString& d : s.value(QStringLiteral("queue")).toStringList())
+        if (QFileInfo::exists(d)) restored << d;
+    if (!restored.isEmpty()) addDecks(restored);
 }
 
 void FlowGuiWindow::saveSettings()
@@ -262,6 +279,10 @@ void FlowGuiWindow::saveSettings()
     s.setValue(QStringLiteral("outmode"), outdirMode_->currentIndex());
     s.setValue(QStringLiteral("outdir"),  outdirEdit_->text());
     s.setValue(QStringLiteral("extra"),   extraEdit_->text());
+
+    QStringList queue;
+    for (const Job& j : jobs_) queue << j.deck;
+    s.setValue(QStringLiteral("queue"), queue);
 }
 
 void FlowGuiWindow::closeEvent(QCloseEvent* ev)
@@ -282,22 +303,37 @@ void FlowGuiWindow::closeEvent(QCloseEvent* ev)
 void FlowGuiWindow::dragEnterEvent(QDragEnterEvent* ev)
 {
     if (ev->mimeData()->hasUrls()) {
-        for (const QUrl& u : ev->mimeData()->urls())
-            if (u.toLocalFile().endsWith(QStringLiteral(".data"), Qt::CaseInsensitive)) {
+        for (const QUrl& u : ev->mimeData()->urls()) {
+            const QString f = u.toLocalFile();
+            if (f.endsWith(QStringLiteral(".data"),   Qt::CaseInsensitive) ||
+                f.endsWith(QStringLiteral(".smspec"), Qt::CaseInsensitive)) {
                 ev->acceptProposedAction();
                 return;
             }
+        }
     }
 }
 
 void FlowGuiWindow::dropEvent(QDropEvent* ev)
 {
-    QStringList files;
+    QStringList decks;
+    QString smspec;
     for (const QUrl& u : ev->mimeData()->urls()) {
         const QString f = u.toLocalFile();
-        if (f.endsWith(QStringLiteral(".data"), Qt::CaseInsensitive)) files << f;
+        if (f.endsWith(QStringLiteral(".data"), Qt::CaseInsensitive))
+            decks << f;
+        else if (f.endsWith(QStringLiteral(".smspec"), Qt::CaseInsensitive))
+            smspec = f;
     }
-    addDecks(files);
+    addDecks(decks);
+#ifdef FLOWGUI_HAVE_SUMMARY
+    // Dropping a finished run's SMSPEC opens it straight in the Results tab.
+    if (!smspec.isEmpty() && summary_) {
+        summary_->addCase(QFileInfo(smspec).completeBaseName(), smspec);
+        summary_->activateCase(smspec);
+        tabs_->setCurrentWidget(summary_);
+    }
+#endif
 }
 
 void FlowGuiWindow::onAddDecks()
@@ -311,6 +347,17 @@ void FlowGuiWindow::addDecks(const QStringList& files)
 {
     for (const QString& f : files) {
         Job j; j.deck = QDir::toNativeSeparators(f);
+#ifdef FLOWGUI_HAVE_SUMMARY
+        // If this deck already has finished output next to it, register the
+        // case so its results are immediately available in the Results tab.
+        if (summary_) {
+            const QFileInfo di(f);
+            const QString prev = di.absolutePath() + '/' + di.completeBaseName()
+                + QStringLiteral("_run/") + di.completeBaseName() + QStringLiteral(".SMSPEC");
+            if (QFileInfo::exists(prev))
+                summary_->addCase(di.completeBaseName(), prev);
+        }
+#endif
         jobs_.push_back(j);
         const int r = jobTable_->rowCount();
         jobTable_->insertRow(r);
@@ -346,7 +393,23 @@ void FlowGuiWindow::onBrowseOutdir()
 // ---------------------------------------------------------------------------
 void FlowGuiWindow::appendLog(const QString& text)
 {
-    QString clean = text;
+    // Batch appends and flush at most every 100 ms: very chatty simulations
+    // would otherwise spend the UI thread's time on per-chunk text layout.
+    logPend_ += text;
+    if (!logTimer_) {
+        logTimer_ = new QTimer(this);
+        logTimer_->setSingleShot(true);
+        logTimer_->setInterval(100);
+        connect(logTimer_, &QTimer::timeout, this, [this] { flushLog(); });
+    }
+    if (!logTimer_->isActive()) logTimer_->start();
+}
+
+void FlowGuiWindow::flushLog()
+{
+    if (logPend_.isEmpty()) return;
+    QString clean;
+    clean.swap(logPend_);
     clean.remove(QLatin1Char('\r'));
 
     // Append without disturbing the user's scroll position: stick to the
@@ -363,6 +426,7 @@ void FlowGuiWindow::setRunning(bool on)
 {
     runBtn_->setEnabled(!on);
     stopBtn_->setEnabled(on);
+    if (skipBtn_) skipBtn_->setEnabled(on);
 }
 
 QString FlowGuiWindow::jobEta(const Job& j) const
@@ -540,6 +604,11 @@ void FlowGuiWindow::startNextJob()
             jj.exitCode  = code;
             jj.state = (st == QProcess::CrashExit) ? Job::Stopped
                        : (code == 0) ? Job::Done : Job::Failed;
+            if (jj.state == Job::Done) {
+                const QFileInfo di(jj.deck);
+                lastFinishedSmspec_ = jj.outdir + '/' + di.completeBaseName()
+                                    + QStringLiteral(".SMSPEC");
+            }
             appendLog(QStringLiteral("\n---- job finished, exit code %1%2, %3 ----\n")
                           .arg(code)
                           .arg(st == QProcess::CrashExit ? QStringLiteral(" (terminated)") : QString())
@@ -553,11 +622,9 @@ void FlowGuiWindow::startNextJob()
     proc_->start(program, args);
 }
 
-void FlowGuiWindow::stopCurrentJob()
+void FlowGuiWindow::killCurrentTree()
 {
-    aborted_ = true;
     if (!proc_ || proc_->state() == QProcess::NotRunning) return;
-    appendLog(QStringLiteral("\n*** stopping current job ***\n"));
 #ifdef Q_OS_WIN
     QProcess::startDetached(QStringLiteral("taskkill"),
         { QStringLiteral("/PID"), QString::number(proc_->processId()),
@@ -565,6 +632,68 @@ void FlowGuiWindow::stopCurrentJob()
 #else
     ::kill(-static_cast<pid_t>(proc_->processId()), SIGKILL);
 #endif
+}
+
+void FlowGuiWindow::stopCurrentJob()
+{
+    aborted_ = true;
+    if (!proc_ || proc_->state() == QProcess::NotRunning) return;
+    appendLog(QStringLiteral("\n*** stopping current job and aborting the queue ***\n"));
+    killCurrentTree();
+}
+
+void FlowGuiWindow::skipCurrentJob()
+{
+    if (!proc_ || proc_->state() == QProcess::NotRunning) return;
+    appendLog(QStringLiteral("\n*** skipping current job, continuing with the queue ***\n"));
+    killCurrentTree();
+    // aborted_ stays false: the finished handler marks this job Stopped and
+    // startNextJob() moves on to the next queued deck.
+}
+
+void FlowGuiWindow::validateSelectedDeck()
+{
+    if (vproc_) {
+        QMessageBox::information(this, QLatin1String(kAppName),
+            QStringLiteral("A validation is already running."));
+        return;
+    }
+    const int row = jobTable_->currentRow();
+    if (row < 0 || row >= jobs_.size()) {
+        QMessageBox::information(this, QLatin1String(kAppName),
+            QStringLiteral("Select a deck in the queue to validate."));
+        return;
+    }
+    if (exePath_.isEmpty() || !QFileInfo::exists(exePath_)) exePath_ = findFlowExe();
+    if (exePath_.isEmpty()) return;
+
+    const QString deck = jobs_[row].deck;
+    const QString out  = QDir::temp().filePath(QStringLiteral("flowgui_validate"));
+    QDir().mkpath(out);
+
+    appendLog(QStringLiteral("\n==== validating %1 (parse + init only) ====\n")
+                  .arg(QFileInfo(deck).fileName()));
+    vproc_ = new QProcess(this);
+    vproc_->setProcessChannelMode(QProcess::MergedChannels);
+    vproc_->setWorkingDirectory(QFileInfo(deck).absolutePath());
+    connect(vproc_, &QProcess::readyRead, this, [this] {
+        appendLog(QString::fromLocal8Bit(vproc_->readAll()));
+    });
+    connect(vproc_, &QProcess::errorOccurred, this, [this](QProcess::ProcessError) {
+        appendLog(QStringLiteral("validation FAILED to start: %1\n").arg(vproc_->errorString()));
+    });
+    connect(vproc_, &QProcess::finished, this, [this, deck](int code, QProcess::ExitStatus) {
+        appendLog(code == 0
+            ? QStringLiteral("==== %1: deck validates OK ====\n").arg(QFileInfo(deck).fileName())
+            : QStringLiteral("==== %1: validation FAILED (exit %2) - see messages above ====\n")
+                  .arg(QFileInfo(deck).fileName()).arg(code));
+        vproc_->deleteLater();
+        vproc_ = nullptr;
+    });
+    vproc_->start(exePath_, { deck,
+                              QStringLiteral("--enable-dry-run=true"),
+                              QStringLiteral("--output-dir=") + out,
+                              QStringLiteral("--threads-per-process=1") });
 }
 
 // ---------------------------------------------------------------------------
@@ -598,13 +727,45 @@ void FlowGuiWindow::viewJobPrt(int row)
     dlg->setWindowTitle(QFileInfo(prt).fileName());
     dlg->resize(900, 650);
     auto* lay = new QVBoxLayout(dlg);
+
     auto* view = new QPlainTextEdit;
     view->setReadOnly(true);
     view->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
     view->setPlainText(text);
     view->moveCursor(QTextCursor::End);
+
+    // search row: free text (Enter/Find = next match, wraps) and a
+    // jump-to-problems button cycling through Error/Warning/Problem lines
+    auto* srow = new QHBoxLayout;
+    auto* searchEdit = new QLineEdit;
+    searchEdit->setPlaceholderText(QStringLiteral("search in PRT..."));
+    auto* bfind = new QPushButton(QStringLiteral("Find next"));
+    auto* bprob = new QPushButton(QStringLiteral("Next problem"));
+    srow->addWidget(searchEdit, 1);
+    srow->addWidget(bfind);
+    srow->addWidget(bprob);
+    lay->addLayout(srow);
     lay->addWidget(view);
+
+    auto findWrapped = [view](auto&& needle) {
+        if (!view->find(needle)) {                 // wrap to the top once
+            view->moveCursor(QTextCursor::Start);
+            view->find(needle);
+        }
+    };
+    auto doFind = [findWrapped, searchEdit] {
+        const QString t = searchEdit->text();
+        if (!t.isEmpty()) findWrapped(t);
+    };
+    connect(bfind, &QPushButton::clicked, view, doFind);
+    connect(searchEdit, &QLineEdit::returnPressed, view, doFind);
+    connect(bprob, &QPushButton::clicked, view, [findWrapped] {
+        findWrapped(QRegularExpression(QStringLiteral("\\b(Error|Warning|Problem)\\b"),
+                                       QRegularExpression::CaseInsensitiveOption));
+    });
+
     dlg->show();
+    searchEdit->setFocus();
 }
 
 void FlowGuiWindow::notifyQueueDone(int okCount, int failCount)
@@ -618,6 +779,19 @@ void FlowGuiWindow::notifyQueueDone(int okCount, int failCount)
         p.drawText(px.rect(), Qt::AlignCenter, QStringLiteral("F"));
         p.end();
         tray_ = new QSystemTrayIcon(QIcon(px), this);
+        // Clicking the notification brings the window up and opens the last
+        // finished case in the Results tab.
+        connect(tray_, &QSystemTrayIcon::messageClicked, this, [this] {
+            showNormal(); raise(); activateWindow();
+#ifdef FLOWGUI_HAVE_SUMMARY
+            if (summary_ && !lastFinishedSmspec_.isEmpty()) {
+                summary_->addCase(QFileInfo(lastFinishedSmspec_).completeBaseName(),
+                                  lastFinishedSmspec_);
+                summary_->activateCase(lastFinishedSmspec_);
+                tabs_->setCurrentWidget(summary_);
+            }
+#endif
+        });
     }
     tray_->show();
     tray_->showMessage(QStringLiteral("OPM Flow"),

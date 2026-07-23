@@ -85,8 +85,8 @@ Once merged, drop `-OpmOrg/-OpmBranch`.
 | `setup-env.ps1` | Loads MSVC (vcvars64) + vcpkg (+ MS-MPI) into the shell |
 | `compat/include/` | POSIX/Fortran shim headers MSVC lacks (getopt, unistd, sys/*, FCMacros) |
 | `patches/` | DUNE Windows patches, auto-applied after the DUNE checkout |
-| `flow-gui/` | Cross-platform (Windows/Linux) GUI front end for running flow — deck queue, MPI/OpenMP options, live log (see its README) |
-| `flow-gui-qt/` | Qt 6 version of the GUI (Windows/Linux/macOS) — same features plus persistent settings; the base for further extension (see its README) |
+| `flow-gui-qt/` | **The** GUI for running flow (Windows/Linux/macOS): job queue with live progress/ETA, deck validation, summary-vector plotting with case comparison, persistent settings (see its README) |
+| `flow-gui/` | deprecated FLTK predecessor of flow-gui-qt (kept for reference / minimal-dependency builds) |
 | `package-flow.ps1` | Stage a redistributable package (bin + runtimes + prerequisites) and zip it |
 | `installer/` | Inno Setup script producing `OPM-Flow-<ver>-Setup.exe` (see [PACKAGING.md](PACKAGING.md)) |
 | `packaging/` | MSIX build script for sideloading / Microsoft Store (see [PACKAGING.md](PACKAGING.md)) |

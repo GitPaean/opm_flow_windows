@@ -33,9 +33,24 @@ the queue sequentially, and watch the live simulator log. A running job
   development checkout it falls back to the harness build tree); the resolved
   path is shown in the log at startup. `flow` contains every model variant,
   so no picker is needed.
-- **Completion notification** — a system-tray toast when the queue finishes,
-  and an oversubscription note in the log when ranks × threads exceed the
-  machine's logical cores.
+- **Queue control** — *Stop queue* kills the running job and aborts the rest;
+  *Skip job* kills the running job and continues with the next; *Validate
+  deck* parse-and-initializes the selected deck (`flow --enable-dry-run`)
+  without running the simulation. The queue itself is remembered between
+  sessions.
+- **Case comparison** — the *all cases* toggle overlays the selected vectors
+  from every loaded case (legend shows `case | vector`); the *markers* toggle
+  marks the actual data points on each curve. Finished runs can be opened by
+  dropping an `.SMSPEC` on the window (or *Open SMSPEC...*), and adding a
+  deck whose `<deck>_run` output already exists registers its case
+  automatically.
+- **Completion notification** — a system-tray toast when the queue finishes
+  (clicking it opens the finished case in the Results tab), and an
+  oversubscription note in the log when ranks × threads exceed the machine's
+  logical cores.
+- **PRT viewer** with free-text search and a *Next problem* button cycling
+  through Error/Warning lines; the log pane batches appends (100 ms) and
+  only follows the tail while you are at the bottom.
 - **Parallel runs** — MPI rank count (spawns `mpiexec -n N ...`) and
   `--threads-per-process` OpenMP threads; both default to 1 (serial).
 - **Output directory policy** — per-deck `<deck>_run` next to the deck

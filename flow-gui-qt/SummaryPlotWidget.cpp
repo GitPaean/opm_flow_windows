@@ -352,12 +352,19 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
         auto* brefresh = new QPushButton(QStringLiteral("Refresh"));
         autoRef_ = new QCheckBox(QStringLiteral("auto-refresh (10 s)"));
         dateAxis_ = new QCheckBox(QStringLiteral("date axis"));
+        compare_  = new QCheckBox(QStringLiteral("all cases"));
+        compare_->setToolTip(QStringLiteral(
+            "plot the selected vectors from every loaded case, not just the active one"));
+        markers_  = new QCheckBox(QStringLiteral("markers"));
+        markers_->setToolTip(QStringLiteral("mark the data points on each curve"));
         auto* bzoom = new QPushButton(QStringLiteral("Reset zoom"));
         auto* bpng  = new QPushButton(QStringLiteral("Save PNG..."));
         row->addWidget(bbrowse);
         row->addWidget(brefresh);
         row->addWidget(autoRef_);
         row->addWidget(dateAxis_);
+        row->addWidget(compare_);
+        row->addWidget(markers_);
         row->addWidget(bzoom);
         row->addWidget(bpng);
         top->addLayout(row);
@@ -365,6 +372,8 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
         connect(bbrowse,  &QPushButton::clicked, this, [this] { browseCase(); });
         connect(brefresh, &QPushButton::clicked, this, [this] { reload(true); });
         connect(dateAxis_, &QCheckBox::toggled, this, [this](bool) { replot(); });
+        connect(compare_,  &QCheckBox::toggled, this, [this](bool) { replot(); });
+        connect(markers_,  &QCheckBox::toggled, this, [this](bool) { replot(); });
         connect(bzoom, &QPushButton::clicked, this, [this] { chart_->zoomReset(); });
         connect(bpng,  &QPushButton::clicked, this, [this] { savePng(); });
         connect(caseBox_, &QComboBox::currentIndexChanged, this, [this](int) { reload(false); });
@@ -459,6 +468,15 @@ void SummaryPlotWidget::addCase(const QString& label, const QString& smspecPath)
     if (caseBox_->count() == 1) caseBox_->setCurrentIndex(0);
 }
 
+void SummaryPlotWidget::activateCase(const QString& smspecPath)
+{
+    for (int i = 0; i < caseBox_->count(); ++i)
+        if (caseBox_->itemData(i).toString() == smspecPath) {
+            caseBox_->setCurrentIndex(i);   // triggers reload of the active case
+            return;
+        }
+}
+
 void SummaryPlotWidget::browseCase()
 {
     const QString f = QFileDialog::getOpenFileName(
@@ -497,6 +515,7 @@ void SummaryPlotWidget::reload(bool keepSelection)
         return;
     }
     smry_ = std::move(next);
+    others_.clear();   // comparison readers reopen lazily on the next replot
 
     // Grid dimensions from the SMSPEC's DIMENS array (needed to show block /
     // connection cells as I,J,K); tolerated to fail -> plain numbers.
@@ -722,12 +741,6 @@ void SummaryPlotWidget::replot()
     }
     if (!smry_) return;
 
-    std::vector<float> time;
-    try {
-        if (smry_->hasKey("TIME")) time = smry_->get(std::string("TIME"));
-    } catch (...) {}
-    if (time.empty()) { chart_->setTitle(QString()); return; }
-
     // Collect the selected leaves (indices into vecs_).
     QList<int> sel;
     for (auto* it : tree_->selectedItems()) {
@@ -736,11 +749,33 @@ void SummaryPlotWidget::replot()
     }
     if (sel.isEmpty()) { chart_->setTitle(caseBox_->currentText()); return; }
 
-    // Two Y axes at most, keyed by unit. The left axis carries the first
-    // distinct unit (or is a generic "value" axis when the selection has no
-    // units); a second distinct unit gets the right axis. Series whose unit is
-    // a third distinct one would distort a mismatched axis, so they are not
-    // plotted and are reported in the status line instead.
+    // The cases to plot: the active one, plus - in compare mode - every other
+    // loaded case (opened lazily, silently skipped while unreadable).
+    struct PlotCase { QString label; Opm::EclIO::ESmry* smry; };
+    QVector<PlotCase> plotCases;
+    plotCases.push_back({ caseBox_->currentText(), smry_.get() });
+    const bool multi = compare_ && compare_->isChecked() && caseBox_->count() > 1;
+    if (multi) {
+        const QString activePath = caseBox_->currentData().toString();
+        for (int i = 0; i < caseBox_->count(); ++i) {
+            const QString p = caseBox_->itemData(i).toString();
+            if (p == activePath) continue;
+            auto it = others_.find(p);
+            if (it == others_.end()) {
+                std::unique_ptr<Opm::EclIO::ESmry> s;
+                try { s = std::make_unique<Opm::EclIO::ESmry>(p.toStdString()); }
+                catch (...) { continue; }
+                it = others_.emplace(p, std::move(s)).first;
+            }
+            if (it->second)
+                plotCases.push_back({ caseBox_->itemText(i), it->second.get() });
+        }
+    }
+
+    // Two Y axes at most, keyed by unit (from the active case). The left axis
+    // carries the first distinct unit (or a generic "value" axis when the
+    // selection has none); a second distinct unit gets the right axis. Series
+    // with a third unit are not plotted and are reported in the status line.
     QString unitL, unitR;
     bool haveL = false, haveR = false;
     for (int i : sel) {
@@ -749,10 +784,7 @@ void SummaryPlotWidget::replot()
         if      (!haveL)            { unitL = u; haveL = true; }
         else if (u != unitL && !haveR) { unitR = u; haveR = true; }
     }
-    // If nothing had a unit, the left axis is a generic value axis that takes
-    // every series.
     const bool genericLeft = !haveL;
-
     auto axisFor = [&](const QString& u) -> int {   // 0 left, 1 right, -1 skip
         if (genericLeft) return 0;
         if (u == unitL)  return 0;
@@ -760,20 +792,8 @@ void SummaryPlotWidget::replot()
         return -1;
     };
 
-    double lmin = 0, lmax = 0, rmin = 0, rmax = 0; bool lset = false, rset = false;
-
-    // X axis: simulated days, or calendar dates (UTC) when toggled on. Series
-    // x-values are stored to match the axis type (days vs ms-since-epoch).
     const bool useDates = dateAxis_ && dateAxis_->isChecked();
-    double startMs = 0.0;
-    if (useDates) {
-        const auto tp = smry_->startdate();
-        startMs = double(std::chrono::duration_cast<std::chrono::milliseconds>(
-                             tp.time_since_epoch()).count());
-    }
-    auto xval = [&](float days) {
-        return useDates ? startMs + double(days) * 86400.0e3 : double(days);
-    };
+    const bool showPts  = markers_ && markers_->isChecked();
 
     QAbstractAxis* ax = nullptr;
     if (useDates) {
@@ -796,40 +816,79 @@ void SummaryPlotWidget::replot()
         chart_->addAxis(ayR, Qt::AlignRight);
     }
 
+    double lmin = 0, lmax = 0, rmin = 0, rmax = 0; bool lset = false, rset = false;
+    double xmin = 0, xmax = 0; bool xset = false;
     int skipped = 0;
-    for (int i : sel) {
-        const Vec& v = vecs_[i];
-        const int side = axisFor(v.unit);
-        if (side < 0) { ++skipped; continue; }
-        std::vector<float> data;
-        try { data = smry_->get(v.node); } catch (...) { continue; }
-        auto* s = new QLineSeries;
-        s->setName(v.key);
-        const size_t n = std::min(time.size(), data.size());
-        for (size_t k = 0; k < n; ++k) {
-            s->append(xval(time[k]), data[k]);
-            if (side == 1) {
-                rmin = rset ? std::min<double>(rmin, data[k]) : data[k];
-                rmax = rset ? std::max<double>(rmax, data[k]) : data[k];
-                rset = true;
-            } else {
-                lmin = lset ? std::min<double>(lmin, data[k]) : data[k];
-                lmax = lset ? std::max<double>(lmax, data[k]) : data[k];
-                lset = true;
-            }
+
+    for (const PlotCase& pc : plotCases) {
+        std::vector<float> time;
+        try {
+            if (pc.smry->hasKey("TIME")) time = pc.smry->get(std::string("TIME"));
+        } catch (...) {}
+        if (time.empty()) continue;
+
+        double startMs = 0.0;
+        if (useDates) {
+            try {
+                const auto tp = pc.smry->startdate();
+                startMs = double(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                     tp.time_since_epoch()).count());
+            } catch (...) {}
         }
-        chart_->addSeries(s);
-        s->attachAxis(ax);
-        s->attachAxis(side == 1 ? ayR : ayL);
+        auto xval = [&](float days) {
+            return useDates ? startMs + double(days) * 86400.0e3 : double(days);
+        };
+        const bool isActive = (pc.smry == smry_.get());
+
+        for (int i : sel) {
+            const Vec& v = vecs_[i];
+            const int side = axisFor(v.unit);
+            if (side < 0) { if (isActive) ++skipped; continue; }
+
+            std::vector<float> data;
+            try {
+                const std::string key = v.key.toStdString();
+                if (pc.smry->hasKey(key))       data = pc.smry->get(key);
+                else if (isActive)              data = pc.smry->get(v.node);
+                else                            continue;   // vector absent in this case
+            } catch (...) { continue; }
+
+            auto* s = new QLineSeries;
+            s->setName(multi ? pc.label + QStringLiteral(" | ") + v.key : v.key);
+            const size_t n = std::min(time.size(), data.size());
+            for (size_t k = 0; k < n; ++k) {
+                const double x = xval(time[k]);
+                s->append(x, data[k]);
+                xmin = xset ? std::min(xmin, x) : x;
+                xmax = xset ? std::max(xmax, x) : x;
+                xset = true;
+                if (side == 1) {
+                    rmin = rset ? std::min<double>(rmin, data[k]) : data[k];
+                    rmax = rset ? std::max<double>(rmax, data[k]) : data[k];
+                    rset = true;
+                } else {
+                    lmin = lset ? std::min<double>(lmin, data[k]) : data[k];
+                    lmax = lset ? std::max<double>(lmax, data[k]) : data[k];
+                    lset = true;
+                }
+            }
+            if (showPts) {
+                s->setPointsVisible(true);
+                s->setMarkerSize(6.0);
+            }
+            chart_->addSeries(s);
+            s->attachAxis(ax);
+            s->attachAxis(side == 1 ? ayR : ayL);
+        }
     }
 
-    if (!time.empty()) {
+    if (xset) {
         if (useDates) {
             static_cast<QDateTimeAxis*>(ax)->setRange(
-                QDateTime::fromMSecsSinceEpoch(qint64(xval(time.front())), QTimeZone::utc()),
-                QDateTime::fromMSecsSinceEpoch(qint64(xval(time.back())),  QTimeZone::utc()));
+                QDateTime::fromMSecsSinceEpoch(qint64(xmin), QTimeZone::utc()),
+                QDateTime::fromMSecsSinceEpoch(qint64(xmax), QTimeZone::utc()));
         } else {
-            static_cast<QValueAxis*>(ax)->setRange(time.front(), time.back());
+            static_cast<QValueAxis*>(ax)->setRange(xmin, xmax);
         }
     }
     auto pad = [](QValueAxis* a, double lo, double hi) {
@@ -838,7 +897,8 @@ void SummaryPlotWidget::replot()
     };
     if (lset) pad(ayL, lmin, lmax);
     if (ayR && rset) pad(ayR, rmin, rmax);
-    chart_->setTitle(caseBox_->currentText());
+    chart_->setTitle(multi ? QStringLiteral("%1 cases").arg(plotCases.size())
+                           : caseBox_->currentText());
     if (skipped > 0)
         setStatus(QStringLiteral("%1 selected vector(s) not shown - a plot mixes at "
                                  "most two units; deselect to change the pair").arg(skipped));

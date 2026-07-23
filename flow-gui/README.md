@@ -1,5 +1,11 @@
 # flow-gui
 
+> **DEPRECATED** — superseded by [`flow-gui-qt`](../flow-gui-qt/), which has
+> everything this launcher offers plus a job status table with live progress,
+> summary-vector plotting, deck validation, and more. This FLTK version is
+> kept for reference and minimal-dependency builds but receives no new
+> features.
+
 A small cross-platform (Windows / Linux) GUI front end for running
 [OPM Flow](https://opm-project.org) simulations — inspired by the basic
 functionality of [OPMRUN](https://github.com/OPM/opm-utilities/tree/master/opmrun),
