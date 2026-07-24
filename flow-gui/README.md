@@ -27,7 +27,10 @@ results, animate them in 3D, and edit decks — all in one window.
   tree grouped by quantity with human-readable names (WOPR → "Oil Production
   Rate", ~130 mnemonics). Multi-select plots several curves, with a second
   Y axis when units differ (e.g. rate vs. pressure); 10 s auto-refresh
-  updates the plot while a simulation is still writing. Drag to zoom
+  updates the plot while a simulation is still writing, and the Results and
+  3D tabs re-check their files when a job finishes and when the tab is
+  shown (a case is registered as soon as its job starts, before flow has
+  written anything). Drag to zoom
   (Reset zoom button to restore), optional calendar-date X axis, and
   Save PNG for reports. Any external `SMSPEC` can be opened too.
 - **3D View tab** (when built with opm-common): the corner-point grid
@@ -118,12 +121,37 @@ to the exe automatically. On Linux point `-DFLOWGUI_OPM_PREFIX` at an
 opm-common install prefix and install `qt6-charts-dev` (or equivalent).
 
 ### Linux
+Basic build (Run tab + Deck Editor only):
 ```bash
 sudo apt install qt6-base-dev            # or: dnf install qt6-qtbase-devel
 cmake -S flow-gui -B build-gui -DCMAKE_BUILD_TYPE=Release
 cmake --build build-gui
 ./build-gui/flow-gui
 ```
+
+Full build (adds the Results and 3D View tabs) — needs Qt Charts and an
+opm-common **install prefix**; validated on Ubuntu 24.04:
+```bash
+sudo apt install qt6-base-dev qt6-charts-dev libfmt-dev libboost-dev \
+                 libblas-dev liblapack-dev cmake ninja-build g++
+
+# 1) build & install opm-common (any recent checkout) into the harness
+cmake -S <opm-common checkout> -B build-opmcommon-linux -G Ninja \
+      -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DOPM_ENABLE_PYTHON=OFF \
+      -DCMAKE_INSTALL_PREFIX=$PWD/install-linux
+cmake --build build-opmcommon-linux
+cmake --install build-opmcommon-linux
+
+# 2) flow-gui against it
+cmake -S flow-gui -B build-gui-linux -G Ninja -DCMAKE_BUILD_TYPE=Release \
+      -DFLOWGUI_OPM_PREFIX=$PWD/install-linux
+cmake --build build-gui-linux
+./build-gui-linux/flow-gui
+```
+Watch for `flow-gui summary plotting: ON` and `flow-gui 3D viewer: ON` in the
+configure output. On Linux there is no bundled `flow` next to the GUI — point
+the *Simulator* field at your own build
+(e.g. `.../build/opm-simulators/bin/flow`).
 
 ### macOS
 ```bash
@@ -135,8 +163,11 @@ open build-gui/flow-gui.app
 ```
 
 ## Usage
-1. **Add deck...** one or more `*.DATA` files to the queue (the simulator is
-   the `flow` executable shipped with the GUI — see the log's first lines).
+1. **Add deck...** one or more `*.DATA` files to the queue. On Windows the
+   simulator is the `flow.exe` shipped with the GUI (see the log's first
+   lines); on Linux/macOS nothing is bundled — set the **Simulator** field
+   to your own build (e.g. `.../build/opm-simulators/bin/flow`) once, it is
+   remembered between sessions.
 2. Choose **MPI ranks** / **OMP threads** (1/1 = serial), output policy and
    any extra flow options.
 3. **Run queue** — jobs run one after another; the log streams live.
@@ -156,5 +187,9 @@ worker threads) and split into one widget per tab. Natural next steps:
 - For MPI runs, `mpiexec` must be on `PATH` (on Windows it is after
   installing MS-MPI; run from a `setup-env.ps1` shell or add
   `C:\Program Files\Microsoft MPI\Bin` to `PATH`).
+- On Ubuntu, `mpiexec` comes with `sudo apt install openmpi-bin` (pulled in
+  automatically by `libopenmpi-dev` when building opm-simulators). It must
+  be the same MPI flavor the simulator was built against — the distro
+  default Open MPI on both sides is the safe choice.
 - On Windows, remember the firewall pre-authorization for freshly built
   simulators (`allow-firewall.ps1`, see the harness README).
