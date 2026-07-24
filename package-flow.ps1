@@ -1,10 +1,10 @@
 <#
   package-flow.ps1 - stage a redistributable Windows package of OPM Flow
-  (simulator + flow-gui-qt) from this harness' build trees.
+  (simulator + flow-gui) from this harness' build trees.
 
   Produces  dist\opm-flow-<Version>\
     bin\        flow*.exe, their runtime DLLs (vcpkg applocal set), the MSVC
-                CRT + OpenMP runtime, flow-gui-qt.exe + Qt runtime/plugins
+                CRT + OpenMP runtime, flow-gui.exe + Qt runtime/plugins
     redist\     vc_redist.x64.exe + msmpisetup.exe (downloaded on demand)
     README.txt  install / run instructions
     LICENSE.txt GPLv3 notice + source availability statement
@@ -29,7 +29,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $Root  = Split-Path -Parent $MyInvocation.MyCommand.Path
 $SimBin = Join-Path $Root 'build-mpi\opm-simulators\bin'
-$GuiBin = Join-Path $Root 'build-gui-qt'
+$GuiBin = Join-Path $Root 'build-gui'
 $Stage  = Join-Path $Root "dist\opm-flow-$Version"
 $Bin    = Join-Path $Stage 'bin'
 $Redist = Join-Path $Stage 'redist'
@@ -67,9 +67,9 @@ Get-ChildItem "$SimBin\*.dll" |
 Copy-Item "$crtDir\*.dll" $Bin
 if ($ompDll) { Copy-Item $ompDll $Bin } else { Write-Warning "libomp140.x86_64.dll not found - OpenMP runs need it" }
 
-# --- flow-gui-qt + Qt runtime (windeployqt output) ---------------------------
-if (Test-Path (Join-Path $GuiBin 'flow-gui-qt.exe')) {
-    Copy-Item (Join-Path $GuiBin 'flow-gui-qt.exe') $Bin
+# --- flow-gui + Qt runtime (windeployqt output) ---------------------------
+if (Test-Path (Join-Path $GuiBin 'flow-gui.exe')) {
+    Copy-Item (Join-Path $GuiBin 'flow-gui.exe') $Bin
     Copy-Item (Join-Path $GuiBin 'Qt6*.dll') $Bin
     foreach ($d in 'platforms','styles','imageformats','generic','iconengines',
                    'networkinformation','tls') {
@@ -77,7 +77,7 @@ if (Test-Path (Join-Path $GuiBin 'flow-gui-qt.exe')) {
         if (Test-Path $p) { Copy-Item $p $Bin -Recurse }
     }
 } else {
-    Write-Warning "flow-gui-qt.exe not found in $GuiBin - GUI not packaged"
+    Write-Warning "flow-gui.exe not found in $GuiBin - GUI not packaged"
 }
 
 # --- prerequisite runtime installers ------------------------------------------
@@ -106,7 +106,7 @@ OPM Flow for Windows - $Version
 Contents
   bin\flow.exe            reservoir simulator (all model variants,
                           including black-oil)
-  bin\flow-gui-qt.exe     graphical front end (job queue, live log)
+  bin\flow-gui.exe     graphical front end (job queue, live log)
   redist\                 Microsoft runtime installers (see prerequisite below)
 
 Prerequisite: Microsoft MPI
@@ -117,7 +117,7 @@ Prerequisite: Microsoft MPI
   needed; redist\vc_redist.x64.exe is included only as a fallback.
 
 Running
-  GUI:       double-click bin\flow-gui-qt.exe, add a *.DATA deck, Run.
+  GUI:       double-click bin\flow-gui.exe, add a *.DATA deck, Run.
   Terminal:  bin\flow.exe  DECK.DATA  --output-dir=RESULTS
   Parallel:  mpiexec -n 4 bin\flow.exe DECK.DATA --threads-per-process=2 ...
 

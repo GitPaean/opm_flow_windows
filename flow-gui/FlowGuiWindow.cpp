@@ -63,8 +63,8 @@
   #include <unistd.h>
 #endif
 
-static const char* kAppName = "flow-gui-qt";
-static const char* kVersion = "0.2.0";
+static const char* kAppName = "flow-gui";
+static const char* kVersion = "0.3.0";
 
 namespace {
 enum Col { ColDeck = 0, ColStatus, ColProgress, ColElapsed, ColEta, ColCount };
@@ -77,6 +77,13 @@ QString fmtDuration(qint64 ms)
         .arg(s % 60, 2, 10, QLatin1Char('0'));
 }
 } // namespace
+
+QString FlowGuiWindow::resolveSimulator() const
+{
+    const QString custom = simEdit_ ? simEdit_->text().trimmed() : QString();
+    if (!custom.isEmpty()) return custom;
+    return findFlowExe();
+}
 
 QString FlowGuiWindow::findFlowExe()
 {
@@ -127,6 +134,36 @@ FlowGuiWindow::FlowGuiWindow()
     auto* runPage = new QWidget;
     auto* top = new QVBoxLayout(runPage);
 
+    // --- simulator override (for developers testing fresh flow builds) ------
+    {
+        auto* row = new QHBoxLayout;
+        row->addWidget(new QLabel(QStringLiteral("Simulator:")));
+        simEdit_ = new QLineEdit;
+        simEdit_->setPlaceholderText(
+            QStringLiteral("auto - the flow executable shipped next to this program"));
+        simEdit_->setToolTip(QStringLiteral(
+            "leave empty to use the flow shipped with the GUI; set a path to "
+            "test another build, e.g. a freshly compiled flow"));
+        row->addWidget(simEdit_, 1);
+        auto* bsim = new QPushButton(QStringLiteral("Browse..."));
+        row->addWidget(bsim);
+        top->addLayout(row);
+        connect(bsim, &QPushButton::clicked, this, [this] {
+#ifdef Q_OS_WIN
+            const QString filter = QStringLiteral("Programs (*.exe);;All files (*)");
+#else
+            const QString filter = QStringLiteral("All files (*)");
+#endif
+            const QString f = QFileDialog::getOpenFileName(
+                this, QStringLiteral("Select flow executable"), QString(), filter);
+            if (!f.isEmpty()) simEdit_->setText(QDir::toNativeSeparators(f));
+        });
+        connect(simEdit_, &QLineEdit::editingFinished, this, [this] {
+            appendLog(QStringLiteral("simulator: %1\n")
+                          .arg(QDir::toNativeSeparators(resolveSimulator())));
+        });
+    }
+
     // --- job table -----------------------------------------------------------
     {
         auto* box = new QGroupBox(QStringLiteral("Job queue  (drop *.DATA files anywhere)"));
@@ -149,8 +186,11 @@ FlowGuiWindow::FlowGuiWindow()
         auto* brem  = new QPushButton(QStringLiteral("Remove"));
         auto* bclr  = new QPushButton(QStringLiteral("Clear"));
         auto* bopen = new QPushButton(QStringLiteral("Open folder"));
-        auto* bprt  = new QPushButton(QStringLiteral("View PRT"));
         auto* bedit = new QPushButton(QStringLiteral("Edit deck"));
+        auto* bprt  = new QPushButton(QStringLiteral("View PRT"));
+        auto* bdbg  = new QPushButton(QStringLiteral("View DBG"));
+        bprt->setToolTip(QStringLiteral("the run's print file (results, warnings, errors)"));
+        bdbg->setToolTip(QStringLiteral("the run's debug file (developer diagnostics)"));
         connect(badd, &QPushButton::clicked, this, [this] { onAddDecks(); });
         connect(brem, &QPushButton::clicked, this, [this] {
             const int r = jobTable_->currentRow();
@@ -168,7 +208,10 @@ FlowGuiWindow::FlowGuiWindow()
             jobTable_->setRowCount(0);
         });
         connect(bopen, &QPushButton::clicked, this, [this] { openJobFolder(jobTable_->currentRow()); });
-        connect(bprt,  &QPushButton::clicked, this, [this] { viewJobPrt(jobTable_->currentRow()); });
+        connect(bprt,  &QPushButton::clicked, this,
+                [this] { viewJobFile(jobTable_->currentRow(), QStringLiteral("PRT")); });
+        connect(bdbg,  &QPushButton::clicked, this,
+                [this] { viewJobFile(jobTable_->currentRow(), QStringLiteral("DBG")); });
         connect(jobTable_, &QTableWidget::cellDoubleClicked, this,
                 [this](int row, int) { openJobFolder(row); });
         connect(bedit, &QPushButton::clicked, this, [this] {
@@ -177,7 +220,10 @@ FlowGuiWindow::FlowGuiWindow()
             deckEd_->openDeck(jobs_[r].deck);
             tabs_->setCurrentWidget(deckEd_);
         });
-        for (auto* b : { badd, brem, bclr, bopen, bprt, bedit }) col->addWidget(b);
+        // post-run viewers grouped below the queue-management buttons
+        for (auto* b : { badd, brem, bclr, bopen, bedit }) col->addWidget(b);
+        col->addSpacing(16);
+        for (auto* b : { bprt, bdbg }) col->addWidget(b);
         col->addStretch(1);
         row->addLayout(col);
         top->addWidget(box, 2);
@@ -294,7 +340,7 @@ FlowGuiWindow::FlowGuiWindow()
     tick->start();
 
     loadSettings();
-    exePath_ = findFlowExe();
+    exePath_ = resolveSimulator();
 
     appendLog(QString::fromLatin1("%1 %2 - queue OPM Flow simulations and watch them run.\n")
                   .arg(QLatin1String(kAppName), QLatin1String(kVersion)));
@@ -302,13 +348,17 @@ FlowGuiWindow::FlowGuiWindow()
         appendLog(QStringLiteral("WARNING: no flow executable found next to this "
                                  "program - simulations cannot be started.\n"));
     else
-        appendLog(QStringLiteral("simulator: %1\n").arg(QDir::toNativeSeparators(exePath_)));
+        appendLog(QStringLiteral("simulator: %1%2\n")
+                      .arg(QDir::toNativeSeparators(exePath_),
+                           simEdit_->text().trimmed().isEmpty()
+                               ? QString() : QStringLiteral("  (override)")));
 }
 
 // ---------------------------------------------------------------------------
 void FlowGuiWindow::loadSettings()
 {
     QSettings s(QStringLiteral("OPM"), QLatin1String(kAppName));
+    simEdit_->setText(s.value(QStringLiteral("simulator")).toString());
     ranksSpin_->setValue(s.value(QStringLiteral("ranks"), 1).toInt());
     threadsSpin_->setValue(s.value(QStringLiteral("threads"), 1).toInt());
     outdirMode_->setCurrentIndex(s.value(QStringLiteral("outmode"), 0).toInt());
@@ -326,6 +376,7 @@ void FlowGuiWindow::loadSettings()
 void FlowGuiWindow::saveSettings()
 {
     QSettings s(QStringLiteral("OPM"), QLatin1String(kAppName));
+    s.setValue(QStringLiteral("simulator"), simEdit_->text());
     s.setValue(QStringLiteral("ranks"),   ranksSpin_->value());
     s.setValue(QStringLiteral("threads"), threadsSpin_->value());
     s.setValue(QStringLiteral("outmode"), outdirMode_->currentIndex());
@@ -552,7 +603,7 @@ void FlowGuiWindow::onRun()
         return;
     }
     if (exePath_.isEmpty() || !QFileInfo::exists(exePath_)) {
-        exePath_ = findFlowExe();
+        exePath_ = resolveSimulator();
         if (exePath_.isEmpty()) {
             QMessageBox::critical(this, QLatin1String(kAppName),
                 QStringLiteral("No flow executable was found next to this program.\n"
@@ -722,7 +773,7 @@ void FlowGuiWindow::validateSelectedDeck()
             QStringLiteral("Select a deck in the queue to validate."));
         return;
     }
-    if (exePath_.isEmpty() || !QFileInfo::exists(exePath_)) exePath_ = findFlowExe();
+    if (exePath_.isEmpty() || !QFileInfo::exists(exePath_)) exePath_ = resolveSimulator();
     if (exePath_.isEmpty()) return;
 
     const QString deck = jobs_[row].deck;
@@ -763,17 +814,19 @@ void FlowGuiWindow::openJobFolder(int row)
     QDesktopServices::openUrl(QUrl::fromLocalFile(d));
 }
 
-void FlowGuiWindow::viewJobPrt(int row)
+void FlowGuiWindow::viewJobFile(int row, const QString& ext)
 {
     if (row < 0 || row >= jobs_.size()) return;
     const Job& j = jobs_[row];
     const QFileInfo deckInfo(j.deck);
     const QString prt = (j.outdir.isEmpty()
-        ? deckInfo.absolutePath() : j.outdir) + '/' + deckInfo.completeBaseName() + ".PRT";
+        ? deckInfo.absolutePath() : j.outdir) + '/'
+        + deckInfo.completeBaseName() + '.' + ext;
     QFile f(prt);
     if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) {
         QMessageBox::information(this, QLatin1String(kAppName),
-            QStringLiteral("No PRT file yet at\n%1").arg(QDir::toNativeSeparators(prt)));
+            QStringLiteral("No %1 file yet at\n%2")
+                .arg(ext, QDir::toNativeSeparators(prt)));
         return;
     }
     constexpr qint64 kMax = 8 * 1024 * 1024;   // show at most the last 8 MB
@@ -831,7 +884,7 @@ void FlowGuiWindow::viewJobPrt(int row)
 // run options (ranks/threads/output/extra args) and the Results-tab cases.
 void FlowGuiWindow::updateWindowTitle()
 {
-    QString t = QStringLiteral("OPM Flow GUI (Qt)");
+    QString t = QStringLiteral("OPM Flow GUI");
     if (!projectPath_.isEmpty())
         t += QStringLiteral("  -  ") + QFileInfo(projectPath_).fileName();
     setWindowTitle(t);
@@ -910,6 +963,7 @@ bool FlowGuiWindow::writeProject(const QString& path)
     root[QStringLiteral("outputMode")] = outdirMode_->currentIndex();
     root[QStringLiteral("outputDir")]  = QDir::fromNativeSeparators(outdirEdit_->text());
     root[QStringLiteral("extraOptions")] = extraEdit_->text();
+    root[QStringLiteral("simulator")]  = QDir::fromNativeSeparators(simEdit_->text());
 
 #ifdef FLOWGUI_HAVE_SUMMARY
     if (summary_) {
@@ -977,6 +1031,7 @@ bool FlowGuiWindow::readProject(const QString& path)
     outdirEdit_->setText(QDir::toNativeSeparators(root[QStringLiteral("outputDir")].toString()));
     outdirEdit_->setEnabled(outdirMode_->currentIndex() == 1);
     extraEdit_->setText(root[QStringLiteral("extraOptions")].toString());
+    simEdit_->setText(QDir::toNativeSeparators(root[QStringLiteral("simulator")].toString()));
 
     // cases (before decks: addDecks may auto-register cases, dedup handles it)
     int missingCases = 0;

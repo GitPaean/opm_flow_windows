@@ -85,8 +85,7 @@ Once merged, drop `-OpmOrg/-OpmBranch`.
 | `setup-env.ps1` | Loads MSVC (vcvars64) + vcpkg (+ MS-MPI) into the shell |
 | `compat/include/` | POSIX/Fortran shim headers MSVC lacks (getopt, unistd, sys/*, FCMacros) |
 | `patches/` | DUNE Windows patches, auto-applied after the DUNE checkout |
-| `flow-gui-qt/` | **The** GUI for running flow (Windows/Linux/macOS): job queue with live progress/ETA, deck validation, summary-vector plotting with case comparison, persistent settings (see its README) |
-| `flow-gui/` | deprecated FLTK predecessor of flow-gui-qt (kept for reference / minimal-dependency builds) |
+| `flow-gui/` | The Qt 6 graphical workbench for flow (Windows/Linux/macOS): run/monitor with live progress, summary plotting & case comparison, 3D results viewer, deck editor, projects (see its README) |
 | `package-flow.ps1` | Stage a redistributable package (bin + runtimes + prerequisites) and zip it |
 | `installer/` | Inno Setup script producing `OPM-Flow-<ver>-Setup.exe` (see [PACKAGING.md](PACKAGING.md)) |
 | `packaging/` | MSIX build script for sideloading / Microsoft Store (see [PACKAGING.md](PACKAGING.md)) |
@@ -119,7 +118,7 @@ altogether (see [PACKAGING.md](PACKAGING.md)).
 
 ## License
 This repository (build scripts, documentation, compatibility shims, and the
-`flow-gui` / `flow-gui-qt` applications) is licensed under the
+`flow-gui` application) is licensed under the
 **GNU General Public License, version 3 or later** — see [LICENSE](LICENSE) —
 matching the [OPM project](https://opm-project.org) it builds. The files in
 `patches/` modify DUNE sources and are therefore available under the licenses

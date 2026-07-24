@@ -1,5 +1,5 @@
 /*
-  FlowGuiWindow - main window of flow-gui-qt: job queue table with live
+  FlowGuiWindow - main window of flow-gui: job queue table with live
   progress, run options, log pane, and (when built with summary support)
   the results plotting tab.
 
@@ -57,6 +57,7 @@ private:
 
     // widgets
     QTabWidget*     tabs_        = nullptr;
+    QLineEdit*      simEdit_     = nullptr;   // developer override; empty = auto
     QTableWidget*   jobTable_    = nullptr;
     QSpinBox*       ranksSpin_   = nullptr;
     QSpinBox*       threadsSpin_ = nullptr;
@@ -88,6 +89,7 @@ private:
 
     // helpers
     static QString findFlowExe();
+    QString resolveSimulator() const;   // override when set, else auto-detect
     void loadSettings();
     void saveSettings();
     void appendLog(const QString& text);
@@ -112,7 +114,7 @@ private:
     bool readProject(const QString& path);
     void updateWindowTitle();
     void openJobFolder(int row);
-    void viewJobPrt(int row);
+    void viewJobFile(int row, const QString& ext);   // "PRT" or "DBG"
     void notifyQueueDone(int okCount, int failCount);
 
     void onAddDecks();

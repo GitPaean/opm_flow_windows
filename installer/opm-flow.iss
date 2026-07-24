@@ -59,9 +59,9 @@ Source: "{#StageDir}\redist\vc_redist.x64.exe"; DestDir: "{tmp}"; Flags: deletea
 Source: "{#StageDir}\redist\msmpisetup.exe";    DestDir: "{tmp}"; Flags: deleteafterinstall
 
 [Icons]
-Name: "{group}\OPM Flow GUI";  Filename: "{app}\bin\flow-gui-qt.exe"
+Name: "{group}\OPM Flow GUI";  Filename: "{app}\bin\flow-gui.exe"
 Name: "{group}\README";        Filename: "{app}\README.txt"
-Name: "{autodesktop}\OPM Flow GUI"; Filename: "{app}\bin\flow-gui-qt.exe"; Tasks: desktopicon
+Name: "{autodesktop}\OPM Flow GUI"; Filename: "{app}\bin\flow-gui.exe"; Tasks: desktopicon
 
 [Tasks]
 Name: "desktopicon"; Description: "Create a &desktop shortcut"; Flags: unchecked
@@ -75,7 +75,7 @@ Filename: "{tmp}\vc_redist.x64.exe"; Parameters: "/install /quiet /norestart"; \
 Filename: "{tmp}\msmpisetup.exe"; Parameters: "-unattend"; \
     StatusMsg: "Installing Microsoft MPI runtime..."; \
     Check: MsMpiNeeded
-Filename: "{app}\bin\flow-gui-qt.exe"; Description: "Launch OPM Flow GUI"; \
+Filename: "{app}\bin\flow-gui.exe"; Description: "Launch OPM Flow GUI"; \
     Flags: nowait postinstall skipifsilent
 
 [Code]

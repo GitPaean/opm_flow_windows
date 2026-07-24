@@ -26,7 +26,7 @@ $ErrorActionPreference = 'Stop'
 $Root  = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 $Stage = Join-Path $Root "dist\opm-flow-$StageVersion"
 $Pack  = Join-Path $Root 'dist\msix-stage'
-if (-not (Test-Path "$Stage\bin\flow-gui-qt.exe")) { throw "run package-flow.ps1 first ($Stage missing)" }
+if (-not (Test-Path "$Stage\bin\flow-gui.exe")) { throw "run package-flow.ps1 first ($Stage missing)" }
 
 # --- locate SDK tools -------------------------------------------------------
 $kits = 'C:\Program Files (x86)\Windows Kits\10\bin'
@@ -82,7 +82,7 @@ New-Logo  50  50 "$Pack\Assets\StoreLogo.png"         11
     <Resource Language="en-us" />
   </Resources>
   <Applications>
-    <Application Id="OPMFlowGUI" Executable="bin\flow-gui-qt.exe"
+    <Application Id="OPMFlowGUI" Executable="bin\flow-gui.exe"
                  EntryPoint="Windows.FullTrustApplication">
       <uap:VisualElements DisplayName="OPM Flow"
           Description="Run OPM Flow reservoir simulations from a graphical job queue."
