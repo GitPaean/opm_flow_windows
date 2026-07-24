@@ -158,9 +158,11 @@ void GridGLWidget::resetCamera()
 {
     const QVector3D d = bboxMax_ - bboxMin_;
     dist_ = std::max(1.0f, d.length()) * 1.8f;
-    // like looking at a mountain from afar: from a distance, somewhat to the
-    // side and moderately above (~22 degrees elevation)
-    yaw_ = -50.f; pitch_ = 22.f;
+    // Like looking at a mountain from afar: distant, somewhat to the side and
+    // moderately ABOVE. In this camera parameterization negative pitch views
+    // from above (the depth axis then points downwards on screen, as the
+    // orientation gizmo shows).
+    yaw_ = -50.f; pitch_ = -25.f;
     panOffset_ = QVector3D();
     update();
 }
@@ -631,11 +633,16 @@ void Viewer3DWidget::populateProperties()
             if (typ == Opm::EclIO::REAL && size == grid_->activeCells())
                 dynBox_->addItem(QString::fromStdString(name));
         // SOIL is usually not stored in the restart; offer it synthesized
-        // from the stored saturations (SOIL = 1 - SWAT - SGAS).
+        // from the stored saturations (SOIL = 1 - SWAT - SGAS), inserted
+        // next to its sibling saturations rather than at the end.
         if (dynBox_->findText(QStringLiteral("SOIL")) < 0 &&
             (rst_->hasArray("SWAT", steps_.back()) ||
-             rst_->hasArray("SGAS", steps_.back())))
-            dynBox_->addItem(QStringLiteral("SOIL"));
+             rst_->hasArray("SGAS", steps_.back()))) {
+            int at = dynBox_->findText(QStringLiteral("SWAT"));
+            if (at < 0) at = dynBox_->findText(QStringLiteral("SGAS"));
+            if (at < 0) dynBox_->addItem(QStringLiteral("SOIL"));
+            else        dynBox_->insertItem(at + 1, QStringLiteral("SOIL"));
+        }
         const int p = dynBox_->findText(QStringLiteral("PRESSURE"));
         if (p >= 0) dynBox_->setCurrentIndex(p);
     }
