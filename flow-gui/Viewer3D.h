@@ -111,6 +111,15 @@ public:
     // the EGRID/INIT/UNRST siblings are derived from it).
     void addCase(const QString& label, const QString& smspecPath);
 
+    // The job writing this case just finished: (re)open it if it is the
+    // selected one - it was registered at job start, possibly before the
+    // EGRID existed, and the final restart steps only exist now.
+    void caseFinished(const QString& smspecPath);
+
+protected:
+    // The selected case's files may have appeared while the tab was hidden.
+    void showEvent(QShowEvent* ev) override;
+
 private:
     struct CaseFiles {
         QString label, egrid, init, unrst;

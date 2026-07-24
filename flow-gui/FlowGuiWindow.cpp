@@ -719,6 +719,14 @@ void FlowGuiWindow::startNextJob()
                 const QFileInfo di(jj.deck);
                 lastFinishedSmspec_ = jj.outdir + '/' + di.completeBaseName()
                                     + QStringLiteral(".SMSPEC");
+                // The case was registered at job start, before flow had
+                // written anything - load the now-existing files.
+#ifdef FLOWGUI_HAVE_SUMMARY
+                if (summary_) summary_->caseFinished(lastFinishedSmspec_);
+#endif
+#ifdef FLOWGUI_HAVE_3D
+                if (viewer3D_) viewer3D_->caseFinished(lastFinishedSmspec_);
+#endif
             }
             appendLog(QStringLiteral("\n---- job finished, exit code %1%2, %3 ----\n")
                           .arg(code)

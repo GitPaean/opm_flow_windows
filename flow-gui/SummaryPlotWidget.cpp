@@ -29,6 +29,7 @@
 #include <QPen>
 #include <QScatterSeries>
 #include <QPainter>
+#include <QShowEvent>
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QSet>
@@ -552,6 +553,19 @@ void SummaryPlotWidget::activateCase(const QString& smspecPath)
             caseList_->setCurrentItem(caseList_->item(i));  // triggers reload
             return;
         }
+}
+
+void SummaryPlotWidget::caseFinished(const QString& smspecPath)
+{
+    if (activePath() == smspecPath) { reload(true); return; }
+    others_.erase(smspecPath);   // drop a possibly stale comparison reader
+    replot();
+}
+
+void SummaryPlotWidget::showEvent(QShowEvent* ev)
+{
+    QWidget::showEvent(ev);
+    if (!smry_ && QFileInfo::exists(activePath())) reload(false);
 }
 
 void SummaryPlotWidget::removeCurrentCase()

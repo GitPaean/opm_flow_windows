@@ -44,6 +44,11 @@ public:
     // Make the given registered case the active one (no-op if unknown).
     void activateCase(const QString& smspecPath);
 
+    // The job writing this case just finished: reload if it is the active
+    // case (it was registered at job start, possibly before the SMSPEC
+    // existed), else refresh the comparison curves it may contribute to.
+    void caseFinished(const QString& smspecPath);
+
     // Project support: enumerate / clear the loaded cases.
     struct CaseInfo { QString label; QString path; bool checked; };
     QList<CaseInfo> caseInfos() const;
@@ -53,6 +58,10 @@ signals:
     // Emitted for every newly registered case (dedup already applied) so
     // other views (e.g. the 3D viewer) can mirror the case list.
     void caseAdded(const QString& label, const QString& smspecPath);
+
+protected:
+    // The active case's files may have appeared while the tab was hidden.
+    void showEvent(QShowEvent* ev) override;
 
 private:
     // one plottable summary vector, parsed from an ESmry SummaryNode

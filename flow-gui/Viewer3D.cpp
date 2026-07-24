@@ -538,6 +538,25 @@ void Viewer3DWidget::addCase(const QString& label, const QString& smspecPath)
     if (caseBox_->count() == 1) caseBox_->setCurrentIndex(0);
 }
 
+void Viewer3DWidget::caseFinished(const QString& smspecPath)
+{
+    QString base = smspecPath;
+    if (base.endsWith(QStringLiteral(".SMSPEC"), Qt::CaseInsensitive)) base.chop(7);
+    const int idx = caseBox_->currentIndex();
+    if (idx >= 0 && idx < cases_.size() &&
+        cases_[idx].egrid == base + QStringLiteral(".EGRID"))
+        openCase(idx);
+}
+
+void Viewer3DWidget::showEvent(QShowEvent* ev)
+{
+    QWidget::showEvent(ev);
+    const int idx = caseBox_->currentIndex();
+    if (!grid_ && idx >= 0 && idx < cases_.size() &&
+        QFileInfo::exists(cases_[idx].egrid))
+        openCase(idx);
+}
+
 void Viewer3DWidget::openCase(int idx)
 {
     grid_.reset(); init_.reset(); rst_.reset();
