@@ -13,9 +13,9 @@ results, animate them in 3D, and edit decks — all in one window.
 - **Job queue table** of `*.DATA` input decks (add / remove / clear,
   multi-select, **drag & drop** onto the window) with per-job **status,
   progress bar, elapsed time and ETA** parsed live from flow's
-  `Report step X/N at day Y/Z` output, plus **Open folder** for the selected
-  job and — grouped below the queue buttons, for after the run — **View PRT**
-  and **View DBG**.
+  `Report step X/N at day Y/Z` output, with **Edit deck** right below
+  *Add deck*. Grouped separately below, for after the run finishes:
+  **View PRT**, **View DBG**, and **Open result folder**.
 - **Results tab** (when built with summary support): plot summary vectors
   (FOPR, WBHP, ...) straight from a run's `SMSPEC`/`UNSMRY` via opm-common's
   `EclIO::ESmry`. The **vector picker is grouped and filtered** — using
@@ -35,7 +35,9 @@ results, animate them in 3D, and edit decks — all in one window.
   colored by any selectable static (INIT) or dynamic (UNRST) cell property,
   well trajectories from the restart well/connection arrays, report-step
   animation with play button and date display, vertical exaggeration,
-  orbit/pan/zoom camera, and a color legend. Cases mirror the Results tab
+  orbit/pan/zoom camera, and a color legend. The default view frames the
+  model with its long horizontal axis across the screen (from a principal-
+  axis analysis of the grid), seen from the side and slightly above. Cases mirror the Results tab
   (or open any `.EGRID` directly).
 - **Deck Editor tab** — edit the deck and its INCLUDE files directly: a
   section tree (RUNSPEC ... SCHEDULE) lists every keyword with file and

@@ -185,12 +185,13 @@ FlowGuiWindow::FlowGuiWindow()
         auto* badd  = new QPushButton(QStringLiteral("Add deck..."));
         auto* brem  = new QPushButton(QStringLiteral("Remove"));
         auto* bclr  = new QPushButton(QStringLiteral("Clear"));
-        auto* bopen = new QPushButton(QStringLiteral("Open folder"));
+        auto* bopen = new QPushButton(QStringLiteral("Open result folder"));
         auto* bedit = new QPushButton(QStringLiteral("Edit deck"));
         auto* bprt  = new QPushButton(QStringLiteral("View PRT"));
         auto* bdbg  = new QPushButton(QStringLiteral("View DBG"));
         bprt->setToolTip(QStringLiteral("the run's print file (results, warnings, errors)"));
         bdbg->setToolTip(QStringLiteral("the run's debug file (developer diagnostics)"));
+        bopen->setToolTip(QStringLiteral("open the run's output directory in the file manager"));
         connect(badd, &QPushButton::clicked, this, [this] { onAddDecks(); });
         connect(brem, &QPushButton::clicked, this, [this] {
             const int r = jobTable_->currentRow();
@@ -220,10 +221,11 @@ FlowGuiWindow::FlowGuiWindow()
             deckEd_->openDeck(jobs_[r].deck);
             tabs_->setCurrentWidget(deckEd_);
         });
-        // post-run viewers grouped below the queue-management buttons
-        for (auto* b : { badd, brem, bclr, bopen, bedit }) col->addWidget(b);
+        // queue management on top; the result viewers (used after a run
+        // finishes) grouped below
+        for (auto* b : { badd, bedit, brem, bclr }) col->addWidget(b);
         col->addSpacing(16);
-        for (auto* b : { bprt, bdbg }) col->addWidget(b);
+        for (auto* b : { bprt, bdbg, bopen }) col->addWidget(b);
         col->addStretch(1);
         row->addLayout(col);
         top->addWidget(box, 2);

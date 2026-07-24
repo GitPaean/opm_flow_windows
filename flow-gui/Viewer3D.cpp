@@ -117,6 +117,31 @@ void GridGLWidget::setMesh(std::vector<float> pos, std::vector<float> nrm, int c
         bboxMax_.setZ(std::max(bboxMax_.z(), pos_[i+2]));
     }
     meshDirty_ = colorDirty_ = true;
+
+    // Default orientation: put the model's long horizontal axis across the
+    // screen. Principal xy axis of the mesh via the covariance of the vertex
+    // x/y coordinates (cheap single pass; vertices weight cells evenly).
+    homeYaw_ = -50.f;                        // oblique fallback (squarish grids)
+    const size_t nv = pos_.size() / 3;
+    if (nv > 0) {
+        double sx = 0, sy = 0, sxx = 0, syy = 0, sxy = 0;
+        for (size_t i = 0; i + 2 < pos_.size(); i += 3) {
+            const double x = pos_[i], y = pos_[i + 1];
+            sx += x; sy += y; sxx += x * x; syy += y * y; sxy += x * y;
+        }
+        const double n   = double(nv);
+        const double cxx = sxx / n - (sx / n) * (sx / n);
+        const double cyy = syy / n - (sy / n) * (sy / n);
+        const double cxy = sxy / n - (sx / n) * (sy / n);
+        const double tr  = cxx + cyy;
+        const double det = std::sqrt((cxx - cyy) * (cxx - cyy) + 4.0 * cxy * cxy);
+        const double lmax = 0.5 * (tr + det), lmin = 0.5 * (tr - det);
+        if (lmin <= 0.0 || lmax > 1.5 * lmin) {   // clearly elongated
+            // azimuth of the major axis; yaw = -azimuth maps it to screen-x
+            const double az = 0.5 * std::atan2(2.0 * cxy, cxx - cyy);
+            homeYaw_ = float(-az * (180.0 / 3.14159265358979323846));
+        }
+    }
     resetCamera();
 }
 
@@ -157,12 +182,13 @@ void GridGLWidget::setZScale(double s)
 void GridGLWidget::resetCamera()
 {
     const QVector3D d = bboxMax_ - bboxMin_;
-    dist_ = std::max(1.0f, d.length()) * 1.8f;
-    // Like looking at a mountain from afar: distant, somewhat to the side and
-    // moderately ABOVE. In this camera parameterization negative pitch views
+    dist_ = std::max(1.0f, d.length()) * 1.3f;
+    // Like looking at a mountain from afar: the long axis of the grid across
+    // the screen (homeYaw_, from the mesh PCA), seen from the side and a
+    // little above. In this camera parameterization negative pitch views
     // from above (the depth axis then points downwards on screen, as the
     // orientation gizmo shows).
-    yaw_ = -50.f; pitch_ = -25.f;
+    yaw_ = homeYaw_; pitch_ = -18.f;
     panOffset_ = QVector3D();
     update();
 }

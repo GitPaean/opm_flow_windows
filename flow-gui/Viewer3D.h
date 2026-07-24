@@ -92,6 +92,7 @@ private:
     QVector3D bboxMin_, bboxMax_;
     float  dist_ = 1.f;
     float  yaw_ = -35.f, pitch_ = 25.f;
+    float  homeYaw_ = -50.f;      // default yaw: long grid axis across the screen
     QVector3D panOffset_;
     double zscale_ = 3.0;
     QPoint lastMouse_;
