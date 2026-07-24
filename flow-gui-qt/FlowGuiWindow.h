@@ -27,6 +27,7 @@ class QSystemTrayIcon;
 class QTableWidget;
 class QTabWidget;
 class QTimer;
+class DeckEditorWidget;
 class SummaryPlotWidget;
 class Viewer3DWidget;
 
@@ -69,6 +70,7 @@ private:
     QSystemTrayIcon* tray_       = nullptr;
     SummaryPlotWidget* summary_  = nullptr;   // null when built without summary
     Viewer3DWidget*    viewer3D_ = nullptr;   // null when built without 3D
+    DeckEditorWidget*  deckEd_   = nullptr;
 
     // run state
     QString       exePath_;       // the flow executable shipped with this GUI

@@ -9,6 +9,7 @@
 #ifdef FLOWGUI_HAVE_3D
   #include "Viewer3D.h"
 #endif
+#include "DeckEditor.h"
 
 #include <QApplication>
 #include <QCloseEvent>
@@ -149,6 +150,7 @@ FlowGuiWindow::FlowGuiWindow()
         auto* bclr  = new QPushButton(QStringLiteral("Clear"));
         auto* bopen = new QPushButton(QStringLiteral("Open folder"));
         auto* bprt  = new QPushButton(QStringLiteral("View PRT"));
+        auto* bedit = new QPushButton(QStringLiteral("Edit deck"));
         connect(badd, &QPushButton::clicked, this, [this] { onAddDecks(); });
         connect(brem, &QPushButton::clicked, this, [this] {
             const int r = jobTable_->currentRow();
@@ -169,7 +171,13 @@ FlowGuiWindow::FlowGuiWindow()
         connect(bprt,  &QPushButton::clicked, this, [this] { viewJobPrt(jobTable_->currentRow()); });
         connect(jobTable_, &QTableWidget::cellDoubleClicked, this,
                 [this](int row, int) { openJobFolder(row); });
-        for (auto* b : { badd, brem, bclr, bopen, bprt }) col->addWidget(b);
+        connect(bedit, &QPushButton::clicked, this, [this] {
+            const int r = jobTable_->currentRow();
+            if (r < 0 || r >= jobs_.size() || !deckEd_) return;
+            deckEd_->openDeck(jobs_[r].deck);
+            tabs_->setCurrentWidget(deckEd_);
+        });
+        for (auto* b : { badd, brem, bclr, bopen, bprt, bedit }) col->addWidget(b);
         col->addStretch(1);
         row->addLayout(col);
         top->addWidget(box, 2);
@@ -268,6 +276,10 @@ FlowGuiWindow::FlowGuiWindow()
 #endif
 #endif
 
+    // ================= Deck editor tab ======================================
+    deckEd_ = new DeckEditorWidget;
+    tabs_->addTab(deckEd_, QStringLiteral("Deck Editor"));
+
     setCentralWidget(tabs_);
 
     // Tick the running job's Elapsed/ETA once a second so they advance even
@@ -327,6 +339,12 @@ void FlowGuiWindow::saveSettings()
 
 void FlowGuiWindow::closeEvent(QCloseEvent* ev)
 {
+    if (deckEd_ && deckEd_->hasUnsavedChanges()) {
+        const auto a = QMessageBox::question(
+            this, QLatin1String(kAppName),
+            QStringLiteral("The deck editor has unsaved changes. Quit anyway?"));
+        if (a != QMessageBox::Yes) { ev->ignore(); return; }
+    }
     if (proc_ && proc_->state() != QProcess::NotRunning) {
         const auto answer = QMessageBox::question(
             this, QLatin1String(kAppName),

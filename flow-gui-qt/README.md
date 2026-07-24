@@ -41,6 +41,13 @@ the queue sequentially, and watch the live simulator log. A running job
   animation with play button and date display, vertical exaggeration,
   orbit/pan/zoom camera, and a color legend. Cases mirror the Results tab
   (or open any `.EGRID` directly).
+- **Deck Editor tab** — edit the deck and its INCLUDE files directly: a
+  section tree (RUNSPEC ... SCHEDULE) lists every keyword with file and
+  line, INCLUDEs expanded recursively; clicking opens the real file in a
+  tabbed editor with Eclipse syntax highlighting and line numbers. Saves
+  go to the original files (never a flattened copy), so shared includes
+  stay consistent; Edit deck on the Run tab jumps straight to a queued
+  deck.
 - **Simulator** — always the `flow`(`.exe`) shipped next to the GUI (in a
   development checkout it falls back to the harness build tree); the resolved
   path is shown in the log at startup. `flow` contains every model variant,
