@@ -127,9 +127,16 @@ matching the [OPM project](https://opm-project.org) it builds. The files in
 of the respective DUNE modules (GPL-2 with runtime exception).
 
 ## Notes
-- Target `flow_blackoil`, not full `flow` (far less RAM/link time).
+- The default target is `flow_blackoil` (far less RAM/link time). Full `flow` —
+  the single exe with every model variant, which the release packages ship —
+  comes with `-SimTarget flow` (or `-SimTarget all` for the whole suite);
+  linking it is memory-hungry, so keep `-Jobs` modest.
 - The produced `.exe` is native Win64 (PE32+); for distribution it needs the VC++
   redistributable and, for MPI binaries, the MS-MPI runtime. See BUILD_WINDOWS.md §11.
+  `package-flow.ps1` stages exactly these prerequisites next to the binaries
+  automatically (see [PACKAGING.md](PACKAGING.md)).
 - OpenMP is off by default; enable it with `-OpenMP` (uses MSVC `/openmp:llvm`,
   independent of `-Mpi`). Threaded runs need `libomp140.x86_64.dll` next to the
-  `.exe`; see BUILD_WINDOWS.md §11 / §13.
+  `.exe`; see BUILD_WINDOWS.md §11 / §13. Note that an OpenMP-enabled `flow`
+  defaults to **2 threads per process** unless `--threads-per-process` is passed
+  explicitly (flow-gui always passes it for this reason).
