@@ -13,7 +13,7 @@ results, animate them in 3D, and edit decks — all in one window.
 - **Job queue table** of `*.DATA` input decks (add / remove / clear,
   multi-select, **drag & drop** onto the window) with per-job **status,
   progress bar, elapsed time and ETA** parsed live from flow's
-  `Report step X/N at day Y/Z` output, with **Edit deck** right below
+  `Report step X/N at day Y/Z` output, with **View/Edit deck** right below
   *Add deck*. Grouped separately below, for after the run finishes:
   **View PRT**, **View DBG**, and **Open result folder**.
 - **Results tab** (when built with summary support): plot summary vectors
@@ -47,7 +47,7 @@ results, animate them in 3D, and edit decks — all in one window.
   line, INCLUDEs expanded recursively; clicking opens the real file in a
   tabbed editor with Eclipse syntax highlighting and line numbers. Saves
   go to the original files (never a flattened copy), so shared includes
-  stay consistent; Edit deck on the Run tab jumps straight to a queued
+  stay consistent; View/Edit deck on the Run tab jumps straight to a queued
   deck.
 - **Simulator** — by default the `flow`(`.exe`) shipped next to the GUI (in a
   development checkout it falls back to the harness build tree); the resolved

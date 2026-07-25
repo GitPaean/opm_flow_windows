@@ -186,7 +186,7 @@ FlowGuiWindow::FlowGuiWindow()
         auto* brem  = new QPushButton(QStringLiteral("Remove"));
         auto* bclr  = new QPushButton(QStringLiteral("Clear"));
         auto* bopen = new QPushButton(QStringLiteral("Open result folder"));
-        auto* bedit = new QPushButton(QStringLiteral("Edit deck"));
+        auto* bedit = new QPushButton(QStringLiteral("View/Edit deck"));
         auto* bprt  = new QPushButton(QStringLiteral("View PRT"));
         auto* bdbg  = new QPushButton(QStringLiteral("View DBG"));
         bprt->setToolTip(QStringLiteral("the run's print file (results, warnings, errors)"));
