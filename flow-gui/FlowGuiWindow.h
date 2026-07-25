@@ -3,6 +3,8 @@
   progress, run options, log pane, and (when built with summary support)
   the results plotting tab.
 
+  Copyright (C) 2026 SINTEF Digital
+
   Part of the opm_flow_windows harness; GPL v3+ (see repository LICENSE).
 */
 #pragma once

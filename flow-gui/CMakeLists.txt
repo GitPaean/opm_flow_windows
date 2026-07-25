@@ -1,3 +1,4 @@
+# Copyright (C) 2026 SINTEF Digital; GPL-3.0-or-later (see LICENSE).
 cmake_minimum_required(VERSION 3.21)
 project(flow-gui CXX)
 

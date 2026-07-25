@@ -4,6 +4,8 @@
   vector selector (by category, type and item) and live refresh while a
   simulation is still writing.
 
+  Copyright (C) 2026 SINTEF Digital
+
   Part of the opm_flow_windows harness; GPL v3+ (see repository LICENSE).
 */
 #pragma once

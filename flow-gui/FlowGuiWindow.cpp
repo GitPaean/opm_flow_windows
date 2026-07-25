@@ -1,4 +1,6 @@
 /*
+  Copyright (C) 2026 SINTEF Digital
+
   FlowGuiWindow implementation. Part of the opm_flow_windows harness;
   GPL v3+ (see repository LICENSE).
 */

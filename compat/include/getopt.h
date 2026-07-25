@@ -1,4 +1,5 @@
 /* Minimal POSIX getopt() shim for MSVC (single-TU tools only). */
+/* Copyright (C) 2026 SINTEF Digital; GPL-3.0-or-later (see repository LICENSE). */
 #ifndef OPM_COMPAT_GETOPT_H
 #define OPM_COMPAT_GETOPT_H
 #include <stdio.h>

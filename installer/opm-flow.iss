@@ -1,3 +1,4 @@
+; Copyright (C) 2026 SINTEF Digital; GPL-3.0-or-later (see LICENSE).
 ; opm-flow.iss - Inno Setup installer for OPM Flow for Windows.
 ;
 ; Build:  1. .\package-flow.ps1              (stages dist\opm-flow-<ver>\)

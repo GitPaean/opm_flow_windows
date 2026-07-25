@@ -6,6 +6,8 @@
   highlighting. Edits are saved to the original files (never to a flattened
   copy), so shared include files stay consistent across decks.
 
+  Copyright (C) 2026 SINTEF Digital
+
   Part of the opm_flow_windows harness; GPL v3+ (see repository LICENSE).
 */
 #pragma once

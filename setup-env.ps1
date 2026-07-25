@@ -1,3 +1,4 @@
+# Copyright (C) 2026 SINTEF Digital; GPL-3.0-or-later (see LICENSE).
 # setup-env.ps1
 # Dot-source this script to load the MSVC x64 build environment + vcpkg into the
 # current PowerShell session:   . .\setup-env.ps1

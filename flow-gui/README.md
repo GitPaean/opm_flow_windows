@@ -193,3 +193,8 @@ worker threads) and split into one widget per tab. Natural next steps:
   default Open MPI on both sides is the safe choice.
 - On Windows, remember the firewall pre-authorization for freshly built
   simulators (`allow-firewall.ps1`, see the harness README).
+
+## License
+Copyright (C) 2026 SINTEF Digital. flow-gui is free software under the
+GNU General Public License, version 3 or later — see the repository
+[LICENSE](../LICENSE).

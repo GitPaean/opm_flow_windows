@@ -1,3 +1,4 @@
+# Copyright (C) 2026 SINTEF Digital; GPL-3.0-or-later (see LICENSE).
 <#
   build-all.ps1 - end-to-end native-Windows (MSVC) build of OPM flow_blackoil.
 

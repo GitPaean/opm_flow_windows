@@ -1,4 +1,6 @@
 /*
+  Copyright (C) 2026 SINTEF Digital
+
   Viewer3D implementation. Part of the opm_flow_windows harness; GPL v3+
   (see repository LICENSE).
 */

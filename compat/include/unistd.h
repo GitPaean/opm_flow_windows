@@ -1,4 +1,5 @@
 /* Minimal <unistd.h> shim for MSVC. */
+/* Copyright (C) 2026 SINTEF Digital; GPL-3.0-or-later (see repository LICENSE). */
 #ifndef OPM_COMPAT_UNISTD_H
 #define OPM_COMPAT_UNISTD_H
 #ifndef _CRT_NONSTDC_NO_DEPRECATE
