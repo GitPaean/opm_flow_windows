@@ -4,6 +4,12 @@ A cross-platform (Windows / Linux / macOS) **Qt 6** graphical workbench for
 [OPM Flow](https://opm-project.org): run and monitor simulations, plot summary
 results, animate them in 3D, and edit decks — all in one window.
 
+| Run queue | Results & case comparison |
+|---|---|
+| ![Run tab](../docs/screenshots/run-tab.png) | ![Results tab](../docs/screenshots/results-compare.png) |
+| **3D viewer** | **Deck editor** |
+| ![3D View](../docs/screenshots/viewer-3d.png) | ![Deck editor](../docs/screenshots/deck-editor.png) |
+
 ## Features
 - **Projects** — the *Project* menu saves/loads a `.opmproj` file (readable
   JSON) holding the deck queue, MPI ranks / OMP threads, output policy and

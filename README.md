@@ -11,6 +11,16 @@ contain the OPM / DUNE / Trilinos sources — `build-all.ps1` clones those into
 > Status: validated end-to-end from a clean checkout — serial and 2-rank MPI runs
 > of SPE1 pass (see [VALIDATION.md](VALIDATION.md)).
 
+## flow-gui at a glance
+The bundled [flow-gui](flow-gui/) workbench (Windows / Linux / macOS), here on
+the Norne benchmark case:
+
+| Run queue with live progress | Summary plotting & case comparison |
+|---|---|
+| ![Run tab: job queue running Norne on 6 MPI ranks](docs/screenshots/run-tab.png) | ![Results tab: FOPR of two cases compared on a date axis](docs/screenshots/results-compare.png) |
+| **3D results viewer** | **Deck editor** |
+| ![3D View: oil-saturation animation with well trajectories](docs/screenshots/viewer-3d.png) | ![Deck editor: section tree with INCLUDE files and syntax highlighting](docs/screenshots/deck-editor.png) |
+
 ## Prerequisites
 - Windows 10/11 x64; `git` and `winget` on PATH; ~15 GB free disk; internet.
 - **Toolchain (one-time)** — VS 2022 C++ build tools + Windows SDK + CMake + Ninja
