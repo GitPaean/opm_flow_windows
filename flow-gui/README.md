@@ -65,8 +65,10 @@ results, animate them in 3D, and edit decks — all in one window.
 - **Queue control** — *Stop queue* kills the running job and aborts the rest;
   *Skip job* kills the running job and continues with the next; *Validate
   deck* parse-and-initializes the selected deck (`flow --enable-dry-run`)
-  without running the simulation. The queue itself is remembered between
-  sessions.
+  without running the simulation. When every job has already run, *Run
+  queue* offers to **re-run** the finished/failed jobs (after a
+  confirmation, since their previous output is overwritten). The queue
+  itself is remembered between sessions.
 - **Case manager & comparison** — loaded cases appear in a checkable list:
   **checked cases are plotted together** (legend shows `case | vector`), the
   highlighted case drives the vector tree, and *Remove* drops a case from

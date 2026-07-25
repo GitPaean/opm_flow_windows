@@ -24,7 +24,7 @@ int main(int argc, char** argv)
     // --version: print and exit (headless smoke test, no QApplication needed)
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--version") == 0) {
-            std::printf("flow-gui 0.3.0\n");
+            std::printf("flow-gui " FLOWGUI_VERSION "\n");
             return 0;
         }
     }

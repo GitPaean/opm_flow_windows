@@ -1,6 +1,6 @@
 # Copyright (C) 2026 SINTEF Digital; GPL-3.0-or-later (see LICENSE).
 cmake_minimum_required(VERSION 3.21)
-project(flow-gui CXX)
+project(flow-gui VERSION 0.3.1 LANGUAGES CXX)
 
 # C++20: the opm-common headers used by the Results tab require it (and Qt 6
 # is fine with it everywhere).
@@ -51,6 +51,7 @@ endif()
 message(STATUS "flow-gui 3D viewer: ${FLOWGUI_HAVE_3D}")
 
 qt_add_executable(flow-gui WIN32 MACOSX_BUNDLE ${FLOWGUI_SOURCES})
+target_compile_definitions(flow-gui PRIVATE FLOWGUI_VERSION="${PROJECT_VERSION}")
 target_link_libraries(flow-gui PRIVATE Qt6::Widgets)
 
 if(FLOWGUI_HAVE_3D)

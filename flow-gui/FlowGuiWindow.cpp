@@ -66,7 +66,7 @@
 #endif
 
 static const char* kAppName = "flow-gui";
-static const char* kVersion = "0.3.0";
+static const char* kVersion = FLOWGUI_VERSION;
 
 namespace {
 enum Col { ColDeck = 0, ColStatus, ColProgress, ColElapsed, ColEta, ColCount };
@@ -599,12 +599,38 @@ void FlowGuiWindow::parseProgress(const QString& chunk)
 void FlowGuiWindow::onRun()
 {
     if (proc_ && proc_->state() != QProcess::NotRunning) return;
-    bool anyQueued = false;
-    for (const Job& j : jobs_) anyQueued |= (j.state == Job::Queued);
-    if (!anyQueued) {
+    bool anyQueued = false, anyFinished = false;
+    for (const Job& j : jobs_) {
+        anyQueued   |= (j.state == Job::Queued);
+        anyFinished |= (j.state == Job::Done || j.state == Job::Failed
+                        || j.state == Job::Stopped);
+    }
+    if (!anyQueued && !anyFinished) {
         QMessageBox::information(this, QLatin1String(kAppName),
             QStringLiteral("Add at least one input deck (*.DATA) to the queue first."));
         return;
+    }
+    if (!anyQueued) {   // everything already ran - offer a confirmed re-run
+        const auto a = QMessageBox::question(this, QLatin1String(kAppName),
+            QStringLiteral("All jobs in the queue have already run.\n"
+                           "Re-run them? Previous results in their output "
+                           "directories will be overwritten."),
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+        if (a != QMessageBox::Yes) return;
+        for (int i = 0; i < jobs_.size(); ++i) {
+            Job& j = jobs_[i];
+            if (j.state != Job::Done && j.state != Job::Failed
+                && j.state != Job::Stopped) continue;
+            j.state        = Job::Queued;
+            j.progressDays = 0.0;
+            j.totalDays    = 0.0;
+            j.reportStep   = 0;
+            j.reportTotal  = 0;
+            j.elapsedMs    = 0;
+            j.exitCode     = 0;
+            refreshRow(i);
+        }
+        appendLog(QStringLiteral("re-running the queue\n"));
     }
     if (exePath_.isEmpty() || !QFileInfo::exists(exePath_)) {
         exePath_ = resolveSimulator();
