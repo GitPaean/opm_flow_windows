@@ -233,6 +233,36 @@ Expect `PE32+`, `x64`, and dependencies only on `KERNEL32`/`USER32`, the MSVC
 runtime (`MSVCP140*`, `VCRUNTIME140*`), the Universal CRT (`api-ms-win-crt-*`),
 and `fmt.dll`/`umfpack.dll` — **no** `cygwin1.dll` or `msys-2.0.dll`.
 
+### Windows power throttling ("EcoQoS") — performance and benchmarking
+
+Windows 11 runs **background** processes at reduced clock speed on modern
+laptops (per-process "EcoQoS" power throttling; foreground GUI apps are
+exempt). The effect on a compute-bound simulator is dramatic — the *same*
+serial Norne binary, identical iteration counts, on an AMD Ryzen AI MAX
+laptop:
+
+| launched from                        | simulation time |
+|--------------------------------------|-----------------|
+| a foreground GUI (flow-gui)          | 297 s           |
+| a background shell, throttling **off** | 357 s         |
+| an unfocused interactive PowerShell  | 477 s           |
+| a hidden/background script (default) | 579 s           |
+
+(For reference: the identical run under Linux on the same dual-booted
+laptop is 281 s — the MSVC build itself is within a few percent of GCC.)
+
+Consequences:
+- The `windows` branch of opm-simulators makes `flow` **opt out of power
+  throttling at startup** (`SetProcessInformation(...ProcessPowerThrottling...)`
+  in `Main.cpp`, see PATCHES.md), and flow-gui applies the same exemption to
+  the simulators it spawns — so normal use gets the ~357 s row or better
+  automatically. The last ~20 % (357 → 297 s) is a foreground-only boost the
+  OS reserves for the focused window; running from the GUI, or flipping the
+  Windows power slider to *Best performance*, closes it.
+- **Never benchmark from a background/hidden shell** with binaries that lack
+  the opt-out — you would be measuring the Windows scheduler, not the code
+  (this cost us a day of false "MSVC is 2x slower" leads).
+
 ---
 
 ## 10. One-shot automation

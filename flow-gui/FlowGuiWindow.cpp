@@ -63,7 +63,31 @@
 #if !defined(Q_OS_WIN)
   #include <signal.h>
   #include <unistd.h>
+#else
+  #include <windows.h>
 #endif
+
+// Exempt a spawned simulator process from Windows power throttling
+// ("EcoQoS"): Windows clocks background processes down substantially on
+// modern laptops (a serial Norne measured 1.6x slower than the same binary
+// with the exemption). This reaches the direct child (serial flow, or
+// mpiexec); newer flow builds also request the exemption themselves, which
+// covers the smpd-spawned MPI ranks. No-op on other platforms.
+static void exemptFromPowerThrottling(qint64 pid)
+{
+#if defined(Q_OS_WIN)
+    HANDLE h = OpenProcess(PROCESS_SET_INFORMATION, FALSE, DWORD(pid));
+    if (!h) return;
+    PROCESS_POWER_THROTTLING_STATE s{};
+    s.Version = PROCESS_POWER_THROTTLING_CURRENT_VERSION;
+    s.ControlMask = PROCESS_POWER_THROTTLING_EXECUTION_SPEED;
+    s.StateMask = 0;   // never throttle this process
+    SetProcessInformation(h, ProcessPowerThrottling, &s, sizeof(s));
+    CloseHandle(h);
+#else
+    Q_UNUSED(pid);
+#endif
+}
 
 static const char* kAppName = "flow-gui";
 static const char* kVersion = FLOWGUI_VERSION;
@@ -632,14 +656,18 @@ void FlowGuiWindow::onRun()
         }
         appendLog(QStringLiteral("re-running the queue\n"));
     }
+    // always re-resolve: the Simulator override may have changed since the
+    // last run, and it must win over whatever executable ran previously
+    exePath_ = resolveSimulator();
     if (exePath_.isEmpty() || !QFileInfo::exists(exePath_)) {
-        exePath_ = resolveSimulator();
-        if (exePath_.isEmpty()) {
-            QMessageBox::critical(this, QLatin1String(kAppName),
-                QStringLiteral("No flow executable was found next to this program.\n"
-                               "Reinstall the package or place flow(.exe) beside the GUI."));
-            return;
-        }
+        const QString custom = simEdit_ ? simEdit_->text().trimmed() : QString();
+        QMessageBox::critical(this, QLatin1String(kAppName),
+            custom.isEmpty()
+                ? QStringLiteral("No flow executable was found next to this program.\n"
+                                 "Reinstall the package or place flow(.exe) beside the GUI.")
+                : QStringLiteral("The simulator given in the Simulator field does "
+                                 "not exist:\n%1").arg(custom));
+        return;
     }
     const int cores = QThread::idealThreadCount();
     if (cores > 0 && ranksSpin_->value() * threadsSpin_->value() > cores)
@@ -766,6 +794,9 @@ void FlowGuiWindow::startNextJob()
         proc_ = nullptr;
         startNextJob();
     });
+    connect(proc_, &QProcess::started, this, [this] {
+        exemptFromPowerThrottling(proc_->processId());
+    });
     proc_->start(program, args);
 }
 
@@ -811,8 +842,8 @@ void FlowGuiWindow::validateSelectedDeck()
             QStringLiteral("Select a deck in the queue to validate."));
         return;
     }
-    if (exePath_.isEmpty() || !QFileInfo::exists(exePath_)) exePath_ = resolveSimulator();
-    if (exePath_.isEmpty()) return;
+    exePath_ = resolveSimulator();   // honor a changed Simulator override
+    if (exePath_.isEmpty() || !QFileInfo::exists(exePath_)) return;
 
     const QString deck = jobs_[row].deck;
     const QString out  = QDir::temp().filePath(QStringLiteral("flowgui_validate"));
@@ -836,6 +867,9 @@ void FlowGuiWindow::validateSelectedDeck()
                   .arg(QFileInfo(deck).fileName()).arg(code));
         vproc_->deleteLater();
         vproc_ = nullptr;
+    });
+    connect(vproc_, &QProcess::started, this, [this] {
+        exemptFromPowerThrottling(vproc_->processId());
     });
     vproc_->start(exePath_, { deck,
                               QStringLiteral("--enable-dry-run=true"),
