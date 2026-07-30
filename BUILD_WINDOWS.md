@@ -263,6 +263,38 @@ Consequences:
   the opt-out — you would be measuring the Windows scheduler, not the code
   (this cost us a day of false "MSVC is 2x slower" leads).
 
+### Windows vs Linux performance (same dual-booted laptop)
+
+Norne (`NORNE_ATW2013`), identical sources (MSVC vs GCC release), *Best
+performance* power mode, idle machine, `Simulation time:` from the PRT
+(iteration counts match within a few % in every configuration):
+
+| ranks x threads | Linux | Windows | Win/Linux |
+|-----------------|-------|---------|-----------|
+| 1x1             | 289.7 | 312.7   | 1.08      |
+| 1x2             | 219.7 | 229.7   | 1.05      |
+| 2x1             | 173.9 | 203.5   | 1.17      |
+| 2x2             | 160.1 | 167.9   | 1.05      |
+| 4x1             | 130.3 | 160.0   | 1.23      |
+| 4x2             | 118.0 | 153.6   | 1.30      |
+| 6x2             | 102.5 | 135.2   | 1.32      |
+
+Per-phase (Win/Linux): **assembly is 8-26 % faster on Windows in every
+configuration** — MSVC has no compute regression. The gap is concentrated
+in (a) the *pre/post step* phase (well/group management, timestep
+bookkeeping; allocation/string-heavy CRT code): 1.48x serial, up to 1.9x
+at 4-6 ranks; (b) the parallel *output write* (rank-0 gather): ~3x in
+every MPI run (a few seconds); (c) linear-solve communication at 4+ ranks
+(1.2x). The deficit grows with **rank count, not thread count** — OpenMP
+threads are "free" on Windows (2x1 -> 2x2 gains 35 s vs 14 s on Linux).
+
+**Recommendation for Windows runs: prefer hybrid layouts** (fewer MPI
+ranks x more `--threads-per-process`); serial and 2-rank hybrid runs are
+at effective parity (1.05x), and the worst case measured (6x2) is a
+bounded 1.32x. SPE9-sized toy cases: serial Windows is ~10 % *faster*
+than Linux; small models stop scaling at 2-4 ranks on both OSes because
+the CPR/AMG setup does not scale — this is case size, not the port.
+
 ---
 
 ## 10. One-shot automation
