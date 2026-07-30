@@ -36,10 +36,12 @@ results, animate them in 3D, and edit decks — all in one window.
   updates the plot while a simulation is still writing, and the Results and
   3D tabs re-check their files when a job finishes and when the tab is
   shown (a case is registered as soon as its job starts, before flow has
-  written anything). A **plot expression** selects curves qsummary-style
-  with `*`/`?` wildcards — `WBHP:B*, WOPR:*` — overriding the tree
-  selection; `;` starts the next **subplot**, with the layout (Auto / 1 /
-  2x1 / 2x2) chosen next to it. Drag to zoom
+  written anything). The search box also accepts comma-separated
+  **wildcard filters** qsummary-style — `WBHP:B*, WOPR*` narrows the tree
+  to the matching `KEYWORD:ITEM` keys (plain text still matches anywhere).
+  **Subplots** (layout 1 / 2x1 / 2x2) each keep their own selection:
+  click a subplot to focus it — the focused one gets a blue frame — and
+  the vector tree then shows and edits that subplot's curves. Drag to zoom
   (Reset zoom button to restore), optional calendar-date X axis,
   Save PNG for reports, and Save CSV to export the plotted curves of every
   checked case. Any external `SMSPEC` can be opened too.
@@ -57,7 +59,8 @@ results, animate them in 3D, and edit decks — all in one window.
   line, INCLUDEs expanded recursively; clicking opens the real file in a
   tabbed editor with Eclipse syntax highlighting and line numbers. The tree
   has a **keyword filter** (matches keyword or file name, hits expanded
-  automatically) and Expand/Collapse-all buttons; the editor a **find bar**
+  automatically), Expand/Collapse for the selected subtree and
+  Expand all / Collapse all buttons; the editor a **find bar**
   (Ctrl+F, Enter/F3 next, Shift+F3 previous, wrap-around, every match
   highlighted with a count). Saves
   go to the original files (never a flattened copy), so shared includes

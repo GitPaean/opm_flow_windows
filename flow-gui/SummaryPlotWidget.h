@@ -91,13 +91,17 @@ private:
     QComboBox*   subItemBox_ = nullptr;
     QLineEdit*   filter_    = nullptr;
     QTreeWidget* tree_      = nullptr;
-    QLineEdit*   exprEdit_  = nullptr;   // wildcard plot expression (qsummary-style)
-    QComboBox*   layoutBox_ = nullptr;   // subplot layout: Auto / 1 / 2x1 / 2x2
+    QComboBox*   layoutBox_ = nullptr;   // subplot layout: 1 / 2x1 / 2x2
     QWidget*     chartArea_ = nullptr;   // grid container holding the subplots
     QGridLayout* chartGrid_ = nullptr;
     QVector<QChart*>     charts_;        // fixed pool of 4, shown as needed
     QVector<QChartView*> chartViews_;
     int          visibleCharts_ = 1;
+    // Per-subplot selection (vector keys, e.g. "WBHP:B-1H"). The tree edits
+    // the FOCUSED subplot's list; clicking a subplot moves the focus.
+    QVector<QStringList> chartSel_;
+    int          focusChart_ = 0;
+    bool         syncingTree_ = false;   // guard: programmatic tree reselect
     QCheckBox*   autoRef_   = nullptr;
     QCheckBox*   dateAxis_  = nullptr;
     QCheckBox*   markers_   = nullptr;   // show data points on the curves
@@ -125,19 +129,18 @@ private:
     void savePng();
     void saveCsv();
     void setStatus(const QString& s);
-
-    // The plot expression parsed into chart groups: ';' separates subplots,
-    // ',' separates wildcard patterns within one. Each group is (title,
-    // indices into vecs_). An empty expression yields one group holding the
-    // tree selection. Patterns matching nothing are appended to *unmatched.
-    QVector<std::pair<QString, QList<int>>> chartGroups(QStringList* unmatched) const;
     // Every checked case, the active one first-hand, others opened lazily.
     std::vector<std::pair<QString, Opm::EclIO::ESmry*>> checkedCases();
     void applyChartLayout(int n);   // n = 1, 2 or 4 visible subplots
+    void setFocusChart(int i);      // focus subplot i, mirror its keys in the tree
+    void updateChartFrames();       // border highlight on the focused subplot
     // Build one chart from the given vecs_ indices; returns the number of
     // vectors skipped because the chart already carries two units.
     int  plotChart(QChart* chart, const QList<int>& sel, const QString& title,
                    const std::vector<std::pair<QString, Opm::EclIO::ESmry*>>& plotCases);
+
+protected:
+    bool eventFilter(QObject* obj, QEvent* ev) override;   // subplot click -> focus
     static QString friendlyName(const QString& keyword,
                                 Opm::EclIO::SummaryNode::Category cat);
 };

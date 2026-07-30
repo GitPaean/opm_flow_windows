@@ -64,6 +64,13 @@ bool filterItem(QTreeWidgetItem* it, const QString& needle)
     return selfMatch || childMatch;
 }
 
+void setExpandedRecursively(QTreeWidgetItem* it, bool expanded)
+{
+    it->setExpanded(expanded);
+    for (int i = 0; i < it->childCount(); ++i)
+        setExpandedRecursively(it->child(i), expanded);
+}
+
 } // namespace
 
 // ===========================================================================
@@ -218,17 +225,22 @@ DeckEditorWidget::DeckEditorWidget(QWidget* parent)
         auto* left = new QWidget;
         auto* ll = new QVBoxLayout(left);
         ll->setContentsMargins(0, 0, 0, 0);
-        auto* frow = new QHBoxLayout;
         treeFilter_ = new QLineEdit;
         treeFilter_->setPlaceholderText(QStringLiteral("filter keywords..."));
         treeFilter_->setClearButtonEnabled(true);
-        frow->addWidget(treeFilter_, 1);
-        auto* bexp = new QPushButton(QStringLiteral("Expand"));
-        bexp->setToolTip(QStringLiteral("expand all sections and includes"));
-        auto* bcol = new QPushButton(QStringLiteral("Collapse"));
-        bcol->setToolTip(QStringLiteral("collapse all sections and includes"));
-        frow->addWidget(bexp); frow->addWidget(bcol);
-        ll->addLayout(frow);
+        ll->addWidget(treeFilter_);
+
+        auto* brow = new QHBoxLayout;
+        auto* bexp    = new QPushButton(QStringLiteral("Expand"));
+        bexp->setToolTip(QStringLiteral("expand the selected item and everything below it"));
+        auto* bcol    = new QPushButton(QStringLiteral("Collapse"));
+        bcol->setToolTip(QStringLiteral("collapse the selected item and everything below it"));
+        auto* bexpAll = new QPushButton(QStringLiteral("Expand all"));
+        auto* bcolAll = new QPushButton(QStringLiteral("Collapse all"));
+        brow->addWidget(bexp); brow->addWidget(bcol);
+        brow->addWidget(bexpAll); brow->addWidget(bcolAll);
+        brow->addStretch(1);
+        ll->addLayout(brow);
 
         tree_ = new QTreeWidget;
         tree_->setHeaderLabels({ QStringLiteral("Section / keyword"), QStringLiteral("Location") });
@@ -236,8 +248,16 @@ DeckEditorWidget::DeckEditorWidget(QWidget* parent)
         ll->addWidget(tree_, 1);
         split->addWidget(left);
 
-        connect(bexp, &QPushButton::clicked, tree_, &QTreeWidget::expandAll);
-        connect(bcol, &QPushButton::clicked, tree_, &QTreeWidget::collapseAll);
+        connect(bexp, &QPushButton::clicked, this, [this] {
+            if (auto* it = tree_->currentItem()) setExpandedRecursively(it, true);
+            else setStatus(QStringLiteral("select a section or include first (or use Expand all)"));
+        });
+        connect(bcol, &QPushButton::clicked, this, [this] {
+            if (auto* it = tree_->currentItem()) setExpandedRecursively(it, false);
+            else setStatus(QStringLiteral("select a section or include first (or use Collapse all)"));
+        });
+        connect(bexpAll, &QPushButton::clicked, tree_, &QTreeWidget::expandAll);
+        connect(bcolAll, &QPushButton::clicked, tree_, &QTreeWidget::collapseAll);
         connect(treeFilter_, &QLineEdit::textChanged, this,
                 [this](const QString& t) { filterTree(t.trimmed()); });
     }

@@ -42,6 +42,7 @@
 #include <QTimer>
 #include <QTreeWidget>
 #include <QTreeWidgetItem>
+#include <QTreeWidgetItemIterator>
 #include <QVBoxLayout>
 #include <QValueAxis>
 
@@ -365,16 +366,27 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
         auto* bpng  = new QPushButton(QStringLiteral("Save PNG..."));
         auto* bcsv  = new QPushButton(QStringLiteral("Save CSV..."));
         bcsv->setToolTip(QStringLiteral("export the plotted vectors of every checked case"));
+        layoutBox_ = new QComboBox;
+        layoutBox_->addItem(QStringLiteral("1 chart"), 1);
+        layoutBox_->addItem(QStringLiteral("2x1"), 2);
+        layoutBox_->addItem(QStringLiteral("2x2"), 4);
+        layoutBox_->setToolTip(QStringLiteral(
+            "subplot layout - click a subplot to focus it, then the vector tree "
+            "selects what that subplot shows"));
         row->addWidget(bbrowse);
         row->addWidget(brefresh);
         row->addWidget(autoRef_);
         row->addWidget(dateAxis_);
         row->addWidget(markers_);
         row->addStretch(1);
+        row->addWidget(new QLabel(QStringLiteral("Layout:")));
+        row->addWidget(layoutBox_);
         row->addWidget(bzoom);
         row->addWidget(bpng);
         row->addWidget(bcsv);
         top->addLayout(row);
+        connect(layoutBox_, &QComboBox::currentIndexChanged, this,
+                [this](int) { replot(); });
 
         connect(bbrowse,  &QPushButton::clicked, this, [this] { browseCase(); });
         connect(brefresh, &QPushButton::clicked, this, [this] { reload(true); });
@@ -407,7 +419,13 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
         subLabel_->hide(); subItemBox_->hide();
         row->addWidget(subLabel_); row->addWidget(subItemBox_);
         filter_ = new QLineEdit;
-        filter_->setPlaceholderText(QStringLiteral("search..."));
+        filter_->setPlaceholderText(QStringLiteral(
+            "search or wildcard filter, e.g.  WBHP:B*, WOPR*  (comma = or)"));
+        filter_->setClearButtonEnabled(true);
+        filter_->setToolTip(QStringLiteral(
+            "plain text matches anywhere (keyword, item or quantity name);\n"
+            "with * or ? the comma-separated patterns match the KEYWORD:ITEM "
+            "key, e.g. WBHP:B*, WOPR*"));
         row->addWidget(filter_, 1);
         top->addLayout(row);
 
@@ -419,37 +437,6 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
                 [this](int) { populateSubItemBox(); rebuildTree({}); });
         connect(subItemBox_, &QComboBox::currentIndexChanged, this, [this](int) { rebuildTree({}); });
         connect(filter_,  &QLineEdit::textChanged,         this, [this] { rebuildTree({}); });
-    }
-
-    // --- plot expression row --------------------------------------------------
-    // qsummary-style wildcard selection: comma-separated patterns pick the
-    // curves, ';' starts the next subplot. When set it overrides the tree
-    // selection; clearing it hands control back to the tree.
-    {
-        auto* row = new QHBoxLayout;
-        row->addWidget(new QLabel(QStringLiteral("Plot:")));
-        exprEdit_ = new QLineEdit;
-        exprEdit_->setPlaceholderText(QStringLiteral(
-            "plot expression, e.g.  WBHP:B*, WOPR:*  ( , adds curves; ; starts "
-            "the next subplot; * and ? wildcards; Enter plots; empty = tree selection)"));
-        exprEdit_->setClearButtonEnabled(true);
-        row->addWidget(exprEdit_, 1);
-        row->addWidget(new QLabel(QStringLiteral("Layout:")));
-        layoutBox_ = new QComboBox;
-        layoutBox_->addItem(QStringLiteral("Auto"), 0);
-        layoutBox_->addItem(QStringLiteral("1 chart"), 1);
-        layoutBox_->addItem(QStringLiteral("2x1"), 2);
-        layoutBox_->addItem(QStringLiteral("2x2"), 4);
-        layoutBox_->setToolTip(QStringLiteral(
-            "subplot layout; Auto sizes to the number of ';' groups in the expression"));
-        row->addWidget(layoutBox_);
-        top->addLayout(row);
-
-        connect(exprEdit_, &QLineEdit::returnPressed, this, [this] { replot(); });
-        connect(exprEdit_, &QLineEdit::textChanged, this, [this](const QString& t) {
-            if (t.trimmed().isEmpty()) replot();   // cleared -> tree selection again
-        });
-        connect(layoutBox_, &QComboBox::currentIndexChanged, this, [this](int) { replot(); });
     }
 
     // --- cases + tree + chart ------------------------------------------------
@@ -487,7 +474,9 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
                 [this](QListWidgetItem*) { replot(); });   // check toggles
 
         // A fixed pool of four charts in a grid; applyChartLayout() shows the
-        // first 1, 2 (stacked) or 4 (2x2) of them.
+        // first 1, 2 (stacked) or 4 (2x2) of them. Each keeps its own vector
+        // selection (chartSel_); a click focuses a subplot and the tree then
+        // edits that one.
         chartArea_ = new QWidget;
         chartGrid_ = new QGridLayout(chartArea_);
         chartGrid_->setContentsMargins(0, 0, 0, 0);
@@ -499,8 +488,11 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
             auto* v = new QChartView(c, chartArea_);
             v->setRenderHint(QPainter::Antialiasing);
             v->setRubberBand(QChartView::RectangleRubberBand);   // drag to zoom
+            v->installEventFilter(this);
+            v->viewport()->installEventFilter(this);
             charts_.push_back(c);
             chartViews_.push_back(v);
+            chartSel_.push_back({});
             if (i == 0) chartGrid_->addWidget(v, 0, 0);
             else        v->hide();
         }
@@ -510,7 +502,17 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
         split->setSizes({ 320, 680 });
         top->addWidget(split, 1);
 
-        connect(tree_, &QTreeWidget::itemSelectionChanged, this, [this] { replot(); });
+        connect(tree_, &QTreeWidget::itemSelectionChanged, this, [this] {
+            if (syncingTree_) return;      // programmatic reselect, not the user
+            QStringList keys;
+            for (auto* it : tree_->selectedItems()) {
+                const QVariant k = it->data(0, RoleVecIndex);
+                if (k.isValid()) keys << k.toString();
+            }
+            if (focusChart_ >= 0 && focusChart_ < chartSel_.size())
+                chartSel_[focusChart_] = keys;
+            replot();
+        });
     }
 
     status_ = new QLabel;
@@ -831,14 +833,28 @@ void SummaryPlotWidget::rebuildTree(const QStringList& reselect)
                                 ? subItemBox_->currentData().toString() : QString();
     const QString search  = filter_->text().trimmed();
 
-    // Preserve the selection across any rebuild (filter change or refresh):
-    // seed the keep-set from the passed-in list AND the current selection.
-    // Vectors that survive the new filter stay selected; hidden ones drop out.
-    QSet<QString> keep(reselect.begin(), reselect.end());
-    for (auto* it : tree_->selectedItems()) {
-        const QVariant k = it->data(0, RoleVecIndex);
-        if (k.isValid()) keep.insert(k.toString());
+    // The search box: comma-separated terms, any of which may match ("or").
+    // A term with * or ? is a wildcard pattern over the KEYWORD:ITEM key
+    // (qsummary-style, e.g. WBHP:B*); a plain term matches as substring in
+    // the key or the friendly quantity name.
+    QVector<QRegularExpression> wilds;
+    QStringList substrings;
+    for (const QString& t : search.split(QLatin1Char(','), Qt::SkipEmptyParts)) {
+        const QString term = t.trimmed();
+        if (term.isEmpty()) continue;
+        if (term.contains(QLatin1Char('*')) || term.contains(QLatin1Char('?')))
+            wilds.push_back(QRegularExpression::fromWildcard(term, Qt::CaseInsensitive));
+        else
+            substrings << term;
     }
+
+    // Preserve the FOCUSED subplot's selection across any rebuild (filter
+    // change or refresh): keys that survive the new filter stay selected in
+    // the tree; hidden ones stay in chartSel_ and keep plotting.
+    QSet<QString> keep(reselect.begin(), reselect.end());
+    if (focusChart_ >= 0 && focusChart_ < chartSel_.size())
+        for (const QString& k : std::as_const(chartSel_[focusChart_]))
+            keep.insert(k);
 
     tree_->blockSignals(true);
     tree_->clear();
@@ -853,11 +869,17 @@ void SummaryPlotWidget::rebuildTree(const QStringList& reselect)
         if (selType >= 0 && int(v.type) != selType) continue;
         if (!selItem.isEmpty() && v.itemMain != selItem) continue;
         if (!selSub.isEmpty()  && v.itemSub  != selSub)  continue;
-        if (!search.isEmpty()) {
-            const QString fn = friendlyName(v.keyword, v.cat);
-            if (!v.key.contains(search, Qt::CaseInsensitive) &&
-                !fn.contains(search, Qt::CaseInsensitive))
-                continue;
+        if (!wilds.isEmpty() || !substrings.isEmpty()) {
+            bool hit = false;
+            for (const auto& re : wilds)
+                if (re.match(v.key).hasMatch()) { hit = true; break; }
+            if (!hit) {
+                const QString fn = friendlyName(v.keyword, v.cat);
+                for (const QString& s : substrings)
+                    if (v.key.contains(s, Qt::CaseInsensitive) ||
+                        fn.contains(s, Qt::CaseInsensitive)) { hit = true; break; }
+            }
+            if (!hit) continue;
         }
         if (!byKeyword.contains(v.keyword)) keywordOrder << v.keyword;
         byKeyword[v.keyword] << i;
@@ -897,45 +919,6 @@ void SummaryPlotWidget::rebuildTree(const QStringList& reselect)
     // Selection was set with signals blocked (or cleared by clear()); sync the
     // chart to whatever is now selected.
     replot();
-}
-
-// ---------------------------------------------------------------------------
-QVector<std::pair<QString, QList<int>>>
-SummaryPlotWidget::chartGroups(QStringList* unmatched) const
-{
-    QVector<std::pair<QString, QList<int>>> groups;
-    const QString expr = exprEdit_ ? exprEdit_->text().trimmed() : QString();
-    if (expr.isEmpty()) {
-        QList<int> sel;
-        for (auto* it : tree_->selectedItems()) {
-            const QVariant idx = it->data(0, RoleVecIndex + 1);
-            if (idx.isValid()) sel << idx.toInt();
-        }
-        groups.push_back({ QString(), sel });
-        return groups;
-    }
-    const QStringList parts = expr.split(QLatin1Char(';'), Qt::SkipEmptyParts);
-    for (const QString& part : parts) {
-        std::pair<QString, QList<int>> g{ part.trimmed(), {} };
-        QSet<int> seen;
-        const QStringList pats = part.split(QLatin1Char(','), Qt::SkipEmptyParts);
-        for (const QString& pat : pats) {
-            const QString p = pat.trimmed();
-            if (p.isEmpty()) continue;
-            const QRegularExpression re =
-                QRegularExpression::fromWildcard(p, Qt::CaseInsensitive);
-            bool any = false;
-            for (int i = 0; i < vecs_.size(); ++i) {
-                if (!re.match(vecs_[i].key).hasMatch()) continue;
-                any = true;
-                if (!seen.contains(i)) { seen.insert(i); g.second << i; }
-            }
-            if (!any && unmatched) *unmatched << p;
-        }
-        groups.push_back(std::move(g));
-    }
-    if (groups.isEmpty()) groups.push_back({ QString(), {} });
-    return groups;
 }
 
 // The cases to plot: every CHECKED case in the list. The active one uses
@@ -983,17 +966,64 @@ void SummaryPlotWidget::applyChartLayout(int n)
         }
     }
     visibleCharts_ = n;
+    if (focusChart_ >= n) setFocusChart(0);   // focused subplot got hidden
+    updateChartFrames();
+}
+
+void SummaryPlotWidget::setFocusChart(int i)
+{
+    if (i < 0 || i >= chartSel_.size()) return;
+    focusChart_ = i;
+    // Mirror the subplot's selection in the tree (its visible part) so the
+    // user sees and edits what this subplot shows.
+    const QSet<QString> want(chartSel_[i].begin(), chartSel_[i].end());
+    syncingTree_ = true;
+    tree_->blockSignals(true);
+    QTreeWidgetItemIterator it(tree_);
+    while (*it) {
+        const QVariant k = (*it)->data(0, RoleVecIndex);
+        if (k.isValid()) (*it)->setSelected(want.contains(k.toString()));
+        ++it;
+    }
+    tree_->blockSignals(false);
+    syncingTree_ = false;
+    updateChartFrames();
+    if (visibleCharts_ > 1)
+        setStatus(QStringLiteral("subplot %1 focused - the vector tree now edits it")
+                      .arg(i + 1));
+}
+
+void SummaryPlotWidget::updateChartFrames()
+{
+    for (int i = 0; i < chartViews_.size(); ++i) {
+        if (visibleCharts_ <= 1)
+            chartViews_[i]->setStyleSheet(QString());   // single chart: no frame
+        else if (i == focusChart_)
+            chartViews_[i]->setStyleSheet(
+                QStringLiteral("border: 2px solid #1565c0"));
+        else
+            chartViews_[i]->setStyleSheet(
+                QStringLiteral("border: 1px solid #b8bfc6"));
+    }
+}
+
+bool SummaryPlotWidget::eventFilter(QObject* obj, QEvent* ev)
+{
+    if (ev->type() == QEvent::MouseButtonPress && visibleCharts_ > 1) {
+        for (int i = 0; i < chartViews_.size() && i < visibleCharts_; ++i) {
+            if (obj == chartViews_[i] || obj == chartViews_[i]->viewport()) {
+                if (i != focusChart_) setFocusChart(i);
+                break;
+            }
+        }
+    }
+    return QWidget::eventFilter(obj, ev);   // never consume: zoom still works
 }
 
 void SummaryPlotWidget::replot()
 {
-    QStringList unmatched;
-    const auto groups = chartGroups(&unmatched);
-    const bool exprMode = exprEdit_ && !exprEdit_->text().trimmed().isEmpty();
-
     int want = layoutBox_ ? layoutBox_->currentData().toInt() : 1;
-    if (want <= 0)   // Auto: one subplot per ';' group in the expression
-        want = groups.size() <= 1 ? 1 : (groups.size() == 2 ? 2 : 4);
+    if (want <= 0) want = 1;
     applyChartLayout(want);
 
     for (QChart* c : charts_) {
@@ -1009,27 +1039,21 @@ void SummaryPlotWidget::replot()
 
     const auto plotCases = checkedCases();
 
-    int skipped = 0, plotted = 0;
-    const int shown = std::min(int(groups.size()), want);
-    for (int gi = 0; gi < shown; ++gi) {
-        skipped += plotChart(charts_[gi], groups[gi].second, groups[gi].first,
-                             plotCases);
-        plotted += groups[gi].second.size();
-    }
+    QHash<QString, int> byKey;
+    for (int i = 0; i < vecs_.size(); ++i) byKey.insert(vecs_[i].key, i);
 
-    QStringList msg;
-    if (exprMode)
-        msg << QStringLiteral("expression: %1 vector(s) in %2 chart(s)")
-               .arg(plotted).arg(shown);
-    if (!unmatched.isEmpty())
-        msg << QStringLiteral("no match: %1").arg(unmatched.join(QStringLiteral(", ")));
-    if (groups.size() > want)
-        msg << QStringLiteral("%1 group(s) beyond the %2-chart layout not shown")
-               .arg(int(groups.size()) - want).arg(want);
+    int skipped = 0;
+    for (int c = 0; c < visibleCharts_; ++c) {
+        QList<int> sel;
+        for (const QString& k : std::as_const(chartSel_[c])) {
+            const auto it = byKey.constFind(k);
+            if (it != byKey.constEnd()) sel << it.value();
+        }
+        skipped += plotChart(charts_[c], sel, QString(), plotCases);
+    }
     if (skipped > 0)
-        msg << QStringLiteral("%1 vector(s) not shown - a chart mixes at most "
-                              "two units").arg(skipped);
-    if (!msg.isEmpty()) setStatus(msg.join(QStringLiteral("; ")));
+        setStatus(QStringLiteral("%1 selected vector(s) not shown - a chart mixes "
+                                 "at most two units").arg(skipped));
 }
 
 int SummaryPlotWidget::plotChart(QChart* chart, const QList<int>& sel,
@@ -1207,14 +1231,21 @@ int SummaryPlotWidget::plotChart(QChart* chart, const QList<int>& sel,
 void SummaryPlotWidget::saveCsv()
 {
     if (!smry_) { setStatus(QStringLiteral("no case loaded - nothing to export")); return; }
-    const auto groups = chartGroups(nullptr);
+    // Union of every visible subplot's selection, first-seen order.
+    QHash<QString, int> byKey;
+    for (int i = 0; i < vecs_.size(); ++i) byKey.insert(vecs_[i].key, i);
     QList<int> sel;
     QSet<int> seen;
-    for (const auto& g : groups)
-        for (int i : g.second)
-            if (!seen.contains(i)) { seen.insert(i); sel << i; }
+    for (int c = 0; c < visibleCharts_ && c < chartSel_.size(); ++c)
+        for (const QString& k : std::as_const(chartSel_[c])) {
+            const auto it = byKey.constFind(k);
+            if (it != byKey.constEnd() && !seen.contains(it.value())) {
+                seen.insert(it.value());
+                sel << it.value();
+            }
+        }
     if (sel.isEmpty()) {
-        setStatus(QStringLiteral("nothing plotted - select vectors or enter a plot expression"));
+        setStatus(QStringLiteral("nothing plotted - select vectors in the tree first"));
         return;
     }
     const auto plotCases = checkedCases();
