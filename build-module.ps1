@@ -86,13 +86,17 @@ if ($IntelMpi) {
     if (-not (Test-Path "$impi\lib\impi.lib")) {
         throw "Intel MPI not found at $impi (python -m pip install --user impi-devel)"
     }
+    # Forward slashes: CMake bakes these paths into generated try_compile
+    # projects, where backslash sequences like "\U" in C:\Users are parsed
+    # as invalid escapes (same reason as $compatInc above).
+    $impi = $impi -replace '\\', '/'
     $env:MSMPI_INC = ''; $env:MSMPI_LIB64 = ''
     $cmakeArgs += @(
         '-DUSE_MPI=ON',
         '-DMPI_C_LIB_NAMES=impi', '-DMPI_CXX_LIB_NAMES=impi',
-        "-DMPI_impi_LIBRARY=$impi\lib\impi.lib",
-        "-DMPI_C_HEADER_DIR=$impi\include", "-DMPI_CXX_HEADER_DIR=$impi\include",
-        "-DMPIEXEC_EXECUTABLE=$impi\bin\mpiexec.exe"
+        "-DMPI_impi_LIBRARY=$impi/lib/impi.lib",
+        "-DMPI_C_HEADER_DIR=$impi/include", "-DMPI_CXX_HEADER_DIR=$impi/include",
+        "-DMPIEXEC_EXECUTABLE=$impi/bin/mpiexec.exe"
     )
 } elseif ($Mpi) { $cmakeArgs += '-DUSE_MPI=ON' } else { $cmakeArgs += '-DCMAKE_DISABLE_FIND_PACKAGE_MPI=TRUE' }
 
