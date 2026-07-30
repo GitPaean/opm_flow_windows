@@ -41,8 +41,11 @@ results, animate them in 3D, and edit decks — all in one window.
   to the matching `KEYWORD:ITEM` keys (plain text still matches anywhere).
   **Subplots** (layout 1 / 2x1 / 2x2) each keep their own selection:
   click a subplot to focus it — the focused one gets a blue frame — and
-  the vector tree then shows and edits that subplot's curves. Drag to zoom
-  (Reset zoom button to restore), optional calendar-date X axis,
+  the vector tree then shows and edits that subplot's curves; subplots are
+  equally sized, and shrinking the layout keeps the focused one. Drag to
+  zoom — a zoomed view survives refreshes until *Reset zoom* — and
+  refreshes also keep the tree's expansion and scroll position. Calendar
+  dates on the X axis by default (untick *date axis* for days),
   Save PNG for reports, and Save CSV to export the plotted curves of every
   checked case. Any external `SMSPEC` can be opened too.
 - **3D View tab** (when built with opm-common): the corner-point grid

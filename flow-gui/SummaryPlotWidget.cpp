@@ -37,6 +37,7 @@
 #include <QShowEvent>
 #include <QPushButton>
 #include <QRegularExpression>
+#include <QScrollBar>
 #include <QSet>
 #include <QSplitter>
 #include <QTimer>
@@ -360,6 +361,7 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
         auto* brefresh = new QPushButton(QStringLiteral("Refresh"));
         autoRef_ = new QCheckBox(QStringLiteral("auto-refresh (10 s)"));
         dateAxis_ = new QCheckBox(QStringLiteral("date axis"));
+        dateAxis_->setChecked(true);   // calendar dates by default
         markers_  = new QCheckBox(QStringLiteral("markers"));
         markers_->setToolTip(QStringLiteral("mark the data points on each curve"));
         auto* bzoom = new QPushButton(QStringLiteral("Reset zoom"));
@@ -393,7 +395,11 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
         connect(dateAxis_, &QCheckBox::toggled, this, [this](bool) { replot(); });
         connect(markers_,  &QCheckBox::toggled, this, [this](bool) { replot(); });
         connect(bzoom, &QPushButton::clicked, this, [this] {
-            for (int i = 0; i < visibleCharts_; ++i) charts_[i]->zoomReset();
+            for (int i = 0; i < visibleCharts_; ++i) {
+                charts_[i]->zoomReset();
+                zoomSnap_[i] = ZoomSnap();   // forget the kept view
+            }
+            replot();                        // back to the natural ranges
         });
         connect(bpng,  &QPushButton::clicked, this, [this] { savePng(); });
         connect(bcsv,  &QPushButton::clicked, this, [this] { saveCsv(); });
@@ -488,11 +494,15 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
             auto* v = new QChartView(c, chartArea_);
             v->setRenderHint(QPainter::Antialiasing);
             v->setRubberBand(QChartView::RectangleRubberBand);   // drag to zoom
+            // size hints vary with legend content; ignore them so the grid
+            // splits the area into equal-sized subplots
+            v->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
             v->installEventFilter(this);
             v->viewport()->installEventFilter(this);
             charts_.push_back(c);
             chartViews_.push_back(v);
             chartSel_.push_back({});
+            zoomSnap_.push_back({});
             if (i == 0) chartGrid_->addWidget(v, 0, 0);
             else        v->hide();
         }
@@ -856,6 +866,16 @@ void SummaryPlotWidget::rebuildTree(const QStringList& reselect)
         for (const QString& k : std::as_const(chartSel_[focusChart_]))
             keep.insert(k);
 
+    // ... and the view: which keyword groups are expanded, and the scroll
+    // position, so a refresh does not collapse the list.
+    QSet<QString> expanded;
+    const bool hadItems = tree_->topLevelItemCount() > 0;
+    for (int i = 0; i < tree_->topLevelItemCount(); ++i) {
+        auto* it = tree_->topLevelItem(i);
+        if (it->childCount() > 0 && it->isExpanded()) expanded.insert(it->text(0));
+    }
+    const int scrollPos = tree_->verticalScrollBar()->value();
+
     tree_->blockSignals(true);
     tree_->clear();
 
@@ -912,9 +932,11 @@ void SummaryPlotWidget::rebuildTree(const QStringList& reselect)
                 leaf->setData(0, RoleVecIndex + 1, idx);
                 if (keep.contains(v.key)) leaf->setSelected(true);
             }
+            if (expanded.contains(kwLabel)) grp->setExpanded(true);
         }
     }
     tree_->blockSignals(false);
+    if (hadItems) tree_->verticalScrollBar()->setValue(scrollPos);
 
     // Selection was set with signals blocked (or cleared by clear()); sync the
     // chart to whatever is now selected.
@@ -952,6 +974,13 @@ std::vector<std::pair<QString, Opm::EclIO::ESmry*>> SummaryPlotWidget::checkedCa
 void SummaryPlotWidget::applyChartLayout(int n)
 {
     if (n == visibleCharts_) return;
+    // Shrinking below the focused subplot: the focused one survives, in the
+    // last still-visible slot (its curves and kept zoom move with it).
+    if (focusChart_ >= n) {
+        std::swap(chartSel_[focusChart_], chartSel_[n - 1]);
+        std::swap(zoomSnap_[focusChart_], zoomSnap_[n - 1]);
+        focusChart_ = n - 1;
+    }
     for (auto* v : chartViews_) chartGrid_->removeWidget(v);
     struct Pos { int r, c; };
     static const Pos stacked[] = { {0,0}, {1,0}, {2,0}, {3,0} };
@@ -965,9 +994,13 @@ void SummaryPlotWidget::applyChartLayout(int n)
             chartViews_[i]->hide();
         }
     }
+    // equal-sized subplots: stretch the used rows/columns evenly
+    const int rows = (n == 1) ? 1 : 2;
+    const int cols = (n == 4) ? 2 : 1;
+    for (int r = 0; r < 4; ++r) chartGrid_->setRowStretch(r, r < rows ? 1 : 0);
+    for (int c = 0; c < 2; ++c) chartGrid_->setColumnStretch(c, c < cols ? 1 : 0);
     visibleCharts_ = n;
-    if (focusChart_ >= n) setFocusChart(0);   // focused subplot got hidden
-    updateChartFrames();
+    setFocusChart(focusChart_);   // re-mirror the tree, refresh the frames
 }
 
 void SummaryPlotWidget::setFocusChart(int i)
@@ -1026,7 +1059,11 @@ void SummaryPlotWidget::replot()
     if (want <= 0) want = 1;
     applyChartLayout(want);
 
-    for (QChart* c : charts_) {
+    for (int i = 0; i < charts_.size(); ++i) {
+        QChart* c = charts_[i];
+        // a rubber-band zoom is in effect: remember it so the refresh does
+        // not yank the view (sticky until Reset zoom)
+        if (c->isZoomed()) zoomSnap_[i] = captureZoom(c);
         c->removeAllSeries();          // series are deleted by Qt
         const auto oldAxes = c->axes();
         for (auto* a : oldAxes) {
@@ -1042,6 +1079,7 @@ void SummaryPlotWidget::replot()
     QHash<QString, int> byKey;
     for (int i = 0; i < vecs_.size(); ++i) byKey.insert(vecs_[i].key, i);
 
+    const bool useDates = dateAxis_ && dateAxis_->isChecked();
     int skipped = 0;
     for (int c = 0; c < visibleCharts_; ++c) {
         QList<int> sel;
@@ -1050,10 +1088,64 @@ void SummaryPlotWidget::replot()
             if (it != byKey.constEnd()) sel << it.value();
         }
         skipped += plotChart(charts_[c], sel, QString(), plotCases);
+        if (zoomSnap_[c].valid) {
+            if (zoomSnap_[c].dates == useDates) applyZoom(charts_[c], zoomSnap_[c]);
+            else zoomSnap_[c] = ZoomSnap();    // axis type changed: let go
+        }
     }
     if (skipped > 0)
         setStatus(QStringLiteral("%1 selected vector(s) not shown - a chart mixes "
                                  "at most two units").arg(skipped));
+}
+
+SummaryPlotWidget::ZoomSnap SummaryPlotWidget::captureZoom(QChart* chart) const
+{
+    ZoomSnap z;
+    const auto hs = chart->axes(Qt::Horizontal);
+    if (hs.isEmpty()) return z;
+    if (auto* da = qobject_cast<QDateTimeAxis*>(hs.first())) {
+        z.dates = true;
+        z.xmin  = double(da->min().toMSecsSinceEpoch());
+        z.xmax  = double(da->max().toMSecsSinceEpoch());
+    } else if (auto* va = qobject_cast<QValueAxis*>(hs.first())) {
+        z.xmin = va->min();
+        z.xmax = va->max();
+    } else {
+        return z;
+    }
+    const auto vs = chart->axes(Qt::Vertical);   // [left, right?] in add order
+    if (vs.size() >= 1)
+        if (auto* l = qobject_cast<QValueAxis*>(vs[0])) {
+            z.hasL = true; z.lmin = l->min(); z.lmax = l->max();
+        }
+    if (vs.size() >= 2)
+        if (auto* r = qobject_cast<QValueAxis*>(vs[1])) {
+            z.hasR = true; z.rmin = r->min(); z.rmax = r->max();
+        }
+    z.valid = true;
+    return z;
+}
+
+void SummaryPlotWidget::applyZoom(QChart* chart, const ZoomSnap& z)
+{
+    if (!z.valid) return;
+    const auto hs = chart->axes(Qt::Horizontal);
+    if (hs.isEmpty()) return;                    // nothing plotted
+    if (z.dates) {
+        auto* da = qobject_cast<QDateTimeAxis*>(hs.first());
+        if (!da) return;
+        da->setRange(QDateTime::fromMSecsSinceEpoch(qint64(z.xmin), QTimeZone::utc()),
+                     QDateTime::fromMSecsSinceEpoch(qint64(z.xmax), QTimeZone::utc()));
+    } else {
+        auto* va = qobject_cast<QValueAxis*>(hs.first());
+        if (!va) return;
+        va->setRange(z.xmin, z.xmax);
+    }
+    const auto vs = chart->axes(Qt::Vertical);
+    if (z.hasL && vs.size() >= 1)
+        if (auto* l = qobject_cast<QValueAxis*>(vs[0])) l->setRange(z.lmin, z.lmax);
+    if (z.hasR && vs.size() >= 2)
+        if (auto* r = qobject_cast<QValueAxis*>(vs[1])) r->setRange(z.rmin, z.rmax);
 }
 
 int SummaryPlotWidget::plotChart(QChart* chart, const QList<int>& sel,

@@ -102,6 +102,19 @@ private:
     QVector<QStringList> chartSel_;
     int          focusChart_ = 0;
     bool         syncingTree_ = false;   // guard: programmatic tree reselect
+
+    // A subplot's zoomed-in axis ranges, kept across refreshes so live
+    // updates do not yank the view; cleared by the Reset zoom button.
+    struct ZoomSnap {
+        bool valid = false;
+        bool dates = false;              // x was a date axis (ms since epoch)
+        double xmin = 0, xmax = 0;
+        bool hasL = false; double lmin = 0, lmax = 0;
+        bool hasR = false; double rmin = 0, rmax = 0;
+    };
+    QVector<ZoomSnap> zoomSnap_;
+    ZoomSnap captureZoom(QChart* chart) const;
+    void applyZoom(QChart* chart, const ZoomSnap& z);
     QCheckBox*   autoRef_   = nullptr;
     QCheckBox*   dateAxis_  = nullptr;
     QCheckBox*   markers_   = nullptr;   // show data points on the curves
