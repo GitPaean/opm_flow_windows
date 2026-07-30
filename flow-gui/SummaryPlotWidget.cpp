@@ -18,10 +18,13 @@
 #include <QDateTimeAxis>
 #include <QDir>
 #include <QTimeZone>
+#include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QGridLayout>
 #include <QHBoxLayout>
 #include <QHash>
+#include <QTextStream>
 #include <QLabel>
 #include <QLineEdit>
 #include <QLegendMarker>
@@ -360,6 +363,8 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
         markers_->setToolTip(QStringLiteral("mark the data points on each curve"));
         auto* bzoom = new QPushButton(QStringLiteral("Reset zoom"));
         auto* bpng  = new QPushButton(QStringLiteral("Save PNG..."));
+        auto* bcsv  = new QPushButton(QStringLiteral("Save CSV..."));
+        bcsv->setToolTip(QStringLiteral("export the plotted vectors of every checked case"));
         row->addWidget(bbrowse);
         row->addWidget(brefresh);
         row->addWidget(autoRef_);
@@ -368,14 +373,18 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
         row->addStretch(1);
         row->addWidget(bzoom);
         row->addWidget(bpng);
+        row->addWidget(bcsv);
         top->addLayout(row);
 
         connect(bbrowse,  &QPushButton::clicked, this, [this] { browseCase(); });
         connect(brefresh, &QPushButton::clicked, this, [this] { reload(true); });
         connect(dateAxis_, &QCheckBox::toggled, this, [this](bool) { replot(); });
         connect(markers_,  &QCheckBox::toggled, this, [this](bool) { replot(); });
-        connect(bzoom, &QPushButton::clicked, this, [this] { chart_->zoomReset(); });
+        connect(bzoom, &QPushButton::clicked, this, [this] {
+            for (int i = 0; i < visibleCharts_; ++i) charts_[i]->zoomReset();
+        });
         connect(bpng,  &QPushButton::clicked, this, [this] { savePng(); });
+        connect(bcsv,  &QPushButton::clicked, this, [this] { saveCsv(); });
         timer_ = new QTimer(this);
         timer_->setInterval(10000);
         connect(timer_, &QTimer::timeout, this, [this] { reload(true); });
@@ -412,6 +421,37 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
         connect(filter_,  &QLineEdit::textChanged,         this, [this] { rebuildTree({}); });
     }
 
+    // --- plot expression row --------------------------------------------------
+    // qsummary-style wildcard selection: comma-separated patterns pick the
+    // curves, ';' starts the next subplot. When set it overrides the tree
+    // selection; clearing it hands control back to the tree.
+    {
+        auto* row = new QHBoxLayout;
+        row->addWidget(new QLabel(QStringLiteral("Plot:")));
+        exprEdit_ = new QLineEdit;
+        exprEdit_->setPlaceholderText(QStringLiteral(
+            "plot expression, e.g.  WBHP:B*, WOPR:*  ( , adds curves; ; starts "
+            "the next subplot; * and ? wildcards; Enter plots; empty = tree selection)"));
+        exprEdit_->setClearButtonEnabled(true);
+        row->addWidget(exprEdit_, 1);
+        row->addWidget(new QLabel(QStringLiteral("Layout:")));
+        layoutBox_ = new QComboBox;
+        layoutBox_->addItem(QStringLiteral("Auto"), 0);
+        layoutBox_->addItem(QStringLiteral("1 chart"), 1);
+        layoutBox_->addItem(QStringLiteral("2x1"), 2);
+        layoutBox_->addItem(QStringLiteral("2x2"), 4);
+        layoutBox_->setToolTip(QStringLiteral(
+            "subplot layout; Auto sizes to the number of ';' groups in the expression"));
+        row->addWidget(layoutBox_);
+        top->addLayout(row);
+
+        connect(exprEdit_, &QLineEdit::returnPressed, this, [this] { replot(); });
+        connect(exprEdit_, &QLineEdit::textChanged, this, [this](const QString& t) {
+            if (t.trimmed().isEmpty()) replot();   // cleared -> tree selection again
+        });
+        connect(layoutBox_, &QComboBox::currentIndexChanged, this, [this](int) { replot(); });
+    }
+
     // --- cases + tree + chart ------------------------------------------------
     auto* split = new QSplitter;
     {
@@ -446,13 +486,25 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
         connect(caseList_, &QListWidget::itemChanged, this,
                 [this](QListWidgetItem*) { replot(); });   // check toggles
 
-        chart_ = new QChart;
-        chart_->legend()->setVisible(true);
-        chart_->legend()->setAlignment(Qt::AlignBottom);
-        chartView_ = new QChartView(chart_);
-        chartView_->setRenderHint(QPainter::Antialiasing);
-        chartView_->setRubberBand(QChartView::RectangleRubberBand);   // drag to zoom
-        split->addWidget(chartView_);
+        // A fixed pool of four charts in a grid; applyChartLayout() shows the
+        // first 1, 2 (stacked) or 4 (2x2) of them.
+        chartArea_ = new QWidget;
+        chartGrid_ = new QGridLayout(chartArea_);
+        chartGrid_->setContentsMargins(0, 0, 0, 0);
+        chartGrid_->setSpacing(2);
+        for (int i = 0; i < 4; ++i) {
+            auto* c = new QChart;
+            c->legend()->setVisible(true);
+            c->legend()->setAlignment(Qt::AlignBottom);
+            auto* v = new QChartView(c, chartArea_);
+            v->setRenderHint(QPainter::Antialiasing);
+            v->setRubberBand(QChartView::RectangleRubberBand);   // drag to zoom
+            charts_.push_back(c);
+            chartViews_.push_back(v);
+            if (i == 0) chartGrid_->addWidget(v, 0, 0);
+            else        v->hide();
+        }
+        split->addWidget(chartArea_);
         split->setStretchFactor(0, 0);
         split->setStretchFactor(1, 1);
         split->setSizes({ 320, 680 });
@@ -478,7 +530,7 @@ void SummaryPlotWidget::savePng()
         this, QStringLiteral("Save chart as PNG"), suggested + QStringLiteral(".png"),
         QStringLiteral("PNG image (*.png)"));
     if (f.isEmpty()) return;
-    if (chartView_->grab().save(f))
+    if (chartArea_->grab().save(f))   // all visible subplots in one image
         setStatus(QStringLiteral("chart saved to %1").arg(QDir::toNativeSeparators(f)));
     else
         setStatus(QStringLiteral("could not save %1").arg(QDir::toNativeSeparators(f)));
@@ -848,29 +900,50 @@ void SummaryPlotWidget::rebuildTree(const QStringList& reselect)
 }
 
 // ---------------------------------------------------------------------------
-void SummaryPlotWidget::replot()
+QVector<std::pair<QString, QList<int>>>
+SummaryPlotWidget::chartGroups(QStringList* unmatched) const
 {
-    chart_->removeAllSeries();     // series are deleted by Qt
-    const auto oldAxes = chart_->axes();
-    for (auto* a : oldAxes) {
-        chart_->removeAxis(a);     // removeAxis returns ownership to us: delete
-        delete a;
+    QVector<std::pair<QString, QList<int>>> groups;
+    const QString expr = exprEdit_ ? exprEdit_->text().trimmed() : QString();
+    if (expr.isEmpty()) {
+        QList<int> sel;
+        for (auto* it : tree_->selectedItems()) {
+            const QVariant idx = it->data(0, RoleVecIndex + 1);
+            if (idx.isValid()) sel << idx.toInt();
+        }
+        groups.push_back({ QString(), sel });
+        return groups;
     }
-    if (!smry_) return;
-
-    // Collect the selected leaves (indices into vecs_).
-    QList<int> sel;
-    for (auto* it : tree_->selectedItems()) {
-        const QVariant idx = it->data(0, RoleVecIndex + 1);
-        if (idx.isValid()) sel << idx.toInt();
+    const QStringList parts = expr.split(QLatin1Char(';'), Qt::SkipEmptyParts);
+    for (const QString& part : parts) {
+        std::pair<QString, QList<int>> g{ part.trimmed(), {} };
+        QSet<int> seen;
+        const QStringList pats = part.split(QLatin1Char(','), Qt::SkipEmptyParts);
+        for (const QString& pat : pats) {
+            const QString p = pat.trimmed();
+            if (p.isEmpty()) continue;
+            const QRegularExpression re =
+                QRegularExpression::fromWildcard(p, Qt::CaseInsensitive);
+            bool any = false;
+            for (int i = 0; i < vecs_.size(); ++i) {
+                if (!re.match(vecs_[i].key).hasMatch()) continue;
+                any = true;
+                if (!seen.contains(i)) { seen.insert(i); g.second << i; }
+            }
+            if (!any && unmatched) *unmatched << p;
+        }
+        groups.push_back(std::move(g));
     }
-    if (sel.isEmpty()) { chart_->setTitle(activeLabel()); return; }
+    if (groups.isEmpty()) groups.push_back({ QString(), {} });
+    return groups;
+}
 
-    // The cases to plot: every CHECKED case in the list. The active one uses
-    // the already-open reader; others open lazily and are skipped silently
-    // while unreadable (e.g. still being written).
-    struct PlotCase { QString label; Opm::EclIO::ESmry* smry; };
-    QVector<PlotCase> plotCases;
+// The cases to plot: every CHECKED case in the list. The active one uses
+// the already-open reader; others open lazily and are skipped silently
+// while unreadable (e.g. still being written).
+std::vector<std::pair<QString, Opm::EclIO::ESmry*>> SummaryPlotWidget::checkedCases()
+{
+    std::vector<std::pair<QString, Opm::EclIO::ESmry*>> plotCases;
     const QString active = activePath();
     for (int i = 0; i < caseList_->count(); ++i) {
         auto* item = caseList_->item(i);
@@ -890,7 +963,83 @@ void SummaryPlotWidget::replot()
         if (it->second)
             plotCases.push_back({ item->text(), it->second.get() });
     }
-    if (plotCases.isEmpty()) { chart_->setTitle(activeLabel()); return; }
+    return plotCases;
+}
+
+void SummaryPlotWidget::applyChartLayout(int n)
+{
+    if (n == visibleCharts_) return;
+    for (auto* v : chartViews_) chartGrid_->removeWidget(v);
+    struct Pos { int r, c; };
+    static const Pos stacked[] = { {0,0}, {1,0}, {2,0}, {3,0} };
+    static const Pos grid2x2[] = { {0,0}, {0,1}, {1,0}, {1,1} };
+    const Pos* pos = (n == 4) ? grid2x2 : stacked;
+    for (int i = 0; i < chartViews_.size(); ++i) {
+        if (i < n) {
+            chartGrid_->addWidget(chartViews_[i], pos[i].r, pos[i].c);
+            chartViews_[i]->show();
+        } else {
+            chartViews_[i]->hide();
+        }
+    }
+    visibleCharts_ = n;
+}
+
+void SummaryPlotWidget::replot()
+{
+    QStringList unmatched;
+    const auto groups = chartGroups(&unmatched);
+    const bool exprMode = exprEdit_ && !exprEdit_->text().trimmed().isEmpty();
+
+    int want = layoutBox_ ? layoutBox_->currentData().toInt() : 1;
+    if (want <= 0)   // Auto: one subplot per ';' group in the expression
+        want = groups.size() <= 1 ? 1 : (groups.size() == 2 ? 2 : 4);
+    applyChartLayout(want);
+
+    for (QChart* c : charts_) {
+        c->removeAllSeries();          // series are deleted by Qt
+        const auto oldAxes = c->axes();
+        for (auto* a : oldAxes) {
+            c->removeAxis(a);          // removeAxis returns ownership: delete
+            delete a;
+        }
+        c->setTitle(QString());
+    }
+    if (!smry_) return;
+
+    const auto plotCases = checkedCases();
+
+    int skipped = 0, plotted = 0;
+    const int shown = std::min(int(groups.size()), want);
+    for (int gi = 0; gi < shown; ++gi) {
+        skipped += plotChart(charts_[gi], groups[gi].second, groups[gi].first,
+                             plotCases);
+        plotted += groups[gi].second.size();
+    }
+
+    QStringList msg;
+    if (exprMode)
+        msg << QStringLiteral("expression: %1 vector(s) in %2 chart(s)")
+               .arg(plotted).arg(shown);
+    if (!unmatched.isEmpty())
+        msg << QStringLiteral("no match: %1").arg(unmatched.join(QStringLiteral(", ")));
+    if (groups.size() > want)
+        msg << QStringLiteral("%1 group(s) beyond the %2-chart layout not shown")
+               .arg(int(groups.size()) - want).arg(want);
+    if (skipped > 0)
+        msg << QStringLiteral("%1 vector(s) not shown - a chart mixes at most "
+                              "two units").arg(skipped);
+    if (!msg.isEmpty()) setStatus(msg.join(QStringLiteral("; ")));
+}
+
+int SummaryPlotWidget::plotChart(QChart* chart, const QList<int>& sel,
+    const QString& title,
+    const std::vector<std::pair<QString, Opm::EclIO::ESmry*>>& plotCases)
+{
+    if (sel.isEmpty() || plotCases.empty()) {
+        chart->setTitle(!title.isEmpty() ? title : activeLabel());
+        return 0;
+    }
     const bool multi = plotCases.size() > 1;
 
     // Two Y axes at most, keyed by unit (from the active case). The left axis
@@ -927,14 +1076,14 @@ void SummaryPlotWidget::replot()
         a->setTitleText(QStringLiteral("time [days]"));
         ax = a;
     }
-    chart_->addAxis(ax, Qt::AlignBottom);
+    chart->addAxis(ax, Qt::AlignBottom);
     QValueAxis* ayL = new QValueAxis;
     ayL->setTitleText(genericLeft ? QStringLiteral("value") : unitL);
-    chart_->addAxis(ayL, Qt::AlignLeft);
+    chart->addAxis(ayL, Qt::AlignLeft);
     QValueAxis* ayR = nullptr;
     if (haveR) {
         ayR = new QValueAxis; ayR->setTitleText(unitR);
-        chart_->addAxis(ayR, Qt::AlignRight);
+        chart->addAxis(ayR, Qt::AlignRight);
     }
 
     double lmin = 0, lmax = 0, rmin = 0, rmax = 0; bool lset = false, rset = false;
@@ -953,18 +1102,18 @@ void SummaryPlotWidget::replot()
     };
     constexpr int kShapeCount = int(sizeof(kShapes) / sizeof(kShapes[0]));
 
-    for (int ci = 0; ci < plotCases.size(); ++ci) {
-        const PlotCase& pc = plotCases[ci];
+    for (int ci = 0; ci < int(plotCases.size()); ++ci) {
+        const auto& pc = plotCases[ci];    // (label, reader)
         std::vector<float> time;
         try {
-            if (pc.smry->hasKey("TIME")) time = pc.smry->get(std::string("TIME"));
+            if (pc.second->hasKey("TIME")) time = pc.second->get(std::string("TIME"));
         } catch (...) {}
         if (time.empty()) continue;
 
         double startMs = 0.0;
         if (useDates) {
             try {
-                const auto tp = pc.smry->startdate();
+                const auto tp = pc.second->startdate();
                 startMs = double(std::chrono::duration_cast<std::chrono::milliseconds>(
                                      tp.time_since_epoch()).count());
             } catch (...) {}
@@ -972,7 +1121,7 @@ void SummaryPlotWidget::replot()
         auto xval = [&](float days) {
             return useDates ? startMs + double(days) * 86400.0e3 : double(days);
         };
-        const bool isActive = (pc.smry == smry_.get());
+        const bool isActive = (pc.second == smry_.get());
 
         for (int i : sel) {
             const Vec& v = vecs_[i];
@@ -982,13 +1131,13 @@ void SummaryPlotWidget::replot()
             std::vector<float> data;
             try {
                 const std::string key = v.key.toStdString();
-                if (pc.smry->hasKey(key))       data = pc.smry->get(key);
-                else if (isActive)              data = pc.smry->get(v.node);
+                if (pc.second->hasKey(key))     data = pc.second->get(key);
+                else if (isActive)              data = pc.second->get(v.node);
                 else                            continue;   // vector absent in this case
             } catch (...) { continue; }
 
             auto* s = new QLineSeries;
-            s->setName(multi ? pc.label + QStringLiteral(" | ") + v.key : v.key);
+            s->setName(multi ? pc.first + QStringLiteral(" | ") + v.key : v.key);
             const size_t n = std::min(time.size(), data.size());
             for (size_t k = 0; k < n; ++k) {
                 const double x = xval(time[k]);
@@ -1006,7 +1155,7 @@ void SummaryPlotWidget::replot()
                     lset = true;
                 }
             }
-            chart_->addSeries(s);
+            chart->addSeries(s);
             s->attachAxis(ax);
             s->attachAxis(side == 1 ? ayR : ayL);
 
@@ -1017,14 +1166,14 @@ void SummaryPlotWidget::replot()
                 sc->replace(s->points());
                 sc->setMarkerShape(kShapes[ci % kShapeCount]);
                 sc->setMarkerSize(6.0);
-                chart_->addSeries(sc);
+                chart->addSeries(sc);
                 sc->attachAxis(ax);
                 sc->attachAxis(side == 1 ? ayR : ayL);
                 const QColor col = s->color();
                 sc->setColor(col);
                 sc->setPen(QPen(col, 1));
                 sc->setBrush(col);
-                const auto lms = chart_->legend()->markers(sc);
+                const auto lms = chart->legend()->markers(sc);
                 for (auto* m : lms) m->setVisible(false);
             }
         }
@@ -1045,9 +1194,96 @@ void SummaryPlotWidget::replot()
     };
     if (lset) pad(ayL, lmin, lmax);
     if (ayR && rset) pad(ayR, rmin, rmax);
-    chart_->setTitle(multi ? QStringLiteral("%1 cases").arg(plotCases.size())
-                           : plotCases.first().label);
-    if (skipped > 0)
-        setStatus(QStringLiteral("%1 selected vector(s) not shown - a plot mixes at "
-                                 "most two units; deselect to change the pair").arg(skipped));
+    chart->setTitle(!title.isEmpty()
+        ? title
+        : (multi ? QStringLiteral("%1 cases").arg(plotCases.size())
+                 : plotCases.front().first));
+    return skipped;
+}
+
+// Export the plotted vectors (tree selection or expression, all subplots
+// merged) of every checked case as CSV: per case a TIME column followed by
+// that case's curves, blocks side by side, short columns padded with blanks.
+void SummaryPlotWidget::saveCsv()
+{
+    if (!smry_) { setStatus(QStringLiteral("no case loaded - nothing to export")); return; }
+    const auto groups = chartGroups(nullptr);
+    QList<int> sel;
+    QSet<int> seen;
+    for (const auto& g : groups)
+        for (int i : g.second)
+            if (!seen.contains(i)) { seen.insert(i); sel << i; }
+    if (sel.isEmpty()) {
+        setStatus(QStringLiteral("nothing plotted - select vectors or enter a plot expression"));
+        return;
+    }
+    const auto plotCases = checkedCases();
+    if (plotCases.empty()) {
+        setStatus(QStringLiteral("no case is checked - nothing to export"));
+        return;
+    }
+
+    QString suggested = activeLabel();
+    if (suggested.isEmpty()) suggested = QStringLiteral("summary");
+    const QString f = QFileDialog::getSaveFileName(
+        this, QStringLiteral("Export plotted vectors as CSV"),
+        suggested + QStringLiteral(".csv"), QStringLiteral("CSV (*.csv)"));
+    if (f.isEmpty()) return;
+
+    struct Col { QString header; std::vector<float> data; };
+    std::vector<Col> cols;
+    size_t rows = 0;
+    for (const auto& pc : plotCases) {
+        std::vector<float> time;
+        try {
+            if (pc.second->hasKey("TIME")) time = pc.second->get(std::string("TIME"));
+        } catch (...) {}
+        if (time.empty()) continue;
+        cols.push_back({ QStringLiteral("TIME [days] (%1)").arg(pc.first),
+                         std::move(time) });
+        rows = std::max(rows, cols.back().data.size());
+        const bool isActive = (pc.second == smry_.get());
+        for (int i : sel) {
+            const Vec& v = vecs_[i];
+            std::vector<float> data;
+            try {
+                const std::string key = v.key.toStdString();
+                if (pc.second->hasKey(key)) data = pc.second->get(key);
+                else if (isActive)          data = pc.second->get(v.node);
+                else                        continue;   // absent in this case
+            } catch (...) { continue; }
+            QString h = QStringLiteral("%1 (%2)").arg(v.key, pc.first);
+            if (!v.unit.isEmpty()) h += QStringLiteral(" [%1]").arg(v.unit);
+            cols.push_back({ h, std::move(data) });
+            rows = std::max(rows, cols.back().data.size());
+        }
+    }
+    if (cols.empty()) {
+        setStatus(QStringLiteral("no data to export (cases still being written?)"));
+        return;
+    }
+
+    QFile out(f);
+    if (!out.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        setStatus(QStringLiteral("could not write %1").arg(QDir::toNativeSeparators(f)));
+        return;
+    }
+    QTextStream ts(&out);
+    QStringList hdr;
+    for (const auto& c : cols) {
+        QString h = c.header;
+        h.replace(QLatin1Char('"'), QStringLiteral("\"\""));
+        hdr << QLatin1Char('"') + h + QLatin1Char('"');
+    }
+    ts << hdr.join(QLatin1Char(',')) << '\n';
+    for (size_t r = 0; r < rows; ++r) {
+        QStringList row;
+        for (const auto& c : cols)
+            row << (r < c.data.size() ? QString::number(c.data[r], 'g', 9)
+                                      : QString());
+        ts << row.join(QLatin1Char(',')) << '\n';
+    }
+    out.close();
+    setStatus(QStringLiteral("exported %1 column(s) x %2 row(s) to %3")
+        .arg(int(cols.size())).arg(qsizetype(rows)).arg(QDir::toNativeSeparators(f)));
 }

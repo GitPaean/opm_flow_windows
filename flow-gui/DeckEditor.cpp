@@ -13,6 +13,7 @@
 #include <QFontDatabase>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QLineEdit>
 #include <QMessageBox>
 #include <QPainter>
 #include <QPushButton>
@@ -22,6 +23,7 @@
 #include <QSplitter>
 #include <QTabWidget>
 #include <QTextBlock>
+#include <QTextEdit>
 #include <QTreeWidget>
 #include <QVBoxLayout>
 
@@ -45,6 +47,22 @@ const QRegularExpression kKeywordRe(QStringLiteral(
 // roles on tree items
 constexpr int RoleFile = Qt::UserRole;
 constexpr int RoleLine = Qt::UserRole + 1;
+
+// Tree filter: an item stays visible if it or any descendant matches the
+// needle (keyword or location column, case-insensitive); ancestors of a
+// match are expanded so the hit is actually on screen.
+bool filterItem(QTreeWidgetItem* it, const QString& needle)
+{
+    const bool selfMatch = needle.isEmpty()
+        || it->text(0).contains(needle, Qt::CaseInsensitive)
+        || it->text(1).contains(needle, Qt::CaseInsensitive);
+    bool childMatch = false;
+    for (int i = 0; i < it->childCount(); ++i)
+        childMatch = filterItem(it->child(i), needle) || childMatch;
+    it->setHidden(!needle.isEmpty() && !selfMatch && !childMatch);
+    if (!needle.isEmpty() && childMatch) it->setExpanded(true);
+    return selfMatch || childMatch;
+}
 
 } // namespace
 
@@ -195,10 +213,34 @@ DeckEditorWidget::DeckEditorWidget(QWidget* parent)
     }
 
     auto* split = new QSplitter;
-    tree_ = new QTreeWidget;
-    tree_->setHeaderLabels({ QStringLiteral("Section / keyword"), QStringLiteral("Location") });
-    tree_->setColumnWidth(0, 240);
-    split->addWidget(tree_);
+    {
+        // Left pane: keyword filter + expand/collapse over the structure tree.
+        auto* left = new QWidget;
+        auto* ll = new QVBoxLayout(left);
+        ll->setContentsMargins(0, 0, 0, 0);
+        auto* frow = new QHBoxLayout;
+        treeFilter_ = new QLineEdit;
+        treeFilter_->setPlaceholderText(QStringLiteral("filter keywords..."));
+        treeFilter_->setClearButtonEnabled(true);
+        frow->addWidget(treeFilter_, 1);
+        auto* bexp = new QPushButton(QStringLiteral("Expand"));
+        bexp->setToolTip(QStringLiteral("expand all sections and includes"));
+        auto* bcol = new QPushButton(QStringLiteral("Collapse"));
+        bcol->setToolTip(QStringLiteral("collapse all sections and includes"));
+        frow->addWidget(bexp); frow->addWidget(bcol);
+        ll->addLayout(frow);
+
+        tree_ = new QTreeWidget;
+        tree_->setHeaderLabels({ QStringLiteral("Section / keyword"), QStringLiteral("Location") });
+        tree_->setColumnWidth(0, 240);
+        ll->addWidget(tree_, 1);
+        split->addWidget(left);
+
+        connect(bexp, &QPushButton::clicked, tree_, &QTreeWidget::expandAll);
+        connect(bcol, &QPushButton::clicked, tree_, &QTreeWidget::collapseAll);
+        connect(treeFilter_, &QLineEdit::textChanged, this,
+                [this](const QString& t) { filterTree(t.trimmed()); });
+    }
     tabs_ = new QTabWidget;
     tabs_->setTabsClosable(true);
     tabs_->setDocumentMode(true);
@@ -207,6 +249,60 @@ DeckEditorWidget::DeckEditorWidget(QWidget* parent)
     split->setStretchFactor(1, 1);
     split->setSizes({ 340, 700 });
     top->addWidget(split, 1);
+
+    // Find bar (Ctrl+F): wrap-around search in the current editor tab with
+    // all matches highlighted. Enter/F3 next, Shift+Enter/Shift+F3 previous,
+    // Esc hides. Hidden until first use.
+    {
+        findBar_ = new QWidget;
+        auto* fl = new QHBoxLayout(findBar_);
+        fl->setContentsMargins(0, 0, 0, 0);
+        fl->addWidget(new QLabel(QStringLiteral("Find:")));
+        findEdit_ = new QLineEdit;
+        findEdit_->setClearButtonEnabled(true);
+        fl->addWidget(findEdit_, 1);
+        auto* bprev = new QPushButton(QStringLiteral("Prev"));
+        auto* bnext = new QPushButton(QStringLiteral("Next"));
+        findInfo_ = new QLabel;
+        findInfo_->setMinimumWidth(90);
+        auto* bclose = new QPushButton(QStringLiteral("Close"));
+        fl->addWidget(bprev); fl->addWidget(bnext);
+        fl->addWidget(findInfo_); fl->addWidget(bclose);
+        findBar_->hide();
+        top->addWidget(findBar_);
+
+        connect(bnext, &QPushButton::clicked, this, [this] { findNext(false); });
+        connect(bprev, &QPushButton::clicked, this, [this] { findNext(true); });
+        connect(bclose, &QPushButton::clicked, this, [this] { hideFindBar(); });
+        connect(findEdit_, &QLineEdit::returnPressed, this, [this] { findNext(false); });
+        connect(findEdit_, &QLineEdit::textChanged, this, [this](const QString&) {
+            // incremental: re-anchor at the current match start so typing
+            // extends the match in place instead of walking forward
+            if (auto* ed = editorAt(tabs_->currentIndex())) {
+                QTextCursor c = ed->textCursor();
+                c.setPosition(c.selectionStart());
+                ed->setTextCursor(c);
+            }
+            updateFindHighlights();
+            if (!findEdit_->text().isEmpty()) findNext(false);
+        });
+
+        auto addShortcut = [this](const QKeySequence& seq, auto slot) {
+            auto* sc = new QShortcut(seq, this);
+            sc->setContext(Qt::WidgetWithChildrenShortcut);
+            connect(sc, &QShortcut::activated, this, slot);
+        };
+        addShortcut(QKeySequence::Find,     [this] { showFindBar(); });
+        addShortcut(QKeySequence::FindNext, [this] { findNext(false); });   // F3
+        addShortcut(QKeySequence::FindPrevious, [this] { findNext(true); });
+        auto* esc = new QShortcut(QKeySequence(Qt::Key_Escape), findBar_);
+        esc->setContext(Qt::WidgetWithChildrenShortcut);
+        connect(esc, &QShortcut::activated, this, [this] { hideFindBar(); });
+
+        connect(tabs_, &QTabWidget::currentChanged, this, [this](int) {
+            if (findBar_->isVisible()) updateFindHighlights();
+        });
+    }
 
     status_ = new QLabel(QStringLiteral("open a *.DATA file to edit the deck and its includes"));
     top->addWidget(status_);
@@ -220,6 +316,85 @@ DeckEditorWidget::DeckEditorWidget(QWidget* parent)
 }
 
 void DeckEditorWidget::setStatus(const QString& s) { status_->setText(s); }
+
+// -- tree filter / find bar ---------------------------------------------------
+void DeckEditorWidget::filterTree(const QString& needle)
+{
+    for (int i = 0; i < tree_->topLevelItemCount(); ++i)
+        filterItem(tree_->topLevelItem(i), needle);
+}
+
+void DeckEditorWidget::showFindBar()
+{
+    // seed from the editor's selection (single-line only)
+    if (auto* ed = editorAt(tabs_->currentIndex())) {
+        const QString sel = ed->textCursor().selectedText();
+        if (!sel.isEmpty() && !sel.contains(QChar(0x2029)))
+            findEdit_->setText(sel);
+    }
+    findBar_->show();
+    findEdit_->setFocus();
+    findEdit_->selectAll();
+    updateFindHighlights();
+}
+
+void DeckEditorWidget::hideFindBar()
+{
+    findBar_->hide();
+    if (auto* ed = editorAt(tabs_->currentIndex())) {
+        ed->setExtraSelections({});
+        ed->setFocus();
+    }
+}
+
+void DeckEditorWidget::findNext(bool backward)
+{
+    auto* ed = editorAt(tabs_->currentIndex());
+    if (!ed) return;
+    if (!findBar_->isVisible()) { showFindBar(); return; }   // bare F3
+    const QString needle = findEdit_->text();
+    if (needle.isEmpty()) return;
+    QTextDocument::FindFlags fl;
+    if (backward) fl |= QTextDocument::FindBackward;
+    if (!ed->find(needle, fl)) {                             // wrap around once
+        QTextCursor c = ed->textCursor();
+        c.movePosition(backward ? QTextCursor::End : QTextCursor::Start);
+        ed->setTextCursor(c);
+        if (!ed->find(needle, fl)) {
+            findInfo_->setText(QStringLiteral("not found"));
+            return;
+        }
+    }
+    ed->centerCursor();
+}
+
+void DeckEditorWidget::updateFindHighlights()
+{
+    auto* ed = editorAt(tabs_->currentIndex());
+    if (!ed) { findInfo_->clear(); return; }
+    const QString needle = findEdit_->text();
+    QList<QTextEdit::ExtraSelection> sels;
+    int count = 0;
+    constexpr int cap = 5000;   // keep huge decks responsive
+    if (!needle.isEmpty()) {
+        QTextCharFormat fmt;
+        fmt.setBackground(QColor(0xff, 0xe0, 0x66));
+        QTextCursor c(ed->document());
+        while (count < cap) {
+            c = ed->document()->find(needle, c);
+            if (c.isNull()) break;
+            QTextEdit::ExtraSelection s;
+            s.cursor = c;
+            s.format = fmt;
+            sels.push_back(s);
+            ++count;
+        }
+    }
+    ed->setExtraSelections(sels);
+    if (needle.isEmpty())    findInfo_->clear();
+    else if (count >= cap)   findInfo_->setText(QStringLiteral("%1+ matches").arg(cap));
+    else                     findInfo_->setText(QStringLiteral("%1 match(es)").arg(count));
+}
 
 // -- tabs -------------------------------------------------------------------
 int DeckEditorWidget::tabForPath(const QString& path) const
@@ -361,6 +536,8 @@ void DeckEditorWidget::scanDeck()
     QString section = QStringLiteral("(preamble)");
     int fileBudget = 128;                    // safety cap on include fan-out
     scanFile(rootDeck_, nullptr, nullptr, section, 0, fileBudget);
+    if (treeFilter_ && !treeFilter_->text().trimmed().isEmpty())
+        filterTree(treeFilter_->text().trimmed());
     setStatus(QStringLiteral("%1: structure scanned (%2 sections)")
         .arg(QFileInfo(rootDeck_).fileName())
         .arg(tree_->topLevelItemCount()));

@@ -17,6 +17,7 @@
 #include <QWidget>
 
 class QLabel;
+class QLineEdit;
 class QTabWidget;
 class QTreeWidget;
 class QTreeWidgetItem;
@@ -61,11 +62,20 @@ public:
     bool hasUnsavedChanges() const;
 
 private:
-    QTreeWidget* tree_   = nullptr;
-    QTabWidget*  tabs_   = nullptr;
-    QLabel*      status_ = nullptr;
+    QTreeWidget* tree_       = nullptr;
+    QLineEdit*   treeFilter_ = nullptr;   // filters the structure tree
+    QTabWidget*  tabs_       = nullptr;
+    QLabel*      status_     = nullptr;
+    QWidget*     findBar_    = nullptr;   // Ctrl+F in-editor search
+    QLineEdit*   findEdit_   = nullptr;
+    QLabel*      findInfo_   = nullptr;   // match count / "not found"
     QString      rootDeck_;
 
+    void filterTree(const QString& needle);
+    void showFindBar();
+    void hideFindBar();
+    void findNext(bool backward);
+    void updateFindHighlights();
     void scanDeck();
     void scanFile(const QString& path, QTreeWidgetItem* sectionParent,
                   QTreeWidgetItem* fileParent, QString& currentSection,
