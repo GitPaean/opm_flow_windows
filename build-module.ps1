@@ -10,6 +10,9 @@ param(
     [Parameter(Mandatory)] [string]$Module,
     [string]$Target = "install",
     [switch]$Mpi,
+    # Build against Intel MPI (oneAPI, pip-installed impi-rt/impi-devel)
+    # instead of MS-MPI. Experimental; uses build-impi\ / install-impi\ trees.
+    [switch]$IntelMpi,
     # Enable OpenMP threading via MSVC's LLVM runtime (/openmp:llvm). The default
     # /openmp (OpenMP 2.0) is too old for OPM's unsigned/size_t parallel-for
     # counters; /openmp:llvm (OpenMP 3.1+) handles them. Needs libomp140.x86_64.dll
@@ -28,8 +31,8 @@ $Root    = $env:OPM_ROOT
 if (-not $Root) { $Root = $PSScriptRoot }
 
 # MPI builds use separate build-mpi\ and install-mpi\ trees so the validated
-# serial build is left intact.
-$suffix  = if ($Mpi) { '-mpi' } else { '' }
+# serial build is left intact (build-impi\ / install-impi\ for Intel MPI).
+$suffix  = if ($IntelMpi) { '-impi' } elseif ($Mpi) { '-mpi' } else { '' }
 $Src     = Join-Path $Root "src\$Module"
 $Build   = Join-Path $Root "build$suffix\$Module"
 $Install = Join-Path $Root "install$suffix"
@@ -75,8 +78,23 @@ $cmakeArgs = @(
     '-DBUILD_EXAMPLES=OFF',
     '-DWITH_NATIVE=OFF'
 )
-# MPI: when -Mpi is given, let CMake find Microsoft MPI; otherwise disable it.
-if ($Mpi) { $cmakeArgs += '-DUSE_MPI=ON' } else { $cmakeArgs += '-DCMAKE_DISABLE_FIND_PACKAGE_MPI=TRUE' }
+# MPI: -IntelMpi pins FindMPI to the pip-installed Intel MPI SDK (bypassing
+# autodetection entirely, and hiding MS-MPI from it); -Mpi lets CMake find
+# Microsoft MPI via MSMPI_INC/MSMPI_LIB64; otherwise MPI is disabled.
+if ($IntelMpi) {
+    $impi = Join-Path $env:APPDATA 'Python\Library'
+    if (-not (Test-Path "$impi\lib\impi.lib")) {
+        throw "Intel MPI not found at $impi (python -m pip install --user impi-devel)"
+    }
+    $env:MSMPI_INC = ''; $env:MSMPI_LIB64 = ''
+    $cmakeArgs += @(
+        '-DUSE_MPI=ON',
+        '-DMPI_C_LIB_NAMES=impi', '-DMPI_CXX_LIB_NAMES=impi',
+        "-DMPI_impi_LIBRARY=$impi\lib\impi.lib",
+        "-DMPI_C_HEADER_DIR=$impi\include", "-DMPI_CXX_HEADER_DIR=$impi\include",
+        "-DMPIEXEC_EXECUTABLE=$impi\bin\mpiexec.exe"
+    )
+} elseif ($Mpi) { $cmakeArgs += '-DUSE_MPI=ON' } else { $cmakeArgs += '-DCMAKE_DISABLE_FIND_PACKAGE_MPI=TRUE' }
 
 # OpenMP: -OpenMP pre-seeds FindOpenMP to use MSVC's /openmp:llvm (the default
 # /openmp is OpenMP 2.0, too old for OPM's unsigned parallel-for counters).
