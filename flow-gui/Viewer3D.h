@@ -63,6 +63,11 @@ public:
     void setStepText(const QString& t) { stepText_ = t; update(); }
     void resetCamera();
 
+    // Standard viewpoints. Only the camera angles change - zoom and pan are
+    // kept, so flipping under the model stays on the region being inspected.
+    enum class StdView { Home, Top, Bottom, Side };
+    void setStandardView(StdView v);
+
 protected:
     void initializeGL() override;
     void paintGL() override;

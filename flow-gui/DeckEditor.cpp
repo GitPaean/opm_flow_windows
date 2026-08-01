@@ -10,6 +10,7 @@
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QFileSystemWatcher>
 #include <QFontDatabase>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -19,6 +20,7 @@
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QSaveFile>
+#include <QScrollBar>
 #include <QShortcut>
 #include <QSplitter>
 #include <QTabWidget>
@@ -201,10 +203,22 @@ DeckEditorWidget::DeckEditorWidget(QWidget* parent)
         auto* bopen = new QPushButton(QStringLiteral("Open DATA..."));
         auto* bsave = new QPushButton(QStringLiteral("Save"));
         auto* ball  = new QPushButton(QStringLiteral("Save all"));
+        auto* brel  = new QPushButton(QStringLiteral("Reload"));
+        brel->setToolTip(QStringLiteral(
+            "re-read the current file from disk (picks up edits made outside "
+            "the GUI; unmodified tabs reload by themselves)"));
+        auto* bcom  = new QPushButton(QStringLiteral("Comment"));
+        bcom->setToolTip(QStringLiteral(
+            "comment/uncomment the selected lines, or the current line (Ctrl+/)"));
         auto* bscan = new QPushButton(QStringLiteral("Rescan structure"));
         row->addWidget(bopen); row->addWidget(bsave); row->addWidget(ball);
+        row->addWidget(brel);  row->addWidget(bcom);
         row->addWidget(bscan); row->addStretch(1);
         top->addLayout(row);
+
+        connect(brel, &QPushButton::clicked, this,
+                [this] { reloadTab(tabs_->currentIndex(), false); });
+        connect(bcom, &QPushButton::clicked, this, [this] { toggleComment(); });
 
         connect(bopen, &QPushButton::clicked, this, [this] {
             const QString f = QFileDialog::getOpenFileName(
@@ -275,7 +289,12 @@ DeckEditorWidget::DeckEditorWidget(QWidget* parent)
     // Esc hides. Hidden until first use.
     {
         findBar_ = new QWidget;
-        auto* fl = new QHBoxLayout(findBar_);
+        auto* bars = new QVBoxLayout(findBar_);
+        bars->setContentsMargins(0, 0, 0, 0);
+        bars->setSpacing(2);
+
+        auto* findRow = new QWidget;
+        auto* fl = new QHBoxLayout(findRow);
         fl->setContentsMargins(0, 0, 0, 0);
         fl->addWidget(new QLabel(QStringLiteral("Find:")));
         findEdit_ = new QLineEdit;
@@ -288,8 +307,30 @@ DeckEditorWidget::DeckEditorWidget(QWidget* parent)
         auto* bclose = new QPushButton(QStringLiteral("Close"));
         fl->addWidget(bprev); fl->addWidget(bnext);
         fl->addWidget(findInfo_); fl->addWidget(bclose);
+        bars->addWidget(findRow);
+
+        // Replace row: shown by Ctrl+H, hidden for a plain Ctrl+F search.
+        replaceRow_ = new QWidget;
+        auto* rl = new QHBoxLayout(replaceRow_);
+        rl->setContentsMargins(0, 0, 0, 0);
+        rl->addWidget(new QLabel(QStringLiteral("Replace:")));
+        replaceEdit_ = new QLineEdit;
+        replaceEdit_->setClearButtonEnabled(true);
+        rl->addWidget(replaceEdit_, 1);
+        auto* brep    = new QPushButton(QStringLiteral("Replace"));
+        auto* brepAll = new QPushButton(QStringLiteral("Replace all"));
+        brep->setToolTip(QStringLiteral("replace the current match and jump to the next"));
+        brepAll->setToolTip(QStringLiteral("replace every match in this file (one undo step)"));
+        rl->addWidget(brep); rl->addWidget(brepAll);
+        rl->addSpacing(findInfo_->minimumWidth());
+        bars->addWidget(replaceRow_);
+        replaceRow_->hide();
         findBar_->hide();
         top->addWidget(findBar_);
+
+        connect(brep,    &QPushButton::clicked, this, [this] { replaceCurrent(); });
+        connect(brepAll, &QPushButton::clicked, this, [this] { replaceAll(); });
+        connect(replaceEdit_, &QLineEdit::returnPressed, this, [this] { replaceCurrent(); });
 
         connect(bnext, &QPushButton::clicked, this, [this] { findNext(false); });
         connect(bprev, &QPushButton::clicked, this, [this] { findNext(true); });
@@ -312,20 +353,34 @@ DeckEditorWidget::DeckEditorWidget(QWidget* parent)
             sc->setContext(Qt::WidgetWithChildrenShortcut);
             connect(sc, &QShortcut::activated, this, slot);
         };
-        addShortcut(QKeySequence::Find,     [this] { showFindBar(); });
-        addShortcut(QKeySequence::FindNext, [this] { findNext(false); });   // F3
+        addShortcut(QKeySequence::Find,     [this] { showFindBar(false); });
+        // Ctrl+H explicitly as well as the platform sequence: QKeySequence::
+        // Replace is Ctrl+H on Windows but Ctrl+R on X11, and the same key
+        // should open replace on every platform.
+        addShortcut(QKeySequence(Qt::CTRL | Qt::Key_H), [this] { showFindBar(true); });
+        addShortcut(QKeySequence::Replace,  [this] { showFindBar(true); });
+        addShortcut(QKeySequence::FindNext, [this] { findNext(false); });     // F3
         addShortcut(QKeySequence::FindPrevious, [this] { findNext(true); });
+        addShortcut(QKeySequence(Qt::CTRL | Qt::Key_Slash), [this] { toggleComment(); });
         auto* esc = new QShortcut(QKeySequence(Qt::Key_Escape), findBar_);
         esc->setContext(Qt::WidgetWithChildrenShortcut);
         connect(esc, &QShortcut::activated, this, [this] { hideFindBar(); });
 
-        connect(tabs_, &QTabWidget::currentChanged, this, [this](int) {
+        connect(tabs_, &QTabWidget::currentChanged, this, [this](int i) {
             if (findBar_->isVisible()) updateFindHighlights();
+            // the file may have changed while this tab was in the background
+            if (auto* ed = editorAt(i); ed && diskChanged(ed)) onDiskChange(
+                ed->property("filePath").toString());
         });
     }
 
     status_ = new QLabel(QStringLiteral("open a *.DATA file to edit the deck and its includes"));
     top->addWidget(status_);
+
+    // Notice deck edits made outside the GUI (another editor, a script).
+    watcher_ = new QFileSystemWatcher(this);
+    connect(watcher_, &QFileSystemWatcher::fileChanged, this,
+            [this](const QString& p) { onDiskChange(p); });
 
     connect(tree_, &QTreeWidget::itemActivated, this,
             [this](QTreeWidgetItem* it, int) {
@@ -344,7 +399,7 @@ void DeckEditorWidget::filterTree(const QString& needle)
         filterItem(tree_->topLevelItem(i), needle);
 }
 
-void DeckEditorWidget::showFindBar()
+void DeckEditorWidget::showFindBar(bool withReplace)
 {
     // seed from the editor's selection (single-line only)
     if (auto* ed = editorAt(tabs_->currentIndex())) {
@@ -353,6 +408,7 @@ void DeckEditorWidget::showFindBar()
             findEdit_->setText(sel);
     }
     findBar_->show();
+    replaceRow_->setVisible(withReplace);
     findEdit_->setFocus();
     findEdit_->selectAll();
     updateFindHighlights();
@@ -371,7 +427,7 @@ void DeckEditorWidget::findNext(bool backward)
 {
     auto* ed = editorAt(tabs_->currentIndex());
     if (!ed) return;
-    if (!findBar_->isVisible()) { showFindBar(); return; }   // bare F3
+    if (!findBar_->isVisible()) { showFindBar(false); return; }   // bare F3
     const QString needle = findEdit_->text();
     if (needle.isEmpty()) return;
     QTextDocument::FindFlags fl;
@@ -416,6 +472,180 @@ void DeckEditorWidget::updateFindHighlights()
     else                     findInfo_->setText(QStringLiteral("%1 match(es)").arg(count));
 }
 
+void DeckEditorWidget::replaceCurrent()
+{
+    auto* ed = editorAt(tabs_->currentIndex());
+    if (!ed) return;
+    const QString needle = findEdit_->text();
+    if (needle.isEmpty()) return;
+    // Replace only when the current selection IS the match (i.e. after a
+    // Find); otherwise this press just moves to the first match.
+    QTextCursor c = ed->textCursor();
+    if (c.hasSelection() && c.selectedText().compare(needle, Qt::CaseInsensitive) == 0) {
+        c.insertText(replaceEdit_->text());
+        ed->setTextCursor(c);
+    }
+    findNext(false);
+    updateFindHighlights();
+}
+
+void DeckEditorWidget::replaceAll()
+{
+    auto* ed = editorAt(tabs_->currentIndex());
+    if (!ed) return;
+    const QString needle = findEdit_->text();
+    if (needle.isEmpty()) return;
+    const QString repl = replaceEdit_->text();
+
+    QTextCursor block(ed->document());
+    block.beginEditBlock();               // one undo step for the whole run
+    int n = 0;
+    QTextCursor f = ed->document()->find(needle, 0);
+    while (!f.isNull()) {
+        f.insertText(repl);               // cursor lands after the new text,
+        f = ed->document()->find(needle, f);   // so a repl containing the
+        ++n;                                   // needle cannot loop forever
+    }
+    block.endEditBlock();
+
+    updateFindHighlights();
+    setStatus(n ? QStringLiteral("replaced %1 occurrence(s) of \"%2\" in %3")
+                      .arg(n).arg(needle, tabs_->tabText(tabs_->currentIndex()))
+                : QStringLiteral("\"%1\" not found").arg(needle));
+}
+
+void DeckEditorWidget::toggleComment()
+{
+    auto* ed = editorAt(tabs_->currentIndex());
+    if (!ed) return;
+    QTextCursor c = ed->textCursor();
+    QTextDocument* doc = ed->document();
+    const int firstNo = doc->findBlock(c.selectionStart()).blockNumber();
+    int lastNo = doc->findBlock(c.selectionEnd()).blockNumber();
+    // a selection ending exactly at a line start does not include that line
+    if (lastNo > firstNo && doc->findBlock(c.selectionEnd()).position() == c.selectionEnd())
+        --lastNo;
+
+    // Uncomment only if every non-blank line in the range is commented.
+    bool allCommented = true;
+    bool anyContent   = false;
+    for (int n = firstNo; n <= lastNo; ++n) {
+        const QString t = doc->findBlockByNumber(n).text();
+        if (t.trimmed().isEmpty()) continue;
+        anyContent = true;
+        if (!t.trimmed().startsWith(QLatin1String("--"))) { allCommented = false; break; }
+    }
+    if (!anyContent) return;
+
+    QTextCursor block(doc);
+    block.beginEditBlock();
+    for (int n = firstNo; n <= lastNo; ++n) {
+        const QTextBlock b = doc->findBlockByNumber(n);
+        const QString t = b.text();
+        if (t.trimmed().isEmpty()) continue;
+        QTextCursor cc(b);
+        if (allCommented) {
+            const int at = t.indexOf(QLatin1String("--"));
+            if (at < 0) continue;
+            cc.setPosition(b.position() + at);
+            cc.setPosition(b.position() + at + 2, QTextCursor::KeepAnchor);
+            cc.removeSelectedText();
+        } else {
+            cc.setPosition(b.position());       // column 0: unambiguous for
+            cc.insertText(QStringLiteral("--")); // every deck parser
+        }
+    }
+    block.endEditBlock();
+    setStatus(allCommented
+        ? QStringLiteral("uncommented %1 line(s)").arg(lastNo - firstNo + 1)
+        : QStringLiteral("commented %1 line(s)").arg(lastNo - firstNo + 1));
+}
+
+// -- external changes / reload ------------------------------------------------
+void DeckEditorWidget::rememberDiskStamp(DeckTextEdit* ed)
+{
+    const QFileInfo fi(ed->property("filePath").toString());
+    ed->setProperty("diskMtime", fi.lastModified().toMSecsSinceEpoch());
+    ed->setProperty("diskSize",  qint64(fi.size()));
+    ed->setProperty("diskStale", false);
+}
+
+bool DeckEditorWidget::diskChanged(DeckTextEdit* ed) const
+{
+    const QFileInfo fi(ed->property("filePath").toString());
+    if (!fi.exists()) return false;
+    return fi.lastModified().toMSecsSinceEpoch() != ed->property("diskMtime").toLongLong()
+        || qint64(fi.size()) != ed->property("diskSize").toLongLong();
+}
+
+void DeckEditorWidget::watchPath(const QString& path)
+{
+    // QSaveFile (and most editors) replace rather than rewrite the file,
+    // which drops the watch - so re-adding is the normal case, not an error.
+    if (watcher_ && !watcher_->files().contains(path)) watcher_->addPath(path);
+}
+
+void DeckEditorWidget::onDiskChange(const QString& path)
+{
+    watchPath(path);                       // re-arm after a replace-on-save
+    const int tab = tabForPath(path);
+    if (tab < 0) { if (watcher_) watcher_->removePath(path); return; }
+    auto* ed = editorAt(tab);
+    if (!ed || !diskChanged(ed)) return;   // our own save, or a no-op touch
+
+    if (!ed->document()->isModified()) {   // safe to take the new content
+        reloadTab(tab, true);
+        setStatus(QStringLiteral("%1 changed on disk - reloaded")
+                      .arg(QDir::toNativeSeparators(path)));
+        return;
+    }
+    // Unsaved edits here: never discard them silently, just flag it.
+    ed->setProperty("diskStale", true);
+    updateTabTitle(tab);
+    tabs_->setTabToolTip(tab, QStringLiteral("%1\nchanged on disk since it was "
+                                             "opened - Reload to discard your "
+                                             "edits and take the new content")
+                                  .arg(QDir::toNativeSeparators(path)));
+    setStatus(QStringLiteral("%1 changed on disk but has unsaved edits here - "
+                             "use Reload to discard them, or Save to overwrite")
+                  .arg(QFileInfo(path).fileName()));
+}
+
+void DeckEditorWidget::reloadTab(int tab, bool force)
+{
+    auto* ed = editorAt(tab);
+    if (!ed) return;
+    const QString path = ed->property("filePath").toString();
+    if (!force && ed->document()->isModified()) {
+        const auto a = QMessageBox::question(this, QStringLiteral("Deck editor"),
+            QStringLiteral("%1 has unsaved changes.\nDiscard them and re-read "
+                           "the file from disk?").arg(tabs_->tabText(tab)),
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+        if (a != QMessageBox::Yes) return;
+    }
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly)) {
+        setStatus(QStringLiteral("cannot re-read %1").arg(QDir::toNativeSeparators(path)));
+        return;
+    }
+    // keep the caret roughly where it was
+    const int line = ed->textCursor().blockNumber();
+    const int scroll = ed->verticalScrollBar()->value();
+    ed->setPlainText(QString::fromLatin1(f.readAll()));
+    ed->document()->setModified(false);
+    const QTextBlock b = ed->document()->findBlockByNumber(line);
+    if (b.isValid()) ed->setTextCursor(QTextCursor(b));
+    ed->verticalScrollBar()->setValue(scroll);
+    rememberDiskStamp(ed);
+    watchPath(path);
+    tabs_->setTabToolTip(tab, QDir::toNativeSeparators(path));
+    updateTabTitle(tab);
+    if (findBar_->isVisible()) updateFindHighlights();
+    // The new content may hold different keywords or INCLUDEs, and the file
+    // may be an include of the open deck - rescan so the tree stays honest.
+    if (!rootDeck_.isEmpty()) scanDeck();
+}
+
 // -- tabs -------------------------------------------------------------------
 int DeckEditorWidget::tabForPath(const QString& path) const
 {
@@ -446,6 +676,8 @@ void DeckEditorWidget::openFile(const QString& path, int line)
         ed->document()->setModified(false);
         new DeckHighlighter(ed->document());
         ed->setProperty("filePath", QFileInfo(path).canonicalFilePath());
+        rememberDiskStamp(ed);
+        watchPath(ed->property("filePath").toString());
         tab = tabs_->addTab(ed, QFileInfo(path).fileName());
         tabs_->setTabToolTip(tab, QDir::toNativeSeparators(path));
         connect(ed->document(), &QTextDocument::modificationChanged, this,
@@ -472,7 +704,8 @@ void DeckEditorWidget::updateTabTitle(int tab)
     auto* ed = editorAt(tab);
     if (!ed) return;
     QString t = QFileInfo(ed->property("filePath").toString()).fileName();
-    if (ed->document()->isModified()) t += QLatin1Char('*');
+    if (ed->document()->isModified())     t += QLatin1Char('*');
+    if (ed->property("diskStale").toBool()) t += QLatin1Char('!');   // changed on disk
     tabs_->setTabText(tab, t);
 }
 
@@ -494,6 +727,9 @@ bool DeckEditorWidget::saveTab(int tab)
         return false;
     }
     ed->document()->setModified(false);
+    rememberDiskStamp(ed);      // our own write must not read back as external
+    watchPath(path);            // QSaveFile replaced the file: re-arm the watch
+    tabs_->setTabToolTip(tab, QDir::toNativeSeparators(path));
     updateTabTitle(tab);
     setStatus(QStringLiteral("saved %1").arg(QDir::toNativeSeparators(path)));
     return true;
@@ -505,6 +741,8 @@ void DeckEditorWidget::saveAll()
         if (auto* ed = editorAt(i); ed && ed->document()->isModified())
             saveTab(i);
 }
+
+void DeckEditorWidget::saveAllTabs() { saveAll(); }
 
 void DeckEditorWidget::closeTab(int tab)
 {
@@ -518,8 +756,10 @@ void DeckEditorWidget::closeTab(int tab)
         if (a == QMessageBox::Cancel) return;
         if (a == QMessageBox::Save && !saveTab(tab)) return;
     }
+    const QString path = ed->property("filePath").toString();
     tabs_->removeTab(tab);
     ed->deleteLater();
+    if (watcher_ && tabForPath(path) < 0) watcher_->removePath(path);
 }
 
 bool DeckEditorWidget::hasUnsavedChanges() const

@@ -55,6 +55,9 @@ private:
         int     reportTotal  = 0;
         qint64  elapsedMs    = 0;
         int     exitCode     = 0;
+        // part of the batch the current Run press started: "Run selected"
+        // marks only the selected rows, so the runner skips the rest.
+        bool    inRun        = false;
     };
 
     // widgets
@@ -67,6 +70,7 @@ private:
     QLineEdit*      outdirEdit_  = nullptr;
     QLineEdit*      extraEdit_   = nullptr;
     QPushButton*    runBtn_      = nullptr;
+    QPushButton*    runSelBtn_   = nullptr;   // run only the selected rows
     QPushButton*    stopBtn_     = nullptr;
     QPushButton*    skipBtn_     = nullptr;
     QPlainTextEdit* logView_     = nullptr;
@@ -121,5 +125,8 @@ private:
 
     void onAddDecks();
     void onBrowseOutdir();
-    void onRun();
+    void onRun(bool selectedOnly);
+    // Offer to save deck-editor changes so the run reads the edited files
+    // (flow re-reads the decks from disk on every run). False = user cancelled.
+    bool flushDeckEdits();
 };

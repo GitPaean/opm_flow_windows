@@ -21,7 +21,10 @@ results, animate them in 3D, and edit decks — all in one window.
   progress bar, elapsed time and ETA** parsed live from flow's
   `Report step X/N at day Y/Z` output, with **View/Edit deck** right below
   *Add deck*. Grouped separately below, for after the run finishes:
-  **View PRT**, **View DBG**, and **Open result folder**.
+  **View PRT**, **View DBG**, and **Open result folder**. *Run queue* runs
+  the whole queue; **Run selected** runs only the highlighted rows
+  (Ctrl/Shift-click for several), leaving the rest of the queue untouched —
+  handy to re-run one case of a study after editing its deck.
 - **Results tab** (when built with summary support): plot summary vectors
   (FOPR, WBHP, ...) straight from a run's `SMSPEC`/`UNSMRY` via opm-common's
   `EclIO::ESmry`. The **vector picker is grouped and filtered** — using
@@ -55,7 +58,11 @@ results, animate them in 3D, and edit decks — all in one window.
   animation with play button and date display, vertical exaggeration,
   orbit/pan/zoom camera, and a color legend. The default view frames the
   model with its long horizontal axis across the screen (from a principal-
-  axis analysis of the grid), seen from the side and slightly above. Cases mirror the Results tab
+  axis analysis of the grid), seen from the side and slightly above. The
+  orbit is **unrestricted** — keep dragging past the side view to get under
+  the model and look at the base of the reservoir — and a *View* menu jumps
+  to the Home / Top / Bottom / Side viewpoints, keeping the current zoom and
+  pan (*Reset view* re-frames everything). Cases mirror the Results tab
   (or open any `.EGRID` directly).
 - **Deck Editor tab** — edit the deck and its INCLUDE files directly: a
   section tree (RUNSPEC ... SCHEDULE) lists every keyword with file and
@@ -63,12 +70,19 @@ results, animate them in 3D, and edit decks — all in one window.
   tabbed editor with Eclipse syntax highlighting and line numbers. The tree
   has a **keyword filter** (matches keyword or file name, hits expanded
   automatically), Expand/Collapse for the selected subtree and
-  Expand all / Collapse all buttons; the editor a **find bar**
+  Expand all / Collapse all buttons; the editor a **find & replace bar**
   (Ctrl+F, Enter/F3 next, Shift+F3 previous, wrap-around, every match
-  highlighted with a count). Saves
+  highlighted with a count; Ctrl+H adds *Replace* and *Replace all*, the
+  latter a single undo step) and a **Comment** button (Ctrl+/) that toggles
+  `--` on the selected lines or the current one. Saves
   go to the original files (never a flattened copy), so shared includes
   stay consistent; View/Edit deck on the Run tab jumps straight to a queued
   deck.
+  Files edited **outside** the GUI are noticed: an unmodified tab reloads
+  itself, one with unsaved edits is flagged `!` and left alone until you
+  press *Reload*. Since flow re-reads the decks from disk on every run,
+  *Run*/*Validate* offer to save pending editor changes first, so what runs
+  is always what you last edited.
 - **Simulator** — by default the `flow`(`.exe`) shipped next to the GUI (in a
   development checkout it falls back to the harness build tree); the resolved
   path is shown in the log at startup. `flow` contains every model variant,

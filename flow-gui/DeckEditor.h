@@ -16,6 +16,7 @@
 #include <QSyntaxHighlighter>
 #include <QWidget>
 
+class QFileSystemWatcher;
 class QLabel;
 class QLineEdit;
 class QTabWidget;
@@ -60,6 +61,9 @@ public:
     void openFile(const QString& path, int line = -1);
     // True if any open tab has unsaved changes.
     bool hasUnsavedChanges() const;
+    // Write every modified tab back to its file. Called before a run: flow
+    // re-reads the decks from disk, so unsaved edits must land first.
+    void saveAllTabs();
 
 private:
     QTreeWidget* tree_       = nullptr;
@@ -69,13 +73,27 @@ private:
     QWidget*     findBar_    = nullptr;   // Ctrl+F in-editor search
     QLineEdit*   findEdit_   = nullptr;
     QLabel*      findInfo_   = nullptr;   // match count / "not found"
+    QWidget*     replaceRow_ = nullptr;   // Ctrl+H extension of the find bar
+    QLineEdit*   replaceEdit_ = nullptr;
+    // Watches the open files so edits made outside the GUI are noticed.
+    QFileSystemWatcher* watcher_ = nullptr;
     QString      rootDeck_;
 
     void filterTree(const QString& needle);
-    void showFindBar();
+    void showFindBar(bool withReplace);
     void hideFindBar();
     void findNext(bool backward);
     void updateFindHighlights();
+    void replaceCurrent();
+    void replaceAll();
+    // Toggle "--" comments on the selected lines (or the current line).
+    void toggleComment();
+    // Re-read a tab from disk. force = discard unsaved changes without asking.
+    void reloadTab(int tab, bool force);
+    void onDiskChange(const QString& path);
+    void rememberDiskStamp(DeckTextEdit* ed);
+    bool diskChanged(DeckTextEdit* ed) const;
+    void watchPath(const QString& path);
     void scanDeck();
     void scanFile(const QString& path, QTreeWidgetItem* sectionParent,
                   QTreeWidgetItem* fileParent, QString& currentSection,

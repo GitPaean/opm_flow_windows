@@ -49,6 +49,7 @@
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QScrollBar>
+#include <QSet>
 #include <QSettings>
 #include <QSpinBox>
 #include <QSystemTrayIcon>
@@ -59,6 +60,9 @@
 #include <QThread>
 #include <QUrl>
 #include <QVBoxLayout>
+
+#include <algorithm>
+#include <utility>
 
 #if !defined(Q_OS_WIN)
   #include <signal.h>
@@ -297,24 +301,30 @@ FlowGuiWindow::FlowGuiWindow()
     // --- run / stop / clear-log ---------------------------------------------
     {
         auto* row = new QHBoxLayout;
-        runBtn_  = new QPushButton(QStringLiteral("Run queue"));
+        runBtn_    = new QPushButton(QStringLiteral("Run queue"));
+        runSelBtn_ = new QPushButton(QStringLiteral("Run selected"));
         stopBtn_ = new QPushButton(QStringLiteral("Stop queue"));
         auto* skipBtn = new QPushButton(QStringLiteral("Skip job"));
         auto* valBtn  = new QPushButton(QStringLiteral("Validate deck"));
         auto* bclear  = new QPushButton(QStringLiteral("Clear log"));
         stopBtn_->setEnabled(false);
         skipBtn->setEnabled(false);
+        runSelBtn_->setToolTip(QStringLiteral(
+            "run only the decks selected in the queue above (Ctrl/Shift-click "
+            "for several), leaving the rest untouched"));
         stopBtn_->setToolTip(QStringLiteral("kill the running job and abort the remaining queue"));
         skipBtn->setToolTip(QStringLiteral("kill the running job and continue with the next one"));
         valBtn->setToolTip(QStringLiteral("parse-and-initialize the selected deck without running "
                                           "the simulation (flow --enable-dry-run)"));
-        connect(runBtn_,  &QPushButton::clicked, this, [this] { onRun(); });
+        connect(runBtn_,    &QPushButton::clicked, this, [this] { onRun(false); });
+        connect(runSelBtn_, &QPushButton::clicked, this, [this] { onRun(true); });
         connect(stopBtn_, &QPushButton::clicked, this, [this] { stopCurrentJob(); });
         connect(skipBtn,  &QPushButton::clicked, this, [this] { skipCurrentJob(); });
         connect(valBtn,   &QPushButton::clicked, this, [this] { validateSelectedDeck(); });
         connect(bclear,   &QPushButton::clicked, this, [this] { logView_->clear(); });
         skipBtn_ = skipBtn;   // enabled/disabled together with Stop in setRunning()
-        row->addWidget(runBtn_); row->addWidget(stopBtn_); row->addWidget(skipBtn);
+        row->addWidget(runBtn_); row->addWidget(runSelBtn_);
+        row->addWidget(stopBtn_); row->addWidget(skipBtn);
         row->addWidget(valBtn);  row->addWidget(bclear);
         row->addStretch(1);
         top->addLayout(row);
@@ -562,6 +572,7 @@ void FlowGuiWindow::flushLog()
 void FlowGuiWindow::setRunning(bool on)
 {
     runBtn_->setEnabled(!on);
+    runSelBtn_->setEnabled(!on);
     stopBtn_->setEnabled(on);
     if (skipBtn_) skipBtn_->setEnabled(on);
 }
@@ -620,11 +631,50 @@ void FlowGuiWindow::parseProgress(const QString& chunk)
 }
 
 // ---------------------------------------------------------------------------
-void FlowGuiWindow::onRun()
+bool FlowGuiWindow::flushDeckEdits()
+{
+    // flow reads the decks from disk on every run, so unsaved editor changes
+    // would silently run the OLD file: offer to write them out first.
+    if (!deckEd_ || !deckEd_->hasUnsavedChanges()) return true;
+    const auto a = QMessageBox::question(this, QLatin1String(kAppName),
+        QStringLiteral("The deck editor has unsaved changes.\n"
+                       "Save them before running? (flow reads the decks from "
+                       "disk, so unsaved edits would not take effect.)"),
+        QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel,
+        QMessageBox::Save);
+    if (a == QMessageBox::Cancel) return false;
+    if (a == QMessageBox::Save) {
+        deckEd_->saveAllTabs();
+        appendLog(QStringLiteral("deck editor changes saved before the run\n"));
+    }
+    return true;
+}
+
+void FlowGuiWindow::onRun(bool selectedOnly)
 {
     if (proc_ && proc_->state() != QProcess::NotRunning) return;
+
+    // Candidate rows: the selection, or the whole queue.
+    QList<int> rows;
+    if (selectedOnly) {
+        QSet<int> uniq;
+        const auto sel = jobTable_->selectionModel()->selectedIndexes();
+        for (const auto& ix : sel) uniq.insert(ix.row());
+        rows = QList<int>(uniq.begin(), uniq.end());
+        std::sort(rows.begin(), rows.end());
+        if (rows.isEmpty()) {
+            QMessageBox::information(this, QLatin1String(kAppName),
+                QStringLiteral("Select one or more decks in the queue first "
+                               "(Ctrl/Shift-click for several)."));
+            return;
+        }
+    } else {
+        for (int i = 0; i < jobs_.size(); ++i) rows << i;
+    }
+
     bool anyQueued = false, anyFinished = false;
-    for (const Job& j : jobs_) {
+    for (int r : std::as_const(rows)) {
+        const Job& j = jobs_[r];
         anyQueued   |= (j.state == Job::Queued);
         anyFinished |= (j.state == Job::Done || j.state == Job::Failed
                         || j.state == Job::Stopped);
@@ -634,14 +684,18 @@ void FlowGuiWindow::onRun()
             QStringLiteral("Add at least one input deck (*.DATA) to the queue first."));
         return;
     }
-    if (!anyQueued) {   // everything already ran - offer a confirmed re-run
+    if (!anyQueued) {   // everything selected already ran - confirmed re-run
         const auto a = QMessageBox::question(this, QLatin1String(kAppName),
-            QStringLiteral("All jobs in the queue have already run.\n"
-                           "Re-run them? Previous results in their output "
-                           "directories will be overwritten."),
+            selectedOnly
+                ? QStringLiteral("The selected job(s) have already run.\n"
+                                 "Re-run them? Previous results in their output "
+                                 "directories will be overwritten.")
+                : QStringLiteral("All jobs in the queue have already run.\n"
+                                 "Re-run them? Previous results in their output "
+                                 "directories will be overwritten."),
             QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
         if (a != QMessageBox::Yes) return;
-        for (int i = 0; i < jobs_.size(); ++i) {
+        for (int i : std::as_const(rows)) {
             Job& j = jobs_[i];
             if (j.state != Job::Done && j.state != Job::Failed
                 && j.state != Job::Stopped) continue;
@@ -654,8 +708,20 @@ void FlowGuiWindow::onRun()
             j.exitCode     = 0;
             refreshRow(i);
         }
-        appendLog(QStringLiteral("re-running the queue\n"));
+        appendLog(selectedOnly ? QStringLiteral("re-running the selected job(s)\n")
+                               : QStringLiteral("re-running the queue\n"));
     }
+    if (!flushDeckEdits()) return;
+
+    // Mark this batch: only these rows are picked up by the runner.
+    for (Job& j : jobs_) j.inRun = false;
+    int batch = 0;
+    for (int r : std::as_const(rows))
+        if (jobs_[r].state == Job::Queued) { jobs_[r].inRun = true; ++batch; }
+    if (selectedOnly)
+        appendLog(QStringLiteral("running %1 selected job(s) of %2 in the queue\n")
+                      .arg(batch).arg(jobs_.size()));
+
     // always re-resolve: the Simulator override may have changed since the
     // last run, and it must win over whatever executable ran previously
     exePath_ = resolveSimulator();
@@ -685,11 +751,12 @@ void FlowGuiWindow::startNextJob()
     current_ = -1;
     if (!aborted_)
         for (int i = 0; i < jobs_.size(); ++i)
-            if (jobs_[i].state == Job::Queued) { current_ = i; break; }
+            if (jobs_[i].state == Job::Queued && jobs_[i].inRun) { current_ = i; break; }
 
     if (current_ < 0) {                       // queue finished
         int ok = 0, fail = 0;
         for (const Job& j : jobs_) {
+            if (!j.inRun) continue;           // count this batch only
             if (j.state == Job::Done)   ++ok;
             if (j.state == Job::Failed) ++fail;
         }
@@ -842,6 +909,7 @@ void FlowGuiWindow::validateSelectedDeck()
             QStringLiteral("Select a deck in the queue to validate."));
         return;
     }
+    if (!flushDeckEdits()) return;   // validate what is on disk, not a stale copy
     exePath_ = resolveSimulator();   // honor a changed Simulator override
     if (exePath_.isEmpty() || !QFileInfo::exists(exePath_)) return;
 

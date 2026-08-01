@@ -195,6 +195,21 @@ void GridGLWidget::resetCamera()
     update();
 }
 
+void GridGLWidget::setStandardView(StdView v)
+{
+    // pitch 0 looks straight down on the model, -90 is a pure side view and
+    // +/-180 is from underneath (see mvp(): the camera orbits in the Y-Z
+    // plane before the yaw spin).
+    yaw_ = homeYaw_;
+    switch (v) {
+        case StdView::Home:   pitch_ =  -18.f; break;
+        case StdView::Top:    pitch_ =    0.f; break;
+        case StdView::Bottom: pitch_ =  180.f; break;
+        case StdView::Side:   pitch_ =  -90.f; break;
+    }
+    update();
+}
+
 void GridGLWidget::initializeGL()
 {
     initializeOpenGLFunctions();
@@ -387,7 +402,12 @@ void GridGLWidget::mouseMoveEvent(QMouseEvent* ev)
     if (ev->buttons() & Qt::LeftButton) {
         yaw_   += d.x() * 0.4f;
         pitch_ += d.y() * 0.4f;
-        pitch_ = std::clamp(pitch_, -89.f, 89.f);
+        // Full orbit, no clamp at the poles: keep dragging past the side view
+        // to end up under the model and look at the base of the reservoir.
+        // The camera is a rotation composition (no lookAt), so there is no
+        // up-vector degeneracy to avoid - only the numbers need wrapping.
+        if (pitch_ >  180.f) pitch_ -= 360.f;
+        if (pitch_ < -180.f) pitch_ += 360.f;
     } else if (ev->buttons() & (Qt::MiddleButton | Qt::RightButton)) {
         // pan in view plane, scaled with distance
         const float s = dist_ * 0.0015f;
@@ -443,7 +463,29 @@ Viewer3DWidget::Viewer3DWidget(QWidget* parent)
         zscale_->setValue(3.0);
         zscale_->setSingleStep(0.5);
         row->addWidget(zscale_);
+        // Standard viewpoints - dragging can reach all of them (the orbit is
+        // unrestricted), this is just the quick way to the useful ones.
+        auto* viewBox = new QComboBox;
+        viewBox->addItem(QStringLiteral("View..."));
+        viewBox->addItem(QStringLiteral("Home"));
+        viewBox->addItem(QStringLiteral("Top (map)"));
+        viewBox->addItem(QStringLiteral("Bottom (base)"));
+        viewBox->addItem(QStringLiteral("Side"));
+        viewBox->setToolTip(QStringLiteral(
+            "jump to a standard viewpoint, keeping the current zoom and pan"));
+        row->addWidget(viewBox);
+        connect(viewBox, &QComboBox::currentIndexChanged, this, [this, viewBox](int i) {
+            switch (i) {
+                case 1: gl_->setStandardView(GridGLWidget::StdView::Home);   break;
+                case 2: gl_->setStandardView(GridGLWidget::StdView::Top);    break;
+                case 3: gl_->setStandardView(GridGLWidget::StdView::Bottom); break;
+                case 4: gl_->setStandardView(GridGLWidget::StdView::Side);   break;
+                default: return;
+            }
+            viewBox->setCurrentIndex(0);   // a menu, not a persistent state
+        });
         auto* bview = new QPushButton(QStringLiteral("Reset view"));
+        bview->setToolTip(QStringLiteral("back to the framed default view (also resets zoom and pan)"));
         row->addWidget(bview);
         connect(bview, &QPushButton::clicked, this, [this] { gl_->resetCamera(); });
         top->addLayout(row);
