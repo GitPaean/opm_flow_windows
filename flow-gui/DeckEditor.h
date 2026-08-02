@@ -19,6 +19,7 @@
 class QFileSystemWatcher;
 class QLabel;
 class QLineEdit;
+class QPushButton;
 class QTabWidget;
 class QTreeWidget;
 class QTreeWidgetItem;
@@ -75,6 +76,7 @@ private:
     QLabel*      findInfo_   = nullptr;   // match count / "not found"
     QWidget*     replaceRow_ = nullptr;   // Ctrl+H extension of the find bar
     QLineEdit*   replaceEdit_ = nullptr;
+    QPushButton* replaceToggle_ = nullptr;   // shows/hides replaceRow_
     // Watches the open files so edits made outside the GUI are noticed.
     QFileSystemWatcher* watcher_ = nullptr;
     QString      rootDeck_;

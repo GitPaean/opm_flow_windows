@@ -71,9 +71,10 @@ results, animate them in 3D, and edit decks — all in one window.
   has a **keyword filter** (matches keyword or file name, hits expanded
   automatically), Expand/Collapse for the selected subtree and
   Expand all / Collapse all buttons; the editor a **find & replace bar**
-  (Ctrl+F, Enter/F3 next, Shift+F3 previous, wrap-around, every match
-  highlighted with a count; Ctrl+H adds *Replace* and *Replace all*, the
-  latter a single undo step) and a **Comment** button (Ctrl+/) that toggles
+  (the *Find / Replace* button, or Ctrl+F / Ctrl+H — Enter/F3 next,
+  Shift+F3 previous, wrap-around, every match highlighted with a count;
+  the *Replace...* toggle in the bar opens *Replace* and *Replace all*,
+  the latter a single undo step) and a **Comment** button (Ctrl+/) that toggles
   `--` on the selected lines or the current one. Saves
   go to the original files (never a flattened copy), so shared includes
   stay consistent; View/Edit deck on the Run tab jumps straight to a queued

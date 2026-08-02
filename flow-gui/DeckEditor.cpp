@@ -21,6 +21,7 @@
 #include <QRegularExpression>
 #include <QSaveFile>
 #include <QScrollBar>
+#include <QSet>
 #include <QShortcut>
 #include <QSplitter>
 #include <QTabWidget>
@@ -210,15 +211,19 @@ DeckEditorWidget::DeckEditorWidget(QWidget* parent)
         auto* bcom  = new QPushButton(QStringLiteral("Comment"));
         bcom->setToolTip(QStringLiteral(
             "comment/uncomment the selected lines, or the current line (Ctrl+/)"));
+        auto* bfind = new QPushButton(QStringLiteral("Find / Replace"));
+        bfind->setToolTip(QStringLiteral(
+            "search this file and replace matches (Ctrl+F finds, Ctrl+H replaces)"));
         auto* bscan = new QPushButton(QStringLiteral("Rescan structure"));
         row->addWidget(bopen); row->addWidget(bsave); row->addWidget(ball);
-        row->addWidget(brel);  row->addWidget(bcom);
+        row->addWidget(brel);  row->addWidget(bcom); row->addWidget(bfind);
         row->addWidget(bscan); row->addStretch(1);
         top->addLayout(row);
 
         connect(brel, &QPushButton::clicked, this,
                 [this] { reloadTab(tabs_->currentIndex(), false); });
         connect(bcom, &QPushButton::clicked, this, [this] { toggleComment(); });
+        connect(bfind, &QPushButton::clicked, this, [this] { showFindBar(true); });
 
         connect(bopen, &QPushButton::clicked, this, [this] {
             const QString f = QFileDialog::getOpenFileName(
@@ -302,10 +307,15 @@ DeckEditorWidget::DeckEditorWidget(QWidget* parent)
         fl->addWidget(findEdit_, 1);
         auto* bprev = new QPushButton(QStringLiteral("Prev"));
         auto* bnext = new QPushButton(QStringLiteral("Next"));
+        // Visible way into replace - a shortcut alone is too easy to miss.
+        replaceToggle_ = new QPushButton(QStringLiteral("Replace..."));
+        replaceToggle_->setCheckable(true);
+        replaceToggle_->setToolTip(QStringLiteral("show/hide the replace row (Ctrl+H)"));
         findInfo_ = new QLabel;
         findInfo_->setMinimumWidth(90);
         auto* bclose = new QPushButton(QStringLiteral("Close"));
         fl->addWidget(bprev); fl->addWidget(bnext);
+        fl->addWidget(replaceToggle_);
         fl->addWidget(findInfo_); fl->addWidget(bclose);
         bars->addWidget(findRow);
 
@@ -331,6 +341,10 @@ DeckEditorWidget::DeckEditorWidget(QWidget* parent)
         connect(brep,    &QPushButton::clicked, this, [this] { replaceCurrent(); });
         connect(brepAll, &QPushButton::clicked, this, [this] { replaceAll(); });
         connect(replaceEdit_, &QLineEdit::returnPressed, this, [this] { replaceCurrent(); });
+        connect(replaceToggle_, &QPushButton::toggled, this, [this](bool on) {
+            replaceRow_->setVisible(on);
+            if (on) replaceEdit_->setFocus();
+        });
 
         connect(bnext, &QPushButton::clicked, this, [this] { findNext(false); });
         connect(bprev, &QPushButton::clicked, this, [this] { findNext(true); });
@@ -348,15 +362,23 @@ DeckEditorWidget::DeckEditorWidget(QWidget* parent)
             if (!findEdit_->text().isEmpty()) findNext(false);
         });
 
-        auto addShortcut = [this](const QKeySequence& seq, auto slot) {
+        // Register each sequence exactly ONCE: two QShortcuts sharing a
+        // sequence make Qt emit activatedAmbiguously() and fire neither -
+        // which silently kills the binding. QKeySequence::Replace already is
+        // Ctrl+H on Windows and on most Linux themes, so the explicit Ctrl+H
+        // below would otherwise collide with it.
+        QSet<QString> bound;
+        auto addShortcut = [this, &bound](const QKeySequence& seq, auto slot) {
+            const QString key = seq.toString(QKeySequence::PortableText);
+            if (seq.isEmpty() || bound.contains(key)) return;
+            bound.insert(key);
             auto* sc = new QShortcut(seq, this);
             sc->setContext(Qt::WidgetWithChildrenShortcut);
             connect(sc, &QShortcut::activated, this, slot);
         };
         addShortcut(QKeySequence::Find,     [this] { showFindBar(false); });
-        // Ctrl+H explicitly as well as the platform sequence: QKeySequence::
-        // Replace is Ctrl+H on Windows but Ctrl+R on X11, and the same key
-        // should open replace on every platform.
+        // Ctrl+H first so it is the one that survives; the platform sequence
+        // is added too when it happens to differ (some themes use Ctrl+R).
         addShortcut(QKeySequence(Qt::CTRL | Qt::Key_H), [this] { showFindBar(true); });
         addShortcut(QKeySequence::Replace,  [this] { showFindBar(true); });
         addShortcut(QKeySequence::FindNext, [this] { findNext(false); });     // F3
@@ -408,7 +430,8 @@ void DeckEditorWidget::showFindBar(bool withReplace)
             findEdit_->setText(sel);
     }
     findBar_->show();
-    replaceRow_->setVisible(withReplace);
+    replaceToggle_->setChecked(withReplace);   // drives the replace row
+    replaceRow_->setVisible(withReplace);      // (also when already checked)
     findEdit_->setFocus();
     findEdit_->selectAll();
     updateFindHighlights();
