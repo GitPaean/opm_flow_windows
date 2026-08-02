@@ -6,6 +6,8 @@
 */
 #include "DeckEditor.h"
 
+#include <QAction>
+#include <QCheckBox>
 #include <QDir>
 #include <QFile>
 #include <QFileDialog>
@@ -15,7 +17,9 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMenu>
 #include <QMessageBox>
+#include <QMouseEvent>
 #include <QPainter>
 #include <QPushButton>
 #include <QRegularExpression>
@@ -29,6 +33,8 @@
 #include <QTextEdit>
 #include <QTreeWidget>
 #include <QVBoxLayout>
+
+#include <memory>
 
 namespace {
 
@@ -65,6 +71,32 @@ bool filterItem(QTreeWidgetItem* it, const QString& needle)
     it->setHidden(!needle.isEmpty() && !selfMatch && !childMatch);
     if (!needle.isEmpty() && childMatch) it->setExpanded(true);
     return selfMatch || childMatch;
+}
+
+// The file name a deck line refers to, if any: the quoted token of an
+// INCLUDE argument line ('include/MULTZ.grdecl' /), the argument of a
+// single-line "INCLUDE 'f' /", or a bare unquoted token. Comments and the
+// record terminator are stripped; backslashes are accepted so decks written
+// on Windows also resolve on Linux.
+QString deckFileToken(const QString& line)
+{
+    QString t = line;
+    const int c = t.indexOf(QLatin1String("--"));
+    if (c >= 0) t = t.left(c);
+    t = t.trimmed();
+    if (t.startsWith(QLatin1String("INCLUDE"), Qt::CaseInsensitive))
+        t = t.mid(7).trimmed();           // "INCLUDE 'f' /" on one line
+    if (t.isEmpty()) return {};
+    if (t.startsWith(QLatin1Char('\''))) {
+        const int e = t.indexOf(QLatin1Char('\''), 1);
+        t = e > 1 ? t.mid(1, e - 1) : QString();
+    } else {
+        if (t.endsWith(QLatin1Char('/'))) { t.chop(1); t = t.trimmed(); }
+        const int sp = t.indexOf(QRegularExpression(QStringLiteral("\\s")));
+        if (sp > 0) t = t.left(sp);
+    }
+    t.replace(QLatin1Char('\\'), QLatin1Char('/'));
+    return t.trimmed();
 }
 
 void setExpandedRecursively(QTreeWidgetItem* it, bool expanded)
@@ -163,6 +195,12 @@ int DeckTextEdit::lineNumberAreaWidth() const
     int digits = 1;
     for (int m = qMax(1, blockCount()); m >= 10; m /= 10) ++digits;
     return 10 + fontMetrics().horizontalAdvance(QLatin1Char('9')) * digits;
+}
+
+void DeckTextEdit::mouseDoubleClickEvent(QMouseEvent* ev)
+{
+    QPlainTextEdit::mouseDoubleClickEvent(ev);   // keep the word selection
+    emit doubleClickedAt(cursorForPosition(ev->pos()).position());
 }
 
 void DeckTextEdit::resizeEvent(QResizeEvent* ev)
@@ -307,6 +345,13 @@ DeckEditorWidget::DeckEditorWidget(QWidget* parent)
         fl->addWidget(findEdit_, 1);
         auto* bprev = new QPushButton(QStringLiteral("Prev"));
         auto* bnext = new QPushButton(QStringLiteral("Next"));
+        // Deck keywords are upper case, so an exact search is the useful
+        // default; untick to fall back to case-insensitive matching.
+        caseChk_ = new QCheckBox(QStringLiteral("match case"));
+        caseChk_->setChecked(true);
+        caseChk_->setToolTip(QStringLiteral(
+            "search and replace exactly as typed (on), or ignoring case (off)"));
+        fl->addWidget(caseChk_);
         // Visible way into replace - a shortcut alone is too easy to miss.
         replaceToggle_ = new QPushButton(QStringLiteral("Replace..."));
         replaceToggle_->setCheckable(true);
@@ -344,6 +389,9 @@ DeckEditorWidget::DeckEditorWidget(QWidget* parent)
         connect(replaceToggle_, &QPushButton::toggled, this, [this](bool on) {
             replaceRow_->setVisible(on);
             if (on) replaceEdit_->setFocus();
+        });
+        connect(caseChk_, &QCheckBox::toggled, this, [this](bool) {
+            updateFindHighlights();   // the match set changes with the flag
         });
 
         connect(bnext, &QPushButton::clicked, this, [this] { findNext(false); });
@@ -446,6 +494,14 @@ void DeckEditorWidget::hideFindBar()
     }
 }
 
+QTextDocument::FindFlags DeckEditorWidget::findFlags(bool backward) const
+{
+    QTextDocument::FindFlags fl;
+    if (backward) fl |= QTextDocument::FindBackward;
+    if (!caseChk_ || caseChk_->isChecked()) fl |= QTextDocument::FindCaseSensitively;
+    return fl;
+}
+
 void DeckEditorWidget::findNext(bool backward)
 {
     auto* ed = editorAt(tabs_->currentIndex());
@@ -453,8 +509,7 @@ void DeckEditorWidget::findNext(bool backward)
     if (!findBar_->isVisible()) { showFindBar(false); return; }   // bare F3
     const QString needle = findEdit_->text();
     if (needle.isEmpty()) return;
-    QTextDocument::FindFlags fl;
-    if (backward) fl |= QTextDocument::FindBackward;
+    const QTextDocument::FindFlags fl = findFlags(backward);
     if (!ed->find(needle, fl)) {                             // wrap around once
         QTextCursor c = ed->textCursor();
         c.movePosition(backward ? QTextCursor::End : QTextCursor::Start);
@@ -479,8 +534,9 @@ void DeckEditorWidget::updateFindHighlights()
         QTextCharFormat fmt;
         fmt.setBackground(QColor(0xff, 0xe0, 0x66));
         QTextCursor c(ed->document());
+        const QTextDocument::FindFlags fl = findFlags();
         while (count < cap) {
-            c = ed->document()->find(needle, c);
+            c = ed->document()->find(needle, c, fl);
             if (c.isNull()) break;
             QTextEdit::ExtraSelection s;
             s.cursor = c;
@@ -503,8 +559,10 @@ void DeckEditorWidget::replaceCurrent()
     if (needle.isEmpty()) return;
     // Replace only when the current selection IS the match (i.e. after a
     // Find); otherwise this press just moves to the first match.
+    const bool cs = !caseChk_ || caseChk_->isChecked();
     QTextCursor c = ed->textCursor();
-    if (c.hasSelection() && c.selectedText().compare(needle, Qt::CaseInsensitive) == 0) {
+    if (c.hasSelection() && c.selectedText().compare(
+            needle, cs ? Qt::CaseSensitive : Qt::CaseInsensitive) == 0) {
         c.insertText(replaceEdit_->text());
         ed->setTextCursor(c);
     }
@@ -520,14 +578,15 @@ void DeckEditorWidget::replaceAll()
     if (needle.isEmpty()) return;
     const QString repl = replaceEdit_->text();
 
+    const QTextDocument::FindFlags fl = findFlags();
     QTextCursor block(ed->document());
     block.beginEditBlock();               // one undo step for the whole run
     int n = 0;
-    QTextCursor f = ed->document()->find(needle, 0);
+    QTextCursor f = ed->document()->find(needle, 0, fl);
     while (!f.isNull()) {
-        f.insertText(repl);               // cursor lands after the new text,
-        f = ed->document()->find(needle, f);   // so a repl containing the
-        ++n;                                   // needle cannot loop forever
+        f.insertText(repl);                        // cursor lands after the new
+        f = ed->document()->find(needle, f, fl);   // text, so a repl containing
+        ++n;                                       // the needle cannot loop
     }
     block.endEditBlock();
 
@@ -582,6 +641,52 @@ void DeckEditorWidget::toggleComment()
     setStatus(allCommented
         ? QStringLiteral("uncommented %1 line(s)").arg(lastNo - firstNo + 1)
         : QStringLiteral("commented %1 line(s)").arg(lastNo - firstNo + 1));
+}
+
+// -- following INCLUDEs --------------------------------------------------------
+QString DeckEditorWidget::includeTargetAt(DeckTextEdit* ed, int position) const
+{
+    if (!ed) return {};
+    const QString dir = QFileInfo(ed->property("filePath").toString()).absolutePath();
+    const QTextBlock b = ed->document()->findBlock(position);
+    if (!b.isValid()) return {};
+
+    // A token counts only when it actually resolves to a file, which keeps
+    // ordinary quoted strings (well names, 'OPEN', ...) from matching.
+    auto resolve = [&dir](const QTextBlock& blk) -> QString {
+        if (!blk.isValid()) return {};
+        const QString tok = deckFileToken(blk.text());
+        if (tok.isEmpty()) return {};
+        const QString abs = QDir::cleanPath(QDir(dir).filePath(tok));
+        const QFileInfo fi(abs);
+        return (fi.exists() && fi.isFile()) ? abs : QString();
+    };
+
+    if (const QString hit = resolve(b); !hit.isEmpty()) return hit;
+
+    // Cursor on a bare INCLUDE keyword: the path is on one of the next lines.
+    QString head = b.text();
+    const int cm = head.indexOf(QLatin1String("--"));
+    if (cm >= 0) head = head.left(cm);
+    if (head.trimmed().compare(QLatin1String("INCLUDE"), Qt::CaseInsensitive) == 0) {
+        QTextBlock n = b.next();
+        for (int i = 0; i < 8 && n.isValid(); ++i, n = n.next()) {
+            QString s = n.text();
+            const int c2 = s.indexOf(QLatin1String("--"));
+            if (c2 >= 0) s = s.left(c2);
+            if (s.trimmed().isEmpty()) continue;    // skip blanks/comments
+            return resolve(n);
+        }
+    }
+    return {};
+}
+
+void DeckEditorWidget::openIncludeAt(DeckTextEdit* ed, int position)
+{
+    const QString target = includeTargetAt(ed, position);
+    if (target.isEmpty()) return;
+    openFile(target);
+    setStatus(QStringLiteral("opened %1").arg(QDir::toNativeSeparators(target)));
 }
 
 // -- external changes / reload ------------------------------------------------
@@ -707,6 +812,27 @@ void DeckEditorWidget::openFile(const QString& path, int line)
                 [this, ed](bool) {
             for (int i = 0; i < tabs_->count(); ++i)
                 if (tabs_->widget(i) == ed) { updateTabTitle(i); break; }
+        });
+        // Follow INCLUDEs: double click on the path (or on the INCLUDE
+        // keyword) opens the file; right click offers it in the menu.
+        connect(ed, &DeckTextEdit::doubleClickedAt, this,
+                [this, ed](int pos) { openIncludeAt(ed, pos); });
+        ed->setContextMenuPolicy(Qt::CustomContextMenu);
+        connect(ed, &QWidget::customContextMenuRequested, this,
+                [this, ed](const QPoint& p) {
+            const int pos = ed->cursorForPosition(p).position();
+            const QString target = includeTargetAt(ed, pos);
+            std::unique_ptr<QMenu> menu(ed->createStandardContextMenu(p));
+            if (!target.isEmpty()) {
+                auto* act = new QAction(
+                    QStringLiteral("Open \"%1\"").arg(QFileInfo(target).fileName()),
+                    menu.get());
+                connect(act, &QAction::triggered, this,
+                        [this, target] { openFile(target); });
+                menu->insertAction(menu->actions().value(0), act);
+                menu->insertSeparator(menu->actions().value(1));
+            }
+            menu->exec(ed->viewport()->mapToGlobal(p));
         });
     }
     tabs_->setCurrentIndex(tab);

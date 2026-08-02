@@ -21,10 +21,10 @@ results, animate them in 3D, and edit decks — all in one window.
   progress bar, elapsed time and ETA** parsed live from flow's
   `Report step X/N at day Y/Z` output, with **View/Edit deck** right below
   *Add deck*. Grouped separately below, for after the run finishes:
-  **View PRT**, **View DBG**, and **Open result folder**. *Run queue* runs
-  the whole queue; **Run selected** runs only the highlighted rows
-  (Ctrl/Shift-click for several), leaving the rest of the queue untouched —
-  handy to re-run one case of a study after editing its deck.
+  **View PRT**, **View DBG**, and **Open result folder**. **Run selected**
+  runs only the highlighted rows (Ctrl/Shift-click for several), leaving the
+  rest of the queue untouched — handy to re-run one case of a study after
+  editing its deck; *Run queue* runs everything.
 - **Results tab** (when built with summary support): plot summary vectors
   (FOPR, WBHP, ...) straight from a run's `SMSPEC`/`UNSMRY` via opm-common's
   `EclIO::ESmry`. The **vector picker is grouped and filtered** — using
@@ -74,8 +74,14 @@ results, animate them in 3D, and edit decks — all in one window.
   (the *Find / Replace* button, or Ctrl+F / Ctrl+H — Enter/F3 next,
   Shift+F3 previous, wrap-around, every match highlighted with a count;
   the *Replace...* toggle in the bar opens *Replace* and *Replace all*,
-  the latter a single undo step) and a **Comment** button (Ctrl+/) that toggles
-  `--` on the selected lines or the current one. Saves
+  the latter a single undo step). Searching is **case sensitive** by
+  default — deck keywords are upper case — with a *match case* box to
+  relax it. A **Comment** button (Ctrl+/) toggles
+  `--` on the selected lines or the current one, and **INCLUDEs are
+  followed**: double-click a path (or the `INCLUDE` keyword above it), or
+  right-click for *Open "…"*, to open that file in its own tab — quoted
+  text that is not an existing file, such as a well name, is left alone.
+  Saves
   go to the original files (never a flattened copy), so shared includes
   stay consistent; View/Edit deck on the Run tab jumps straight to a queued
   deck.

@@ -16,6 +16,7 @@
 #include <QSyntaxHighlighter>
 #include <QWidget>
 
+class QCheckBox;
 class QFileSystemWatcher;
 class QLabel;
 class QLineEdit;
@@ -44,8 +45,15 @@ public:
     explicit DeckTextEdit(QWidget* parent = nullptr);
     int  lineNumberAreaWidth() const;
     void lineNumberAreaPaintEvent(QPaintEvent* ev);
+
+signals:
+    // Character position of a double click - used to follow INCLUDE paths.
+    void doubleClickedAt(int position);
+
 protected:
     void resizeEvent(QResizeEvent* ev) override;
+    void mouseDoubleClickEvent(QMouseEvent* ev) override;
+
 private:
     QWidget* lineArea_ = nullptr;
 };
@@ -77,6 +85,7 @@ private:
     QWidget*     replaceRow_ = nullptr;   // Ctrl+H extension of the find bar
     QLineEdit*   replaceEdit_ = nullptr;
     QPushButton* replaceToggle_ = nullptr;   // shows/hides replaceRow_
+    QCheckBox*   caseChk_ = nullptr;         // match case (on by default)
     // Watches the open files so edits made outside the GUI are noticed.
     QFileSystemWatcher* watcher_ = nullptr;
     QString      rootDeck_;
@@ -88,6 +97,12 @@ private:
     void updateFindHighlights();
     void replaceCurrent();
     void replaceAll();
+    // Search flags honouring the "match case" box (case sensitive by default).
+    QTextDocument::FindFlags findFlags(bool backward = false) const;
+    // The INCLUDE'd file referenced at this character position, if any:
+    // absolute path of an existing file, else empty.
+    QString includeTargetAt(DeckTextEdit* ed, int position) const;
+    void openIncludeAt(DeckTextEdit* ed, int position);
     // Toggle "--" comments on the selected lines (or the current line).
     void toggleComment();
     // Re-read a tab from disk. force = discard unsaved changes without asking.

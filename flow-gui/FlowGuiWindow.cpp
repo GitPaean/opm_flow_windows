@@ -323,7 +323,7 @@ FlowGuiWindow::FlowGuiWindow()
         connect(valBtn,   &QPushButton::clicked, this, [this] { validateSelectedDeck(); });
         connect(bclear,   &QPushButton::clicked, this, [this] { logView_->clear(); });
         skipBtn_ = skipBtn;   // enabled/disabled together with Stop in setRunning()
-        row->addWidget(runBtn_); row->addWidget(runSelBtn_);
+        row->addWidget(runSelBtn_); row->addWidget(runBtn_);
         row->addWidget(stopBtn_); row->addWidget(skipBtn);
         row->addWidget(valBtn);  row->addWidget(bclear);
         row->addStretch(1);
