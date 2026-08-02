@@ -13,7 +13,7 @@ results, animate them in 3D, and edit decks — all in one window.
 ## Features
 - **Projects** — the *Project* menu saves/loads a `.opmproj` file (readable
   JSON) holding the deck queue, MPI ranks / OMP threads, output policy and
-  directory, extra flow arguments, and the Results-tab cases with their
+  directory, extra flow arguments, and the Summary-Plots-tab cases with their
   checked state — so a whole study setup is one *Open* away (Ctrl+O/Ctrl+S;
   missing decks/cases are skipped with a note in the log).
 - **Job queue table** of `*.DATA` input decks (add / remove / clear,
@@ -25,7 +25,7 @@ results, animate them in 3D, and edit decks — all in one window.
   runs only the highlighted rows (Ctrl/Shift-click for several), leaving the
   rest of the queue untouched — handy to re-run one case of a study after
   editing its deck; *Run queue* runs everything.
-- **Results tab** (when built with summary support): plot summary vectors
+- **Summary Plots tab** (when built with summary support): plot summary vectors
   (FOPR, WBHP, ...) straight from a run's `SMSPEC`/`UNSMRY` via opm-common's
   `EclIO::ESmry`. The **vector picker is grouped and filtered** — using
   opm-common's own `SummaryNode` classification it offers **Category**
@@ -36,7 +36,7 @@ results, animate them in 3D, and edit decks — all in one window.
   tree grouped by quantity with human-readable names (WOPR → "Oil Production
   Rate", ~130 mnemonics). Multi-select plots several curves, with a second
   Y axis when units differ (e.g. rate vs. pressure); 10 s auto-refresh
-  updates the plot while a simulation is still writing, and the Results and
+  updates the plot while a simulation is still writing, and the Summary Plots and
   3D tabs re-check their files when a job finishes and when the tab is
   shown (a case is registered as soon as its job starts, before flow has
   written anything). The search box also accepts comma-separated
@@ -62,7 +62,7 @@ results, animate them in 3D, and edit decks — all in one window.
   orbit is **unrestricted** — keep dragging past the side view to get under
   the model and look at the base of the reservoir — and a *View* menu jumps
   to the Home / Top / Bottom / Side viewpoints, keeping the current zoom and
-  pan (*Reset view* re-frames everything). Cases mirror the Results tab
+  pan (*Reset view* re-frames everything). Cases mirror the Summary Plots tab
   (or open any `.EGRID` directly).
 - **Deck Editor tab** — edit the deck and its INCLUDE files directly: a
   section tree (RUNSPEC ... SCHEDULE) lists every keyword with file and
@@ -76,11 +76,14 @@ results, animate them in 3D, and edit decks — all in one window.
   the *Replace...* toggle in the bar opens *Replace* and *Replace all*,
   the latter a single undo step). Searching is **case sensitive** by
   default — deck keywords are upper case — with a *match case* box to
-  relax it. A **Comment** button (Ctrl+/) toggles
-  `--` on the selected lines or the current one, and **INCLUDEs are
-  followed**: double-click a path (or the `INCLUDE` keyword above it), or
-  right-click for *Open "…"*, to open that file in its own tab — quoted
-  text that is not an existing file, such as a well name, is left alone.
+  relax it. **Undo/Redo** buttons sit in the toolbar (Ctrl+Z / Ctrl+Y work
+  as usual), and a **Toggle comment** button (Ctrl+/) comments the selected
+  lines with `--`, or uncomments them when they already are comments.
+  **INCLUDEs are followed**: double-click the *file name* — or right-click
+  it for *Open "…"* — to open that file in its own tab. Only the name
+  itself navigates (clicking the `INCLUDE` keyword does not), and only when
+  it resolves to an existing file, so quoted text such as a well name is
+  left alone.
   Saves
   go to the original files (never a flattened copy), so shared includes
   stay consistent; View/Edit deck on the Run tab jumps straight to a queued
@@ -107,13 +110,16 @@ results, animate them in 3D, and edit decks — all in one window.
 - **Case manager & comparison** — loaded cases appear in a checkable list:
   **checked cases are plotted together** (legend shows `case | vector`), the
   highlighted case drives the vector tree, and *Remove* drops a case from
-  the list. Same-named cases from different runs are disambiguated with the
-  run directory (full path in the tooltip). The *markers* toggle marks the
+  the list. Cases can be **renamed** (*Rename*, double-click or F2) — the
+  new name is what the legend shows, so a comparison can read
+  `Base case | FOPR` instead of a run directory name; names are kept unique
+  and travel with the project file. Same-named cases from different runs are
+  disambiguated with the run directory (full path in the tooltip). The *markers* toggle marks the
   actual data points on each curve. Finished runs can be opened by dropping
   an `.SMSPEC` on the window (or *Open SMSPEC...*), and adding a deck whose
   `<deck>_run` output already exists registers its case automatically.
 - **Completion notification** — a system-tray toast when the queue finishes
-  (clicking it opens the finished case in the Results tab), and an
+  (clicking it opens the finished case in the Summary Plots tab), and an
   oversubscription note in the log when ranks × threads exceed the machine's
   logical cores.
 - **PRT viewer** with free-text search and a *Next problem* button cycling
@@ -172,7 +178,7 @@ cmake --build build-gui
 ./build-gui/flow-gui
 ```
 
-Full build (adds the Results and 3D View tabs) — needs Qt Charts and an
+Full build (adds the Summary Plots and 3D View tabs) — needs Qt Charts and an
 opm-common **install prefix**; validated on Ubuntu 24.04:
 ```bash
 sudo apt install qt6-base-dev qt6-charts-dev libfmt-dev libboost-dev \
@@ -223,7 +229,7 @@ open build-gui/flow-gui.app
 The application is deliberately event-driven (a `QProcess` job runner — no
 worker threads) and split into one widget per tab. Natural next steps:
 - per-deck run options (per-job ranks/threads/arguments),
-- RFT / aquifer output support in the Results tab,
+- RFT / aquifer output support in the Summary Plots tab,
 - deck editor: keyword templates and context help (OPM manual links).
 
 ## Notes

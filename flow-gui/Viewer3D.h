@@ -123,6 +123,9 @@ public:
     // EGRID existed, and the final restart steps only exist now.
     void caseFinished(const QString& smspecPath);
 
+    // Follow a rename made in the Summary Plots tab (same case identity).
+    void renameCase(const QString& smspecPath, const QString& label);
+
 protected:
     // The selected case's files may have appeared while the tab was hidden.
     void showEvent(QShowEvent* ev) override;

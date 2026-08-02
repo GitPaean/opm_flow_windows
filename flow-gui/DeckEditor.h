@@ -86,6 +86,8 @@ private:
     QLineEdit*   replaceEdit_ = nullptr;
     QPushButton* replaceToggle_ = nullptr;   // shows/hides replaceRow_
     QCheckBox*   caseChk_ = nullptr;         // match case (on by default)
+    QPushButton* undoBtn_ = nullptr;
+    QPushButton* redoBtn_ = nullptr;
     // Watches the open files so edits made outside the GUI are noticed.
     QFileSystemWatcher* watcher_ = nullptr;
     QString      rootDeck_;
@@ -103,6 +105,7 @@ private:
     // absolute path of an existing file, else empty.
     QString includeTargetAt(DeckTextEdit* ed, int position) const;
     void openIncludeAt(DeckTextEdit* ed, int position);
+    void refreshUndoButtons();
     // Toggle "--" comments on the selected lines (or the current line).
     void toggleComment();
     // Re-read a tab from disk. force = discard unsaved changes without asking.

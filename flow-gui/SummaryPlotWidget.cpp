@@ -61,6 +61,7 @@ using Type = Opm::EclIO::SummaryNode::Type;
 namespace {
 
 const int RoleVecIndex = Qt::UserRole + 1;   // leaf item -> index into vecs_
+const int RoleCaseLabel = Qt::UserRole + 2;  // case item -> its current name
 
 QString categoryName(Cat c)
 {
@@ -456,6 +457,11 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
         // ACTIVE case whose vectors fill the tree below.
         auto* crow = new QHBoxLayout;
         crow->addWidget(new QLabel(QStringLiteral("Cases  (checked = plotted):")), 1);
+        auto* brename = new QPushButton(QStringLiteral("Rename"));
+        brename->setToolTip(QStringLiteral(
+            "rename the highlighted case - the new name is what the plot "
+            "legend shows (double-click the case, or F2)"));
+        crow->addWidget(brename);
         auto* bremove = new QPushButton(QStringLiteral("Remove"));
         bremove->setToolTip(QStringLiteral("remove the highlighted case from the list"));
         crow->addWidget(bremove);
@@ -464,6 +470,9 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
         caseList_ = new QListWidget;
         caseList_->setMaximumHeight(110);
         caseList_->setSelectionMode(QAbstractItemView::SingleSelection);
+        // double-click / F2 edits the name in place
+        caseList_->setEditTriggers(QAbstractItemView::DoubleClicked
+                                   | QAbstractItemView::EditKeyPressed);
         ll->addWidget(caseList_);
 
         tree_ = new QTreeWidget;
@@ -474,10 +483,15 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
         split->addWidget(left);
 
         connect(bremove, &QPushButton::clicked, this, [this] { removeCurrentCase(); });
+        connect(brename, &QPushButton::clicked, this, [this] {
+            if (auto* it = caseList_->currentItem()) caseList_->editItem(it);
+            else setStatus(QStringLiteral("highlight a case in the list first"));
+        });
         connect(caseList_, &QListWidget::currentItemChanged, this,
                 [this](QListWidgetItem*, QListWidgetItem*) { reload(false); });
+        // itemChanged covers both the check boxes and an in-place rename.
         connect(caseList_, &QListWidget::itemChanged, this,
-                [this](QListWidgetItem*) { replot(); });   // check toggles
+                [this](QListWidgetItem* it) { caseItemChanged(it); });
 
         // A fixed pool of four charts in a grid; applyChartLayout() shows the
         // first 1, 2 (stacked) or 4 (2x2) of them. Each keeps its own vector
@@ -583,14 +597,47 @@ void SummaryPlotWidget::addCase(const QString& label, const QString& smspecPath,
 
     auto* it = new QListWidgetItem(shown);
     it->setData(Qt::UserRole, smspecPath);
+    it->setData(RoleCaseLabel, shown);   // to tell a rename from a check toggle
     it->setToolTip(smspecPath);
-    it->setFlags(it->flags() | Qt::ItemIsUserCheckable);
+    it->setFlags(it->flags() | Qt::ItemIsUserCheckable | Qt::ItemIsEditable);
     it->setCheckState(checked ? Qt::Checked : Qt::Unchecked);
     caseList_->blockSignals(true);       // no premature replot from itemChanged
     caseList_->addItem(it);
     caseList_->blockSignals(false);
     if (caseList_->count() == 1) caseList_->setCurrentItem(it);
     emit caseAdded(shown, smspecPath);
+}
+
+void SummaryPlotWidget::caseItemChanged(QListWidgetItem* it)
+{
+    if (!it) return;
+    const QString prev = it->data(RoleCaseLabel).toString();
+    QString now = it->text().trimmed();
+    if (now == prev) { replot(); return; }        // a check toggle, not a rename
+
+    if (now.isEmpty()) now = prev;                // refuse to blank a name
+    // Keep names unique: the legend shows "case | vector", so duplicates
+    // would be impossible to tell apart.
+    QString unique = now;
+    for (int n = 2; ; ++n) {
+        bool taken = false;
+        for (int i = 0; i < caseList_->count(); ++i)
+            if (caseList_->item(i) != it && caseList_->item(i)->text() == unique) {
+                taken = true;
+                break;
+            }
+        if (!taken) break;
+        unique = now + QStringLiteral(" (%1)").arg(n);
+    }
+    if (unique != it->text()) {
+        caseList_->blockSignals(true);            // no recursion via itemChanged
+        it->setText(unique);
+        caseList_->blockSignals(false);
+    }
+    it->setData(RoleCaseLabel, unique);
+    emit caseRenamed(it->data(Qt::UserRole).toString(), unique);
+    setStatus(QStringLiteral("case renamed to \"%1\"").arg(unique));
+    replot();                                     // legend picks up the new name
 }
 
 QList<SummaryPlotWidget::CaseInfo> SummaryPlotWidget::caseInfos() const

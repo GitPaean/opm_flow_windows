@@ -77,26 +77,44 @@ bool filterItem(QTreeWidgetItem* it, const QString& needle)
 // INCLUDE argument line ('include/MULTZ.grdecl' /), the argument of a
 // single-line "INCLUDE 'f' /", or a bare unquoted token. Comments and the
 // record terminator are stripped; backslashes are accepted so decks written
-// on Windows also resolve on Linux.
-QString deckFileToken(const QString& line)
+// on Windows also resolve on Linux. *spanStart/*spanLen report where the
+// token sits in the line (quotes included) so a click can be required to
+// land on the file name itself rather than anywhere on the line.
+QString deckFileToken(const QString& line, int* spanStart = nullptr,
+                      int* spanLen = nullptr)
 {
+    if (spanStart) *spanStart = -1;
+    if (spanLen)   *spanLen   = 0;
     QString t = line;
     const int c = t.indexOf(QLatin1String("--"));
     if (c >= 0) t = t.left(c);
-    t = t.trimmed();
-    if (t.startsWith(QLatin1String("INCLUDE"), Qt::CaseInsensitive))
-        t = t.mid(7).trimmed();           // "INCLUDE 'f' /" on one line
-    if (t.isEmpty()) return {};
-    if (t.startsWith(QLatin1Char('\''))) {
-        const int e = t.indexOf(QLatin1Char('\''), 1);
-        t = e > 1 ? t.mid(1, e - 1) : QString();
-    } else {
-        if (t.endsWith(QLatin1Char('/'))) { t.chop(1); t = t.trimmed(); }
-        const int sp = t.indexOf(QRegularExpression(QStringLiteral("\\s")));
-        if (sp > 0) t = t.left(sp);
+
+    const int q1 = t.indexOf(QLatin1Char('\''));
+    if (q1 >= 0) {                                  // quoted: 'path/file'
+        const int q2 = t.indexOf(QLatin1Char('\''), q1 + 1);
+        if (q2 <= q1 + 1) return {};
+        if (spanStart) *spanStart = q1;
+        if (spanLen)   *spanLen   = q2 - q1 + 1;
+        QString v = t.mid(q1 + 1, q2 - q1 - 1).trimmed();
+        v.replace(QLatin1Char('\\'), QLatin1Char('/'));
+        return v;
     }
-    t.replace(QLatin1Char('\\'), QLatin1Char('/'));
-    return t.trimmed();
+    // bare token, skipping a leading INCLUDE keyword and the terminator
+    static const QRegularExpression wordRe(QStringLiteral(R"(\S+)"));
+    auto it = wordRe.globalMatch(t);
+    while (it.hasNext()) {
+        const auto m = it.next();
+        QString w = m.captured();
+        if (w.compare(QLatin1String("INCLUDE"), Qt::CaseInsensitive) == 0) continue;
+        if (w == QLatin1String("/")) break;
+        if (w.endsWith(QLatin1Char('/'))) w.chop(1);
+        if (w.isEmpty()) continue;
+        if (spanStart) *spanStart = int(m.capturedStart());
+        if (spanLen)   *spanLen   = w.size();
+        w.replace(QLatin1Char('\\'), QLatin1Char('/'));
+        return w;
+    }
+    return {};
 }
 
 void setExpandedRecursively(QTreeWidgetItem* it, bool expanded)
@@ -246,15 +264,24 @@ DeckEditorWidget::DeckEditorWidget(QWidget* parent)
         brel->setToolTip(QStringLiteral(
             "re-read the current file from disk (picks up edits made outside "
             "the GUI; unmodified tabs reload by themselves)"));
-        auto* bcom  = new QPushButton(QStringLiteral("Comment"));
+        undoBtn_ = new QPushButton(QStringLiteral("Undo"));
+        redoBtn_ = new QPushButton(QStringLiteral("Redo"));
+        undoBtn_->setToolTip(QStringLiteral("undo the last edit in this file (Ctrl+Z)"));
+        redoBtn_->setToolTip(QStringLiteral("redo the last undone edit (Ctrl+Y / Ctrl+Shift+Z)"));
+        undoBtn_->setEnabled(false);
+        redoBtn_->setEnabled(false);
+        auto* bcom  = new QPushButton(QStringLiteral("Toggle comment"));
         bcom->setToolTip(QStringLiteral(
-            "comment/uncomment the selected lines, or the current line (Ctrl+/)"));
+            "comment the selected lines, or uncomment them when they already "
+            "are comments - the current line if nothing is selected (Ctrl+/)"));
         auto* bfind = new QPushButton(QStringLiteral("Find / Replace"));
         bfind->setToolTip(QStringLiteral(
             "search this file and replace matches (Ctrl+F finds, Ctrl+H replaces)"));
         auto* bscan = new QPushButton(QStringLiteral("Rescan structure"));
         row->addWidget(bopen); row->addWidget(bsave); row->addWidget(ball);
-        row->addWidget(brel);  row->addWidget(bcom); row->addWidget(bfind);
+        row->addWidget(brel);
+        row->addWidget(undoBtn_); row->addWidget(redoBtn_);
+        row->addWidget(bcom); row->addWidget(bfind);
         row->addWidget(bscan); row->addStretch(1);
         top->addLayout(row);
 
@@ -262,6 +289,12 @@ DeckEditorWidget::DeckEditorWidget(QWidget* parent)
                 [this] { reloadTab(tabs_->currentIndex(), false); });
         connect(bcom, &QPushButton::clicked, this, [this] { toggleComment(); });
         connect(bfind, &QPushButton::clicked, this, [this] { showFindBar(true); });
+        connect(undoBtn_, &QPushButton::clicked, this, [this] {
+            if (auto* ed = editorAt(tabs_->currentIndex())) { ed->undo(); ed->setFocus(); }
+        });
+        connect(redoBtn_, &QPushButton::clicked, this, [this] {
+            if (auto* ed = editorAt(tabs_->currentIndex())) { ed->redo(); ed->setFocus(); }
+        });
 
         connect(bopen, &QPushButton::clicked, this, [this] {
             const QString f = QFileDialog::getOpenFileName(
@@ -438,6 +471,7 @@ DeckEditorWidget::DeckEditorWidget(QWidget* parent)
 
         connect(tabs_, &QTabWidget::currentChanged, this, [this](int i) {
             if (findBar_->isVisible()) updateFindHighlights();
+            refreshUndoButtons();
             // the file may have changed while this tab was in the background
             if (auto* ed = editorAt(i); ed && diskChanged(ed)) onDiskChange(
                 ed->property("filePath").toString());
@@ -461,6 +495,13 @@ DeckEditorWidget::DeckEditorWidget(QWidget* parent)
 }
 
 void DeckEditorWidget::setStatus(const QString& s) { status_->setText(s); }
+
+void DeckEditorWidget::refreshUndoButtons()
+{
+    auto* ed = editorAt(tabs_->currentIndex());
+    undoBtn_->setEnabled(ed && ed->document()->isUndoAvailable());
+    redoBtn_->setEnabled(ed && ed->document()->isRedoAvailable());
+}
 
 // -- tree filter / find bar ---------------------------------------------------
 void DeckEditorWidget::filterTree(const QString& needle)
@@ -651,34 +692,20 @@ QString DeckEditorWidget::includeTargetAt(DeckTextEdit* ed, int position) const
     const QTextBlock b = ed->document()->findBlock(position);
     if (!b.isValid()) return {};
 
-    // A token counts only when it actually resolves to a file, which keeps
-    // ordinary quoted strings (well names, 'OPEN', ...) from matching.
-    auto resolve = [&dir](const QTextBlock& blk) -> QString {
-        if (!blk.isValid()) return {};
-        const QString tok = deckFileToken(blk.text());
-        if (tok.isEmpty()) return {};
-        const QString abs = QDir::cleanPath(QDir(dir).filePath(tok));
-        const QFileInfo fi(abs);
-        return (fi.exists() && fi.isFile()) ? abs : QString();
-    };
+    int start = -1, len = 0;
+    const QString tok = deckFileToken(b.text(), &start, &len);
+    if (tok.isEmpty() || start < 0) return {};
 
-    if (const QString hit = resolve(b); !hit.isEmpty()) return hit;
+    // The click must land on the file name itself - clicking the INCLUDE
+    // keyword (or anywhere else on the line) does not navigate.
+    const int col = position - b.position();
+    if (col < start || col > start + len) return {};
 
-    // Cursor on a bare INCLUDE keyword: the path is on one of the next lines.
-    QString head = b.text();
-    const int cm = head.indexOf(QLatin1String("--"));
-    if (cm >= 0) head = head.left(cm);
-    if (head.trimmed().compare(QLatin1String("INCLUDE"), Qt::CaseInsensitive) == 0) {
-        QTextBlock n = b.next();
-        for (int i = 0; i < 8 && n.isValid(); ++i, n = n.next()) {
-            QString s = n.text();
-            const int c2 = s.indexOf(QLatin1String("--"));
-            if (c2 >= 0) s = s.left(c2);
-            if (s.trimmed().isEmpty()) continue;    // skip blanks/comments
-            return resolve(n);
-        }
-    }
-    return {};
+    // And the token must resolve to a real file, which keeps ordinary quoted
+    // strings (well names, 'OPEN', ...) from being treated as paths.
+    const QString abs = QDir::cleanPath(QDir(dir).filePath(tok));
+    const QFileInfo fi(abs);
+    return (fi.exists() && fi.isFile()) ? abs : QString();
 }
 
 void DeckEditorWidget::openIncludeAt(DeckTextEdit* ed, int position)
@@ -813,10 +840,15 @@ void DeckEditorWidget::openFile(const QString& path, int line)
             for (int i = 0; i < tabs_->count(); ++i)
                 if (tabs_->widget(i) == ed) { updateTabTitle(i); break; }
         });
-        // Follow INCLUDEs: double click on the path (or on the INCLUDE
-        // keyword) opens the file; right click offers it in the menu.
+        // Follow INCLUDEs: double click the file name itself opens it;
+        // right click offers it in the context menu.
         connect(ed, &DeckTextEdit::doubleClickedAt, this,
                 [this, ed](int pos) { openIncludeAt(ed, pos); });
+        // Keep the Undo/Redo buttons in step with this document.
+        connect(ed->document(), &QTextDocument::undoAvailable, this,
+                [this, ed](bool) { if (ed == editorAt(tabs_->currentIndex())) refreshUndoButtons(); });
+        connect(ed->document(), &QTextDocument::redoAvailable, this,
+                [this, ed](bool) { if (ed == editorAt(tabs_->currentIndex())) refreshUndoButtons(); });
         ed->setContextMenuPolicy(Qt::CustomContextMenu);
         connect(ed, &QWidget::customContextMenuRequested, this,
                 [this, ed](const QPoint& p) {

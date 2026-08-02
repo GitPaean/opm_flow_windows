@@ -341,10 +341,10 @@ FlowGuiWindow::FlowGuiWindow()
 
     tabs_->addTab(runPage, QStringLiteral("Run"));
 
-    // ================= Results tab ==========================================
+    // ================= Summary plots tab ====================================
 #ifdef FLOWGUI_HAVE_SUMMARY
     summary_ = new SummaryPlotWidget;
-    tabs_->addTab(summary_, QStringLiteral("Results"));
+    tabs_->addTab(summary_, QStringLiteral("Summary Plots"));
 #endif
 
     // ================= 3D view tab ==========================================
@@ -352,11 +352,16 @@ FlowGuiWindow::FlowGuiWindow()
     viewer3D_ = new Viewer3DWidget;
     tabs_->addTab(viewer3D_, QStringLiteral("3D View"));
 #ifdef FLOWGUI_HAVE_SUMMARY
-    if (summary_)
+    if (summary_) {
         connect(summary_, &SummaryPlotWidget::caseAdded, viewer3D_,
                 [this](const QString& label, const QString& path) {
                     viewer3D_->addCase(label, path);
                 });
+        connect(summary_, &SummaryPlotWidget::caseRenamed, viewer3D_,
+                [this](const QString& path, const QString& label) {
+                    viewer3D_->renameCase(path, label);
+                });
+    }
 #endif
 #endif
 

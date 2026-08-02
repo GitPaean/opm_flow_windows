@@ -582,6 +582,19 @@ void Viewer3DWidget::addCase(const QString& label, const QString& smspecPath)
     if (caseBox_->count() == 1) caseBox_->setCurrentIndex(0);
 }
 
+void Viewer3DWidget::renameCase(const QString& smspecPath, const QString& label)
+{
+    QString base = smspecPath;
+    if (base.endsWith(QStringLiteral(".SMSPEC"), Qt::CaseInsensitive)) base.chop(7);
+    const QString egrid = base + QStringLiteral(".EGRID");
+    for (int i = 0; i < cases_.size(); ++i)
+        if (cases_[i].egrid == egrid) {
+            cases_[i].label = label;
+            if (i < caseBox_->count()) caseBox_->setItemText(i, label);
+            return;
+        }
+}
+
 void Viewer3DWidget::caseFinished(const QString& smspecPath)
 {
     QString base = smspecPath;

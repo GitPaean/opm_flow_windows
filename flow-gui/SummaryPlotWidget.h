@@ -29,6 +29,7 @@ class QGridLayout;
 class QLabel;
 class QLineEdit;
 class QListWidget;
+class QListWidgetItem;
 class QTreeWidget;
 class QTreeWidgetItem;
 class QTimer;
@@ -63,6 +64,8 @@ signals:
     // Emitted for every newly registered case (dedup already applied) so
     // other views (e.g. the 3D viewer) can mirror the case list.
     void caseAdded(const QString& label, const QString& smspecPath);
+    // A case was renamed, so mirrors of the list (the 3D tab) can follow.
+    void caseRenamed(const QString& smspecPath, const QString& label);
 
 protected:
     // The active case's files may have appeared while the tab was hidden.
@@ -130,6 +133,7 @@ private:
 
     QString activePath() const;
     QString activeLabel() const;
+    void caseItemChanged(QListWidgetItem* it);   // check toggle or rename
     void removeCurrentCase();
     void clearActiveCase();
     void browseCase();
