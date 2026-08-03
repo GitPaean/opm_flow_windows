@@ -417,9 +417,11 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
         legendBox_->addItem(QStringLiteral("Legend: hidden"),        LegendOff);
         legendBox_->setToolTip(QStringLiteral(
             "where the legend sits; the inside positions float it over the plot "
-            "area on a translucent background"));
+            "area on a translucent background, and a floating legend can be "
+            "dragged anywhere with the mouse"));
         row->addWidget(legendBox_);
         connect(legendBox_, &QComboBox::currentIndexChanged, this, [this](int) {
+            legendPos_.fill(QPointF());     // a placement choice overrides a drag
             for (auto* c : std::as_const(charts_)) placeLegend(c);
         });
         row->addWidget(new QLabel(QStringLiteral("Layout:")));
@@ -557,10 +559,12 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
             v->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
             v->installEventFilter(this);
             v->viewport()->installEventFilter(this);
+            v->setMouseTracking(true);      // to show the drag cursor on hover
             charts_.push_back(c);
             chartViews_.push_back(v);
             chartSel_.push_back({});
             zoomSnap_.push_back({});
+            legendPos_.push_back(QPointF());
             if (i == 0) chartGrid_->addWidget(v, 0, 0);
             else        v->hide();
         }
@@ -1212,17 +1216,70 @@ void SummaryPlotWidget::updateChartFrames()
     }
 }
 
+QPointF SummaryPlotWidget::chartPos(int idx, const QPoint& viewportPos) const
+{
+    if (idx < 0 || idx >= charts_.size()) return {};
+    // viewport -> scene -> chart-local, which is where legend geometry lives
+    return charts_[idx]->mapFromScene(chartViews_[idx]->mapToScene(viewportPos));
+}
+
 bool SummaryPlotWidget::eventFilter(QObject* obj, QEvent* ev)
 {
-    if (ev->type() == QEvent::MouseButtonPress && visibleCharts_ > 1) {
-        for (int i = 0; i < chartViews_.size() && i < visibleCharts_; ++i) {
-            if (obj == chartViews_[i] || obj == chartViews_[i]->viewport()) {
-                if (i != focusChart_) setFocusChart(i);
-                break;
+    // which subplot the event belongs to
+    int idx = -1;
+    for (int i = 0; i < chartViews_.size() && i < visibleCharts_; ++i)
+        if (obj == chartViews_[i] || obj == chartViews_[i]->viewport()) { idx = i; break; }
+
+    if (idx >= 0) {
+        auto* lg = charts_[idx]->legend();
+        const bool floating = lg->isVisible() && !lg->isAttachedToChart();
+        auto* me = static_cast<QMouseEvent*>(ev);
+
+        switch (ev->type()) {
+        case QEvent::MouseButtonPress:
+            if (visibleCharts_ > 1 && idx != focusChart_) setFocusChart(idx);
+            // Grab a floating legend: consume the press so the rubber-band
+            // zoom does not start underneath the drag.
+            if (floating && me->button() == Qt::LeftButton) {
+                const QPointF p = chartPos(idx, me->pos());
+                if (lg->geometry().contains(p)) {
+                    legendDrag_ = idx;
+                    legendGrab_ = p - lg->geometry().topLeft();
+                    chartViews_[idx]->viewport()->setCursor(Qt::ClosedHandCursor);
+                    return true;
+                }
             }
+            break;
+        case QEvent::MouseMove:
+            if (legendDrag_ == idx) {
+                const QRectF r = charts_[idx]->rect();
+                const QSizeF sz = lg->geometry().size();
+                QPointF tl = chartPos(idx, me->pos()) - legendGrab_;
+                tl.setX(std::clamp(tl.x(), r.left(), std::max(r.left(), r.right()  - sz.width())));
+                tl.setY(std::clamp(tl.y(), r.top(),  std::max(r.top(),  r.bottom() - sz.height())));
+                lg->setGeometry(QRectF(tl, sz));
+                if (r.width() > 0 && r.height() > 0)
+                    legendPos_[idx] = QPointF((tl.x() - r.left()) / r.width(),
+                                              (tl.y() - r.top())  / r.height());
+                return true;
+            }
+            if (floating && !(me->buttons() & Qt::LeftButton))   // hover affordance
+                chartViews_[idx]->viewport()->setCursor(
+                    lg->geometry().contains(chartPos(idx, me->pos()))
+                        ? Qt::OpenHandCursor : Qt::ArrowCursor);
+            break;
+        case QEvent::MouseButtonRelease:
+            if (legendDrag_ == idx) {
+                legendDrag_ = -1;
+                chartViews_[idx]->viewport()->setCursor(Qt::OpenHandCursor);
+                return true;
+            }
+            break;
+        default:
+            break;
         }
     }
-    return QWidget::eventFilter(obj, ev);   // never consume: zoom still works
+    return QWidget::eventFilter(obj, ev);   // otherwise let zooming work
 }
 
 void SummaryPlotWidget::replot()
@@ -1400,7 +1457,10 @@ void SummaryPlotWidget::placeLegend(QChart* chart)
     const QFontMetricsF fm(lg->font());
     const auto markers = lg->markers();
     for (auto* mk : markers) {
-        if (!mk->isVisible()) continue;             // scatter overlays are hidden
+        // Skip the marker overlays, by TYPE - not by marker visibility: once
+        // the legend itself is hidden its markers report invisible too, so
+        // counting those would latch the legend off for good.
+        if (qobject_cast<QScatterSeries*>(mk->series())) continue;
         ++rows;
         textW = std::max(textW, fm.horizontalAdvance(mk->label()));
     }
@@ -1415,8 +1475,19 @@ void SummaryPlotWidget::placeLegend(QChart* chart)
     if (sz.width() <= 0 || sz.height() <= 0) return;
     const bool left = (mode == LegendInTL || mode == LegendInBL);
     const bool top  = (mode == LegendInTL || mode == LegendInTR);
-    const qreal x = left ? pa.left() + m : pa.right()  - m - sz.width();
-    const qreal y = top  ? pa.top()  + m : pa.bottom() - m - sz.height();
+    qreal x = left ? pa.left() + m : pa.right()  - m - sz.width();
+    qreal y = top  ? pa.top()  + m : pa.bottom() - m - sz.height();
+
+    // A legend the user dragged keeps that spot instead of the corner; the
+    // position is a fraction of the chart rect, so it holds across resizes.
+    const int idx = charts_.indexOf(chart);
+    if (idx >= 0 && idx < legendPos_.size() && !legendPos_[idx].isNull()) {
+        const QRectF r = chart->rect();
+        x = r.left() + legendPos_[idx].x() * r.width();
+        y = r.top()  + legendPos_[idx].y() * r.height();
+        x = std::clamp(x, r.left(), std::max(r.left(), r.right()  - sz.width()));
+        y = std::clamp(y, r.top(),  std::max(r.top(),  r.bottom() - sz.height()));
+    }
     lg->setGeometry(QRectF(QPointF(x, y), sz));
     lg->update();
 }
@@ -1570,7 +1641,8 @@ int SummaryPlotWidget::plotChart(QChart* chart, const QList<int>& sel,
                 auto* sc = new QScatterSeries;
                 sc->replace(s->points());
                 sc->setMarkerShape(kShapes[ci % kShapeCount]);
-                sc->setMarkerSize(6.0);
+                sc->setMarkerSize(7.5);   // bigger than the old 6, but a dense
+                                          // series still has to stay readable
                 chart->addSeries(sc);
                 sc->attachAxis(ax);
                 sc->attachAxis(side == 1 ? ayR : ayL);

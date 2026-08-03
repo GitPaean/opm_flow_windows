@@ -118,6 +118,15 @@ private:
         bool hasR = false; double rmin = 0, rmax = 0;
     };
     QVector<ZoomSnap> zoomSnap_;
+
+    // A floating legend the user dragged: position per chart, normalised to
+    // the chart rect so it survives a resize. Null = park it in the corner
+    // the placement box asks for.
+    QVector<QPointF> legendPos_;
+    int      legendDrag_ = -1;    // chart whose legend is being dragged
+    QPointF  legendGrab_;         // cursor offset inside the legend
+    // Chart-local position of a viewport event, or a null point if unmapped.
+    QPointF chartPos(int idx, const QPoint& viewportPos) const;
     ZoomSnap captureZoom(QChart* chart) const;
     void applyZoom(QChart* chart, const ZoomSnap& z);
     QCheckBox*   autoRef_   = nullptr;

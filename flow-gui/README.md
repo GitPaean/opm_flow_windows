@@ -50,7 +50,9 @@ results, animate them in 3D, and edit decks — all in one window.
   refreshes also keep the tree's expansion and scroll position. Calendar
   dates on the X axis by default (untick *date axis* for days).
   The **legend** can be docked to any edge, floated in a corner *inside* the
-  plot (on a translucent plate, above the curves), or hidden.
+  plot (on a translucent plate, above the curves), or hidden — and a
+  floating legend can be **dragged** anywhere with the mouse, keeping its
+  spot across refreshes and resizes (picking a placement again re-parks it).
   Curves are styled for print from a colourblind-safe palette, with round
   axis ticks. The **dash pattern always keys the case**, so a comparison
   survives greyscale; **colour follows whichever dimension carries the
