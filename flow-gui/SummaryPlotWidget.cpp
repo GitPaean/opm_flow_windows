@@ -1454,6 +1454,13 @@ int SummaryPlotWidget::plotChart(QChart* chart, const QList<int>& sel,
     const bool useDates = dateAxis_ && dateAxis_->isChecked();
     const bool showPts  = markers_ && markers_->isChecked();
 
+    // What colour means depends on which dimension actually varies. Comparing
+    // ONE vector across several cases - the usual comparison - colour has to
+    // separate the CASES; keying it to the vector would paint every curve the
+    // same. With several vectors, colour keys the vector and the dash the
+    // case, so both dimensions stay readable.
+    const bool colourByCase = multi && sel.size() == 1;
+
     QAbstractAxis* ax = nullptr;
     if (useDates) {
         auto* a = new QDateTimeAxis;
@@ -1529,8 +1536,9 @@ int SummaryPlotWidget::plotChart(QChart* chart, const QList<int>& sel,
 
             auto* s = new QLineSeries;
             s->setName(multi ? pc.first + QStringLiteral(" | ") + v.key : v.key);
-            // colour = which vector, dash = which case
-            QPen pen(kCurveColors[si % kCurveColorCount]);
+            // dash always keys the case (so a print in grey still separates
+            // them); colour keys whichever dimension carries the information
+            QPen pen(kCurveColors[(colourByCase ? ci : si) % kCurveColorCount]);
             pen.setWidthF(2.0);
             pen.setStyle(kCaseDashes[ci % kCaseDashCount]);
             pen.setCosmetic(true);
