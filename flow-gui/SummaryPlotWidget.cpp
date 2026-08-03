@@ -16,6 +16,7 @@
 #include <QComboBox>
 #include <QDateTime>
 #include <QDateTimeAxis>
+#include <QDoubleSpinBox>
 #include <QDir>
 #include <QTimeZone>
 #include <QFile>
@@ -386,6 +387,20 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
         dateAxis_->setChecked(true);   // calendar dates by default
         markers_  = new QCheckBox(QStringLiteral("markers"));
         markers_->setToolTip(QStringLiteral("mark the data points on each curve"));
+        lineWidthSpin_ = new QDoubleSpinBox;
+        lineWidthSpin_->setRange(0.5, 8.0);
+        lineWidthSpin_->setSingleStep(0.5);
+        lineWidthSpin_->setValue(2.0);
+        lineWidthSpin_->setDecimals(1);
+        lineWidthSpin_->setSuffix(QStringLiteral(" pt"));
+        lineWidthSpin_->setToolTip(QStringLiteral("curve line width"));
+        markerSizeSpin_ = new QDoubleSpinBox;
+        markerSizeSpin_->setRange(2.0, 20.0);
+        markerSizeSpin_->setSingleStep(0.5);
+        markerSizeSpin_->setValue(7.5);
+        markerSizeSpin_->setDecimals(1);
+        markerSizeSpin_->setSuffix(QStringLiteral(" px"));
+        markerSizeSpin_->setToolTip(QStringLiteral("data-point marker size (when markers are on)"));
         auto* bzoom = new QPushButton(QStringLiteral("Reset zoom"));
         auto* bpng  = new QPushButton(QStringLiteral("Save figure..."));
         auto* bcsv  = new QPushButton(QStringLiteral("Save CSV..."));
@@ -402,6 +417,10 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
         row->addWidget(autoRef_);
         row->addWidget(dateAxis_);
         row->addWidget(markers_);
+        row->addWidget(new QLabel(QStringLiteral("Line:")));
+        row->addWidget(lineWidthSpin_);
+        row->addWidget(new QLabel(QStringLiteral("Marker:")));
+        row->addWidget(markerSizeSpin_);
         row->addStretch(1);
         // Legend placement: docked to an edge, or floating in a corner of the
         // plot area (the usual choice for a figure in a paper).
@@ -437,6 +456,8 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
         connect(brefresh, &QPushButton::clicked, this, [this] { reload(true); });
         connect(dateAxis_, &QCheckBox::toggled, this, [this](bool) { replot(); });
         connect(markers_,  &QCheckBox::toggled, this, [this](bool) { replot(); });
+        connect(lineWidthSpin_, &QDoubleSpinBox::valueChanged, this, [this](double) { replot(); });
+        connect(markerSizeSpin_, &QDoubleSpinBox::valueChanged, this, [this](double) { replot(); });
         connect(bzoom, &QPushButton::clicked, this, [this] {
             for (int i = 0; i < visibleCharts_; ++i) {
                 charts_[i]->zoomReset();
@@ -1524,6 +1545,8 @@ int SummaryPlotWidget::plotChart(QChart* chart, const QList<int>& sel,
 
     const bool useDates = dateAxis_ && dateAxis_->isChecked();
     const bool showPts  = markers_ && markers_->isChecked();
+    const double lineW  = lineWidthSpin_  ? lineWidthSpin_->value()  : 2.0;
+    const double markerS = markerSizeSpin_ ? markerSizeSpin_->value() : 7.5;
 
     // What colour means depends on which dimension actually varies. Comparing
     // ONE vector across several cases - the usual comparison - colour has to
@@ -1610,7 +1633,7 @@ int SummaryPlotWidget::plotChart(QChart* chart, const QList<int>& sel,
             // dash always keys the case (so a print in grey still separates
             // them); colour keys whichever dimension carries the information
             QPen pen(kCurveColors[(colourByCase ? ci : si) % kCurveColorCount]);
-            pen.setWidthF(2.0);
+            pen.setWidthF(lineW);
             pen.setStyle(kCaseDashes[ci % kCaseDashCount]);
             pen.setCosmetic(true);
             s->setPen(pen);
@@ -1641,8 +1664,7 @@ int SummaryPlotWidget::plotChart(QChart* chart, const QList<int>& sel,
                 auto* sc = new QScatterSeries;
                 sc->replace(s->points());
                 sc->setMarkerShape(kShapes[ci % kShapeCount]);
-                sc->setMarkerSize(7.5);   // bigger than the old 6, but a dense
-                                          // series still has to stay readable
+                sc->setMarkerSize(markerS);
                 chart->addSeries(sc);
                 sc->attachAxis(ax);
                 sc->attachAxis(side == 1 ? ayR : ayL);

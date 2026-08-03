@@ -26,6 +26,7 @@ class QChart;
 class QChartView;
 class QCheckBox;
 class QComboBox;
+class QDoubleSpinBox;
 class QGridLayout;
 class QLabel;
 class QLineEdit;
@@ -132,6 +133,8 @@ private:
     QCheckBox*   autoRef_   = nullptr;
     QCheckBox*   dateAxis_  = nullptr;
     QCheckBox*   markers_   = nullptr;   // show data points on the curves
+    QDoubleSpinBox* lineWidthSpin_   = nullptr;   // curve pen width, points
+    QDoubleSpinBox* markerSizeSpin_  = nullptr;   // data-point marker size, px
     QLabel*      status_    = nullptr;
     QTimer*      timer_     = nullptr;
 

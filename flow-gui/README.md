@@ -130,7 +130,8 @@ results, animate them in 3D, and edit decks — all in one window.
   what separates them — the output directory, or the deck's folder when
   that directory is just the default `<deck>_run` (full path in the
   tooltip). The *markers* toggle marks the
-  actual data points on each curve. Finished runs can be opened by dropping
+  actual data points on each curve; **Line** and **Marker** spin boxes set
+  the curve width and marker size. Finished runs can be opened by dropping
   an `.SMSPEC` on the window (or *Open SMSPEC...*), and adding a deck whose
   `<deck>_run` output already exists registers its case automatically.
 - **Completion notification** — a system-tray toast when the queue finishes
