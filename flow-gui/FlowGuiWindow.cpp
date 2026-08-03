@@ -24,6 +24,8 @@
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QFileSystemModel>
+#include <QHash>
 #include <QFontDatabase>
 #include <QGridLayout>
 #include <QGroupBox>
@@ -530,8 +532,30 @@ void FlowGuiWindow::onBrowseOutdir()
     dlg.setFileMode(QFileDialog::Directory);
     dlg.setOption(QFileDialog::ShowDirsOnly);
     dlg.setOption(QFileDialog::DontUseNativeDialog);
+
+    // Renaming a freshly created folder can leave the "Directory:" box on the
+    // old name: Qt only refreshes it when the box still holds exactly that
+    // name, so anything else typed or selected in between makes it go stale.
+    // Choosing then points at a folder that no longer exists - and the mkpath
+    // below would helpfully create it. Track the renames instead: keep the box
+    // on the folder just named, and never resurrect a name renamed away here.
+    QHash<QString, QString> renamed;      // old absolute path -> new one
+    auto* nameEdit = dlg.findChild<QLineEdit*>(QStringLiteral("fileNameEdit"));
+    if (auto* model = dlg.findChild<QFileSystemModel*>()) {
+        connect(model, &QFileSystemModel::fileRenamed, &dlg,
+                [&renamed, nameEdit](const QString& path, const QString& oldName,
+                                     const QString& newName) {
+            renamed.insert(QDir::cleanPath(QDir(path).filePath(oldName)),
+                           QDir::cleanPath(QDir(path).filePath(newName)));
+            if (nameEdit) nameEdit->setText(newName);
+        });
+    }
+
     if (dlg.exec() == QDialog::Accepted && !dlg.selectedFiles().isEmpty()) {
-        const QString d = dlg.selectedFiles().first();
+        QString d = dlg.selectedFiles().first();
+        if (const auto it = renamed.constFind(QDir::cleanPath(d));
+            it != renamed.constEnd())
+            d = it.value();               // the folder was renamed in this dialog
         if (!QDir().mkpath(d)) {
             QMessageBox::warning(this, QLatin1String(kAppName),
                 QStringLiteral("Could not create directory:\n%1").arg(d));
