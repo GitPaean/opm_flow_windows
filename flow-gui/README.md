@@ -113,8 +113,11 @@ results, animate them in 3D, and edit decks — all in one window.
   the list. Cases can be **renamed** (*Rename*, double-click or F2) — the
   new name is what the legend shows, so a comparison can read
   `Base case | FOPR` instead of a run directory name; names are kept unique
-  and travel with the project file. Same-named cases from different runs are
-  disambiguated with the run directory (full path in the tooltip). The *markers* toggle marks the
+  and travel with the project file. A single case keeps its plain name;
+  only when two runs of the same deck are loaded are **both** tagged with
+  what separates them — the output directory, or the deck's folder when
+  that directory is just the default `<deck>_run` (full path in the
+  tooltip). The *markers* toggle marks the
   actual data points on each curve. Finished runs can be opened by dropping
   an `.SMSPEC` on the window (or *Open SMSPEC...*), and adding a deck whose
   `<deck>_run` output already exists registers its case automatically.

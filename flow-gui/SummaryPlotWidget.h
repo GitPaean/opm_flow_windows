@@ -134,6 +134,9 @@ private:
     QString activePath() const;
     QString activeLabel() const;
     void caseItemChanged(QListWidgetItem* it);   // check toggle or rename
+    // Short tag distinguishing same-named cases (the run directory, or the
+    // deck's folder when the run directory is the default "<deck>_run").
+    static QString caseQualifier(const QString& smspecPath, const QString& label);
     void removeCurrentCase();
     void clearActiveCase();
     void browseCase();

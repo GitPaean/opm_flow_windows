@@ -574,14 +574,30 @@ QString SummaryPlotWidget::activeLabel() const
     return it ? it->text() : QString();
 }
 
+QString SummaryPlotWidget::caseQualifier(const QString& smspecPath,
+                                         const QString& label)
+{
+    // What actually tells two runs of the same deck apart is the output
+    // directory - except when it is the default "<deck>_run", which only
+    // repeats the case name; there the deck's own folder is the useful tag.
+    const QDir d = QFileInfo(smspecPath).absoluteDir();
+    const QString dir = d.dirName();
+    if (dir.compare(label + QStringLiteral("_run"), Qt::CaseInsensitive) == 0) {
+        QDir up = d;
+        if (up.cdUp() && !up.dirName().isEmpty()) return up.dirName();
+    }
+    return dir;
+}
+
 void SummaryPlotWidget::addCase(const QString& label, const QString& smspecPath,
                                 bool checked)
 {
     for (int i = 0; i < caseList_->count(); ++i)
         if (caseList_->item(i)->data(Qt::UserRole).toString() == smspecPath) return;
 
-    // Same-named cases from different runs: disambiguate with the run
-    // directory, and as a last resort with a counter. Full path in tooltip.
+    // Same-named cases from different runs need telling apart. Qualify BOTH
+    // of them - tagging only the newcomer leaves the older one bare, which
+    // says nothing about which run it is. A counter is the last resort.
     QString shown = label;
     auto labelTaken = [this](const QString& l) {
         for (int i = 0; i < caseList_->count(); ++i)
@@ -589,8 +605,23 @@ void SummaryPlotWidget::addCase(const QString& label, const QString& smspecPath,
         return false;
     };
     if (labelTaken(shown)) {
-        const QString dir = QFileInfo(smspecPath).absoluteDir().dirName();
-        if (!dir.isEmpty()) shown = label + QStringLiteral(" [") + dir + QLatin1Char(']');
+        const QString q = caseQualifier(smspecPath, label);
+        if (!q.isEmpty()) shown = label + QStringLiteral(" [") + q + QLatin1Char(']');
+        // Re-tag the case still carrying the plain name. Only that one: a
+        // case the user has renamed reads differently and never collides.
+        for (int i = 0; i < caseList_->count(); ++i) {
+            auto* other = caseList_->item(i);
+            if (other->text() != label) continue;
+            const QString op = other->data(Qt::UserRole).toString();
+            const QString oq = caseQualifier(op, label);
+            if (oq.isEmpty() || oq == q) continue;      // nothing to gain
+            const QString text = label + QStringLiteral(" [") + oq + QLatin1Char(']');
+            caseList_->blockSignals(true);
+            other->setText(text);
+            caseList_->blockSignals(false);
+            other->setData(RoleCaseLabel, text);
+            emit caseRenamed(op, text);
+        }
     }
     for (int n = 2; labelTaken(shown); ++n)
         shown = label + QStringLiteral(" (%1)").arg(n);
