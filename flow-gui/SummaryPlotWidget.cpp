@@ -33,7 +33,9 @@
 #include <QListWidgetItem>
 #include <QPen>
 #include <QScatterSeries>
+#include <QPageSize>
 #include <QPainter>
+#include <QPdfWriter>
 #include <QShowEvent>
 #include <QPushButton>
 #include <QRegularExpression>
@@ -62,6 +64,25 @@ namespace {
 
 const int RoleVecIndex = Qt::UserRole + 1;   // leaf item -> index into vecs_
 const int RoleCaseLabel = Qt::UserRole + 2;  // case item -> its current name
+
+// legend placement (values stored in legendBox_)
+enum LegendPos { LegendBottom, LegendTop, LegendLeft, LegendRight,
+                 LegendInTL, LegendInTR, LegendInBL, LegendInBR, LegendOff };
+
+// Curve colours: the Okabe-Ito qualitative palette, which stays readable for
+// the common forms of colour blindness and in greyscale print. Colour keys the
+// VECTOR; the dash pattern below keys the CASE, so a comparison is legible
+// even printed in black and white.
+const QColor kCurveColors[] = {
+    QColor(0x00, 0x72, 0xB2), QColor(0xD5, 0x5E, 0x00), QColor(0x00, 0x9E, 0x73),
+    QColor(0xCC, 0x79, 0xA7), QColor(0xE6, 0x9F, 0x00), QColor(0x56, 0xB4, 0xE9),
+    QColor(0x8a, 0x6d, 0x3b), QColor(0x33, 0x33, 0x33),
+};
+constexpr int kCurveColorCount = int(sizeof(kCurveColors) / sizeof(kCurveColors[0]));
+
+const Qt::PenStyle kCaseDashes[] = { Qt::SolidLine, Qt::DashLine,
+                                     Qt::DotLine,   Qt::DashDotLine };
+constexpr int kCaseDashCount = int(sizeof(kCaseDashes) / sizeof(kCaseDashes[0]));
 
 QString categoryName(Cat c)
 {
@@ -366,7 +387,7 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
         markers_  = new QCheckBox(QStringLiteral("markers"));
         markers_->setToolTip(QStringLiteral("mark the data points on each curve"));
         auto* bzoom = new QPushButton(QStringLiteral("Reset zoom"));
-        auto* bpng  = new QPushButton(QStringLiteral("Save PNG..."));
+        auto* bpng  = new QPushButton(QStringLiteral("Save figure..."));
         auto* bcsv  = new QPushButton(QStringLiteral("Save CSV..."));
         bcsv->setToolTip(QStringLiteral("export the plotted vectors of every checked case"));
         layoutBox_ = new QComboBox;
@@ -382,6 +403,25 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
         row->addWidget(dateAxis_);
         row->addWidget(markers_);
         row->addStretch(1);
+        // Legend placement: docked to an edge, or floating in a corner of the
+        // plot area (the usual choice for a figure in a paper).
+        legendBox_ = new QComboBox;
+        legendBox_->addItem(QStringLiteral("Legend: bottom"),       LegendBottom);
+        legendBox_->addItem(QStringLiteral("Legend: top"),          LegendTop);
+        legendBox_->addItem(QStringLiteral("Legend: left"),         LegendLeft);
+        legendBox_->addItem(QStringLiteral("Legend: right"),        LegendRight);
+        legendBox_->addItem(QStringLiteral("Legend: inside top-left"),     LegendInTL);
+        legendBox_->addItem(QStringLiteral("Legend: inside top-right"),    LegendInTR);
+        legendBox_->addItem(QStringLiteral("Legend: inside bottom-left"),  LegendInBL);
+        legendBox_->addItem(QStringLiteral("Legend: inside bottom-right"), LegendInBR);
+        legendBox_->addItem(QStringLiteral("Legend: hidden"),        LegendOff);
+        legendBox_->setToolTip(QStringLiteral(
+            "where the legend sits; the inside positions float it over the plot "
+            "area on a translucent background"));
+        row->addWidget(legendBox_);
+        connect(legendBox_, &QComboBox::currentIndexChanged, this, [this](int) {
+            for (auto* c : std::as_const(charts_)) placeLegend(c);
+        });
         row->addWidget(new QLabel(QStringLiteral("Layout:")));
         row->addWidget(layoutBox_);
         row->addWidget(bzoom);
@@ -505,6 +545,10 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
             auto* c = new QChart;
             c->legend()->setVisible(true);
             c->legend()->setAlignment(Qt::AlignBottom);
+            styleChart(c);
+            // a floating legend must follow the plot area as the chart resizes
+            connect(c, &QChart::plotAreaChanged, this,
+                    [this, c](const QRectF&) { placeLegend(c); });
             auto* v = new QChartView(c, chartArea_);
             v->setRenderHint(QPainter::Antialiasing);
             v->setRubberBand(QChartView::RectangleRubberBand);   // drag to zoom
@@ -552,14 +596,64 @@ void SummaryPlotWidget::savePng()
 {
     QString suggested = activeLabel();
     if (suggested.isEmpty()) suggested = QStringLiteral("summary");
+    // PDF keeps the curves and the text as vectors, which is what a figure in
+    // a paper wants; the PNG is rendered at 3x and tagged 300 dpi rather than
+    // grabbed off the screen, so it survives being printed.
+    const QString pdfFilter = QStringLiteral("PDF, vector - for manuscripts (*.pdf)");
+    const QString pngFilter = QStringLiteral("PNG, 300 dpi (*.png)");
+    const QString pngScreen = QStringLiteral("PNG, screen resolution (*.png)");
+    QString chosen = pdfFilter;
     const QString f = QFileDialog::getSaveFileName(
-        this, QStringLiteral("Save chart as PNG"), suggested + QStringLiteral(".png"),
-        QStringLiteral("PNG image (*.png)"));
+        this, QStringLiteral("Save chart"), suggested + QStringLiteral(".pdf"),
+        pdfFilter + QStringLiteral(";;") + pngFilter + QStringLiteral(";;") + pngScreen,
+        &chosen);
     if (f.isEmpty()) return;
-    if (chartArea_->grab().save(f))   // all visible subplots in one image
-        setStatus(QStringLiteral("chart saved to %1").arg(QDir::toNativeSeparators(f)));
-    else
-        setStatus(QStringLiteral("could not save %1").arg(QDir::toNativeSeparators(f)));
+
+    const bool wantPdf = chosen == pdfFilter
+        || (chosen != pngFilter && chosen != pngScreen
+            && f.endsWith(QStringLiteral(".pdf"), Qt::CaseInsensitive));
+    const QSize ws = chartArea_->size();
+    if (ws.isEmpty()) { setStatus(QStringLiteral("nothing to save")); return; }
+    bool ok = false;
+
+    if (wantPdf) {
+        // Page sized to the figure itself (7 inches wide), no margins, so it
+        // drops straight into \includegraphics without cropping.
+        const double aspect = double(ws.height()) / double(ws.width());
+        QPdfWriter pdf(f);
+        pdf.setResolution(600);
+        pdf.setPageSize(QPageSize(QSizeF(7.0, 7.0 * aspect), QPageSize::Inch,
+                                  QStringLiteral("figure"),
+                                  QPageSize::ExactMatch));
+        pdf.setPageMargins(QMarginsF(0, 0, 0, 0));
+        QPainter p;
+        if (p.begin(&pdf)) {
+            p.setRenderHint(QPainter::Antialiasing);
+            const double sc = std::min(double(pdf.width())  / ws.width(),
+                                       double(pdf.height()) / ws.height());
+            p.scale(sc, sc);
+            chartArea_->render(&p, QPoint(), QRegion(), QWidget::DrawChildren);
+            p.end();
+            ok = true;
+        }
+    } else {
+        const int scale = (chosen == pngScreen) ? 1 : 3;
+        QImage img(ws * scale, QImage::Format_ARGB32_Premultiplied);
+        img.fill(Qt::white);
+        // 300 dpi in dots per metre, so Word/LaTeX place it at the right size
+        const int dpm = int(std::lround(300.0 / 0.0254)) * (scale == 1 ? 0 : 1);
+        if (dpm > 0) { img.setDotsPerMeterX(dpm); img.setDotsPerMeterY(dpm); }
+        QPainter p;
+        if (p.begin(&img)) {
+            p.setRenderHint(QPainter::Antialiasing);
+            p.scale(scale, scale);
+            chartArea_->render(&p, QPoint(), QRegion(), QWidget::DrawChildren);
+            p.end();
+            ok = img.save(f);
+        }
+    }
+    setStatus(ok ? QStringLiteral("chart saved to %1").arg(QDir::toNativeSeparators(f))
+                 : QStringLiteral("could not save %1").arg(QDir::toNativeSeparators(f)));
 }
 
 QString SummaryPlotWidget::activePath() const
@@ -1226,6 +1320,107 @@ void SummaryPlotWidget::applyZoom(QChart* chart, const ZoomSnap& z)
         if (auto* r = qobject_cast<QValueAxis*>(vs[1])) r->setRange(z.rmin, z.rmax);
 }
 
+void SummaryPlotWidget::styleChart(QChart* chart)
+{
+    // Flat white figure: no drop shadow, no rounded frame, tight margins -
+    // what a plot dropped into a paper should look like.
+    chart->setBackgroundRoundness(0);
+    chart->setDropShadowEnabled(false);
+    chart->setBackgroundBrush(QBrush(Qt::white));
+    chart->setPlotAreaBackgroundVisible(false);
+    // NB: do not shrink QChart::margins here - the axis labels and titles are
+    // laid out inside those margins, and squeezing them drops the axes.
+    QFont tf = chart->titleFont();
+    tf.setPointSizeF(10.5);
+    tf.setBold(true);
+    chart->setTitleFont(tf);
+    chart->setTitleBrush(QBrush(QColor(0x22, 0x26, 0x2b)));
+    QFont lf = chart->legend()->font();
+    lf.setPointSizeF(9.0);
+    chart->legend()->setFont(lf);
+    chart->legend()->setLabelColor(QColor(0x22, 0x26, 0x2b));
+    chart->legend()->setMarkerShape(QLegend::MarkerShapeFromSeries);   // show the dashes
+}
+
+void SummaryPlotWidget::styleAxis(QAbstractAxis* axis)
+{
+    if (!axis) return;
+    QFont f = axis->labelsFont();
+    f.setPointSizeF(9.0);
+    axis->setLabelsFont(f);
+    QFont t = axis->titleFont();
+    t.setPointSizeF(9.5);
+    t.setBold(true);
+    axis->setTitleFont(t);
+    axis->setLabelsColor(QColor(0x33, 0x38, 0x3d));
+    axis->setTitleBrush(QBrush(QColor(0x22, 0x26, 0x2b)));
+    axis->setLinePenColor(QColor(0x55, 0x5b, 0x61));
+    axis->setGridLineColor(QColor(0xdc, 0xe0, 0xe4));   // light, unobtrusive
+    axis->setMinorGridLineVisible(false);
+}
+
+void SummaryPlotWidget::placeLegend(QChart* chart)
+{
+    if (!chart || !legendBox_) return;
+    auto* lg = chart->legend();
+    const int mode = legendBox_->currentData().toInt();
+    if (mode == LegendOff) { lg->setVisible(false); return; }
+    lg->setVisible(true);
+
+    if (mode <= LegendRight) {                      // docked to an edge
+        lg->attachToChart();
+        lg->setBackgroundVisible(false);
+        switch (mode) {
+            case LegendTop:   lg->setAlignment(Qt::AlignTop);    break;
+            case LegendLeft:  lg->setAlignment(Qt::AlignLeft);   break;
+            case LegendRight: lg->setAlignment(Qt::AlignRight);  break;
+            default:          lg->setAlignment(Qt::AlignBottom); break;
+        }
+        return;
+    }
+
+    // Floating inside the plot area, on a translucent plate so curves
+    // underneath stay readable.
+    lg->detachFromChart();
+    lg->setBackgroundVisible(true);
+    lg->setBrush(QBrush(QColor(255, 255, 255, 235)));
+    lg->setPen(QPen(QColor(0xb4, 0xba, 0xc0)));
+    lg->setZValue(100.0);        // above the curves, which would else cross it
+    const QRectF pa = chart->plotArea();
+    if (pa.isEmpty()) return;
+    const qreal m = 8.0;                            // inset from the axes
+    const qreal maxW = std::max(40.0, pa.width()  - 2 * m);
+    const qreal maxH = std::max(30.0, pa.height() - 2 * m);
+    // One entry per row, and size the plate from the entries themselves:
+    // a detached legend's own size hint reports a box too short for its rows
+    // and the top entries end up clipped.
+    lg->setAlignment(Qt::AlignLeft);                // vertical arrangement
+    int rows = 0;
+    qreal textW = 0;
+    const QFontMetricsF fm(lg->font());
+    const auto markers = lg->markers();
+    for (auto* mk : markers) {
+        if (!mk->isVisible()) continue;             // scatter overlays are hidden
+        ++rows;
+        textW = std::max(textW, fm.horizontalAdvance(mk->label()));
+    }
+    if (rows == 0) { lg->setVisible(false); return; }
+    // Qt lays a legend row out at roughly the font height plus the marker
+    // padding (~20px); too tight a plate makes it spill into a second column
+    // that the plate then clips. Erring tall only costs a little whitespace.
+    const qreal rowH = fm.height() + 20.0;
+    const qreal swatch = 34.0;                      // colour/dash sample + gap
+    QSizeF sz(std::min(textW + swatch + 24.0, maxW),
+              std::min(rows * rowH + 14.0,    maxH));
+    if (sz.width() <= 0 || sz.height() <= 0) return;
+    const bool left = (mode == LegendInTL || mode == LegendInBL);
+    const bool top  = (mode == LegendInTL || mode == LegendInTR);
+    const qreal x = left ? pa.left() + m : pa.right()  - m - sz.width();
+    const qreal y = top  ? pa.top()  + m : pa.bottom() - m - sz.height();
+    lg->setGeometry(QRectF(QPointF(x, y), sz));
+    lg->update();
+}
+
 int SummaryPlotWidget::plotChart(QChart* chart, const QList<int>& sel,
     const QString& title,
     const std::vector<std::pair<QString, Opm::EclIO::ESmry*>>& plotCases)
@@ -1279,6 +1474,7 @@ int SummaryPlotWidget::plotChart(QChart* chart, const QList<int>& sel,
         ayR = new QValueAxis; ayR->setTitleText(unitR);
         chart->addAxis(ayR, Qt::AlignRight);
     }
+    styleAxis(ax); styleAxis(ayL); styleAxis(ayR);
 
     double lmin = 0, lmax = 0, rmin = 0, rmax = 0; bool lset = false, rset = false;
     double xmin = 0, xmax = 0; bool xset = false;
@@ -1317,7 +1513,8 @@ int SummaryPlotWidget::plotChart(QChart* chart, const QList<int>& sel,
         };
         const bool isActive = (pc.second == smry_.get());
 
-        for (int i : sel) {
+        for (int si = 0; si < sel.size(); ++si) {
+            const int i = sel[si];
             const Vec& v = vecs_[i];
             const int side = axisFor(v.unit);
             if (side < 0) { if (isActive) ++skipped; continue; }
@@ -1332,6 +1529,12 @@ int SummaryPlotWidget::plotChart(QChart* chart, const QList<int>& sel,
 
             auto* s = new QLineSeries;
             s->setName(multi ? pc.first + QStringLiteral(" | ") + v.key : v.key);
+            // colour = which vector, dash = which case
+            QPen pen(kCurveColors[si % kCurveColorCount]);
+            pen.setWidthF(2.0);
+            pen.setStyle(kCaseDashes[ci % kCaseDashCount]);
+            pen.setCosmetic(true);
+            s->setPen(pen);
             const size_t n = std::min(time.size(), data.size());
             for (size_t k = 0; k < n; ++k) {
                 const double x = xval(time[k]);
@@ -1369,6 +1572,7 @@ int SummaryPlotWidget::plotChart(QChart* chart, const QList<int>& sel,
                 sc->setBrush(col);
                 const auto lms = chart->legend()->markers(sc);
                 for (auto* m : lms) m->setVisible(false);
+                sc->setBorderColor(col);
             }
         }
     }
@@ -1382,9 +1586,17 @@ int SummaryPlotWidget::plotChart(QChart* chart, const QList<int>& sel,
             static_cast<QValueAxis*>(ax)->setRange(xmin, xmax);
         }
     }
+    // Round tick values ("6 000 000", not "5581102.4"): applyNiceNumbers()
+    // widens the range to the next round step and picks a matching tick count.
     auto pad = [](QValueAxis* a, double lo, double hi) {
         if (hi > lo) a->setRange(lo - 0.05 * (hi - lo), hi + 0.05 * (hi - lo));
         else         a->setRange(lo - 1.0, hi + 1.0);
+        a->applyNiceNumbers();
+        // Drop the pointless ".0" the default format leaves on round ticks,
+        // and go scientific once the digits would run away with the margin.
+        const double m = std::max(std::fabs(a->min()), std::fabs(a->max()));
+        if      (m >= 1e7)  a->setLabelFormat(QStringLiteral("%.3g"));
+        else if (m >= 1000) a->setLabelFormat(QStringLiteral("%.0f"));
     };
     if (lset) pad(ayL, lmin, lmax);
     if (ayR && rset) pad(ayR, rmin, rmax);
@@ -1392,6 +1604,7 @@ int SummaryPlotWidget::plotChart(QChart* chart, const QList<int>& sel,
         ? title
         : (multi ? QStringLiteral("%1 cases").arg(plotCases.size())
                  : plotCases.front().first));
+    placeLegend(chart);      // the legend just changed size
     return skipped;
 }
 

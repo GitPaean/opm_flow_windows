@@ -48,9 +48,16 @@ results, animate them in 3D, and edit decks — all in one window.
   equally sized, and shrinking the layout keeps the focused one. Drag to
   zoom — a zoomed view survives refreshes until *Reset zoom* — and
   refreshes also keep the tree's expansion and scroll position. Calendar
-  dates on the X axis by default (untick *date axis* for days),
-  Save PNG for reports, and Save CSV to export the plotted curves of every
-  checked case. Any external `SMSPEC` can be opened too.
+  dates on the X axis by default (untick *date axis* for days).
+  The **legend** can be docked to any edge, floated in a corner *inside* the
+  plot (on a translucent plate, above the curves), or hidden.
+  Curves are styled for print: **colour keys the vector, dash pattern keys
+  the case** (so a comparison survives greyscale), from a colourblind-safe
+  palette, with round axis ticks. *Save figure...* writes a **vector PDF**
+  sized to the figure (7 in wide, no margins — drop it straight into
+  `\includegraphics`) or a **300 dpi PNG** rendered at 3×, not grabbed off
+  the screen; *Save CSV* exports the plotted curves of every checked case.
+  Any external `SMSPEC` can be opened too.
 - **3D View tab** (when built with opm-common): the corner-point grid
   rendered with a self-contained OpenGL widget (no external engine) —
   colored by any selectable static (INIT) or dynamic (UNRST) cell property,

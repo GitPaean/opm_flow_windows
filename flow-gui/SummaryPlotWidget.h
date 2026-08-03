@@ -21,6 +21,7 @@
 
 #include <opm/io/eclipse/SummaryNode.hpp>
 
+class QAbstractAxis;
 class QChart;
 class QChartView;
 class QCheckBox;
@@ -95,6 +96,7 @@ private:
     QLineEdit*   filter_    = nullptr;
     QTreeWidget* tree_      = nullptr;
     QComboBox*   layoutBox_ = nullptr;   // subplot layout: 1 / 2x1 / 2x2
+    QComboBox*   legendBox_ = nullptr;   // legend placement, incl. inside corners
     QWidget*     chartArea_ = nullptr;   // grid container holding the subplots
     QGridLayout* chartGrid_ = nullptr;
     QVector<QChart*>     charts_;        // fixed pool of 4, shown as needed
@@ -148,6 +150,12 @@ private:
     void replot();
     void savePng();
     void saveCsv();
+    // Put the legend where legendBox_ asks: docked to an edge, floating in a
+    // corner of the plot area, or hidden.
+    void placeLegend(QChart* chart);
+    // Print-oriented chart/axis cosmetics shared by every subplot.
+    static void styleChart(QChart* chart);
+    static void styleAxis(QAbstractAxis* axis);
     void setStatus(const QString& s);
     // Every checked case, the active one first-hand, others opened lazily.
     std::vector<std::pair<QString, Opm::EclIO::ESmry*>> checkedCases();
