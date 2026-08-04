@@ -25,6 +25,7 @@
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QHash>
+#include <QImage>
 #include <QTextStream>
 #include <QLabel>
 #include <QLineEdit>
@@ -33,6 +34,7 @@
 #include <QListWidget>
 #include <QListWidgetItem>
 #include <QPen>
+#include <QPolygonF>
 #include <QScatterSeries>
 #include <QPageSize>
 #include <QPainter>
@@ -55,6 +57,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <exception>
 #include <string>
 #include <utility>
@@ -87,6 +90,91 @@ constexpr int kCurveColorCount = int(sizeof(kCurveColors) / sizeof(kCurveColors[
 const Qt::PenStyle kCaseDashes[] = { Qt::SolidLine, Qt::DashLine,
                                      Qt::DotLine,   Qt::DashDotLine };
 constexpr int kCaseDashCount = int(sizeof(kCaseDashes) / sizeof(kCaseDashes[0]));
+
+// Object name of the empty stand-in series that carries a curve's legend
+// entry (see plotChart); its marker is the one the legend actually shows.
+const QString kLegendSample = QStringLiteral("flow-gui.legend-sample");
+
+// The pen a legend sample is drawn with: the curve's colour and case dash,
+// but heavier - Qt draws the sample with the SERIES' pen, so at curve width
+// the legend is left with a hairline beside the label. Qt also measures a
+// dash pattern in multiples of the pen width, so a heavier pen on its own
+// would stretch the dashes past the (font-height sized) sample and leave
+// every case looking solid; pin the pattern to lengths in pixels instead,
+// and cut the caps flat so they do not fill the gaps back in.
+QPen legendPen(const QPen& curve, qreal width)
+{
+    QPen p(curve);
+    p.setWidthF(width);
+    p.setCapStyle(Qt::FlatCap);
+    const qreal on = 5.0 / width, off = 3.0 / width, dot = 1.5 / width;
+    switch (curve.style()) {
+    case Qt::DashLine:    p.setDashPattern({on, off});           break;
+    case Qt::DotLine:     p.setDashPattern({dot, off});          break;
+    case Qt::DashDotLine: p.setDashPattern({on, off, dot, off}); break;
+    default:              break;                 // solid: nothing to rescale
+    }
+    return p;
+}
+
+// The scatter shape a case is marked with, drawn as an image for its legend
+// entry: Qt paints a series' "light marker" over that series' legend sample,
+// which is how the entry can show a line AND the marker on it. The stand-in
+// series this is set on carries no points, so it only ever shows up in the
+// legend - the curve itself keeps the real (vector) scatter overlay.
+//
+// `box` is the whole sample, `size` the marker drawn in the middle of it.
+QImage sampleMarker(QScatterSeries::MarkerShape shape, qreal box, qreal size,
+                    const QColor& colour, bool filled)
+{
+    // Qt scales this image to the sample; render it well above screen size so
+    // it holds up in a 300 dpi PNG and a 600 dpi PDF.
+    const qreal dpr = 6.0;
+    QImage img(QSize(qRound(box * dpr), qRound(box * dpr)),
+               QImage::Format_ARGB32_Premultiplied);
+    img.fill(Qt::transparent);
+    img.setDevicePixelRatio(dpr);
+    QPainter p(&img);
+    p.setRenderHint(QPainter::Antialiasing);
+    p.setPen(QPen(colour, 1.6));
+    // Hollow after the first case, exactly as on the curve - and here the
+    // sample line shows through the middle the same way.
+    p.setBrush(filled ? QBrush(colour) : QBrush(Qt::transparent));
+
+    const QRectF r((box - size) / 2, (box - size) / 2, size, size);
+    // Points of a regular n-gon on that rect, first vertex pointing up.
+    auto ngon = [&r, size](int n) {
+        constexpr qreal pi = 3.14159265358979323846;
+        QPolygonF poly;
+        const QPointF c = r.center();
+        for (int i = 0; i < n; ++i) {
+            const qreal a = -pi / 2 + i * 2 * pi / n;
+            poly << QPointF(c.x() + size / 2 * std::cos(a),
+                            c.y() + size / 2 * std::sin(a));
+        }
+        return poly;
+    };
+    switch (shape) {
+    case QScatterSeries::MarkerShapeCircle:           p.drawEllipse(r);      break;
+    case QScatterSeries::MarkerShapeTriangle:         p.drawPolygon(ngon(3)); break;
+    case QScatterSeries::MarkerShapeRotatedRectangle: p.drawPolygon(ngon(4)); break;
+    case QScatterSeries::MarkerShapePentagon:         p.drawPolygon(ngon(5)); break;
+    case QScatterSeries::MarkerShapeStar: {
+        constexpr qreal pi = 3.14159265358979323846;
+        QPolygonF star;
+        const QPointF c = r.center();
+        for (int i = 0; i < 10; ++i) {
+            const qreal rad = size / 2 * ((i % 2) ? 0.45 : 1.0);
+            const qreal a = -pi / 2 + i * pi / 5;
+            star << QPointF(c.x() + rad * std::cos(a), c.y() + rad * std::sin(a));
+        }
+        p.drawPolygon(star);
+        break;
+    }
+    default:                                          p.drawRect(r);         break;
+    }
+    return img;
+}
 
 QString categoryName(Cat c)
 {
@@ -1425,8 +1513,12 @@ void SummaryPlotWidget::styleChart(QChart* chart)
     tf.setBold(true);
     chart->setTitleFont(tf);
     chart->setTitleBrush(QBrush(QColor(0x22, 0x26, 0x2b)));
+    // The legend is what a reader consults to tell the curves apart, so it is
+    // set a size above the axis labels and bold, not as fine print. The line
+    // sample scales with this font too (Qt draws it 0.75 font heights long).
     QFont lf = chart->legend()->font();
-    lf.setPointSizeF(9.0);
+    lf.setPointSizeF(10.5);
+    lf.setBold(true);
     chart->legend()->setFont(lf);
     chart->legend()->setLabelColor(QColor(0x22, 0x26, 0x2b));
     chart->legend()->setMarkerShape(QLegend::MarkerShapeFromSeries);   // show the dashes
@@ -1490,10 +1582,11 @@ void SummaryPlotWidget::placeLegend(QChart* chart)
     const QFontMetricsF fm(lg->font());
     const auto markers = lg->markers();
     for (auto* mk : markers) {
-        // Skip the marker overlays, by TYPE - not by marker visibility: once
-        // the legend itself is hidden its markers report invisible too, so
-        // counting those would latch the legend off for good.
-        if (qobject_cast<QScatterSeries*>(mk->series())) continue;
+        // Count the stand-in series carrying the entries, by their NAME - not
+        // by marker visibility: once the legend itself is hidden its markers
+        // report invisible too, so counting those would latch the legend off
+        // for good.
+        if (mk->series()->objectName() != kLegendSample) continue;
         ++rows;
         textW = std::max(textW, fm.horizontalAdvance(mk->label()));
     }
@@ -1558,6 +1651,10 @@ int SummaryPlotWidget::plotChart(QChart* chart, const QList<int>& sel,
     const bool useDates = dateAxis_ && dateAxis_->isChecked();
     const bool showPts  = markers_ && markers_->isChecked();
     const double lineW  = lineWidthSpin_  ? lineWidthSpin_->value()  : 2.0;
+    // Width of the legend's line sample: heavier than the curve, since it is
+    // read at a couple of font heights rather than across the plot - but
+    // never thinner than the curve it stands for.
+    const double legendW = std::max(lineW, std::clamp(lineW * 1.8, 3.0, 6.0));
     const double markerS = markerSizeSpin_ ? markerSizeSpin_->value() : 7.5;
     // 1 = mark every data point (the default: markers are the data)
     const int markerEvery = std::max(1, markerEverySpin_ ? markerEverySpin_->value() : 1);
@@ -1671,6 +1768,33 @@ int SummaryPlotWidget::plotChart(QChart* chart, const QList<int>& sel,
             chart->addSeries(s);
             s->attachAxis(ax);
             s->attachAxis(side == 1 ? ayR : ayL);
+
+            // Hand the legend entry to an empty stand-in drawn with a heavier
+            // pen: Qt draws a sample with the series' own pen, so the curve's
+            // own entry can only ever be as thin as the curve. The stand-in
+            // holds no points, so it adds nothing to the plot area - just a
+            // sample carrying the curve's colour and case dash.
+            auto* sample = new QLineSeries;
+            sample->setObjectName(kLegendSample);
+            sample->setName(s->name());
+            sample->setPen(legendPen(pen, legendW));
+            if (showPts) {
+                // Markers are on, so the entry shows what the curve shows: the
+                // case's shape riding on the sample line. Qt sizes a sample
+                // carrying a marker from the series' marker size, which also
+                // buys the line a little more length to show its dash in.
+                const qreal box  = std::clamp(2.6 * markerS, 20.0, 30.0);
+                const qreal size = std::min(markerS, box - 3.0);
+                sample->setMarkerSize(box);
+                sample->setLightMarker(
+                    sampleMarker(kShapes[ci % kShapeCount], box, size,
+                                 pen.color(), ci == 0));
+            }
+            chart->addSeries(sample);
+            sample->attachAxis(ax);
+            sample->attachAxis(side == 1 ? ayR : ayL);
+            const auto own = chart->legend()->markers(s);
+            for (auto* m : own) m->setVisible(false);
 
             if (showPts) {
                 // Overlay a scatter with a per-case shape in the line's colour;

@@ -132,7 +132,9 @@ results, animate them in 3D, and edit decks — all in one window.
   tooltip). The *markers* toggle marks **every data point** in the summary
   — no sampling by default, so the markers are exactly the samples the run
   wrote — and **hovering a marker** shows its case, date and value with
-  unit. **Line** and **Marker** spin boxes set the curve width and marker
+  unit. With markers on, the **legend shows them too**: each entry's sample
+  is the case's shape riding on its line, so an entry looks like the curve
+  it stands for. **Line** and **Marker** spin boxes set the curve width and marker
   size, and *every n* thins the markers on a dense curve (1 = all, the
   default); thinning steps by whole data points, so a drawn marker is
   always a real `(time, value)` sample. A different **shape** per case and
