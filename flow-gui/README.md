@@ -130,14 +130,14 @@ results, animate them in 3D, and edit decks — all in one window.
   what separates them — the output directory, or the deck's folder when
   that directory is just the default `<deck>_run` (full path in the
   tooltip). The *markers* toggle marks the
-  data points on each curve; **Line** and **Marker** spin boxes set the
-  curve width and marker size. Markers are built so that curves running
-  close together stay tellable apart: at most ~26 per curve (a denser
-  series is thinned, so they read as points instead of an opaque chain),
-  **staggered** so each case marks different points rather than stacking on
-  the previous one, a different **shape** per case, and **hollow** for every
-  case after the first so an underlying marker shows through.
-  Finished runs can be opened by dropping
+  data points on each curve at their **exact report times** (never shifted
+  or staggered for legibility); **Line** and **Marker** spin boxes set the
+  curve width and marker size. A denser series is thinned to at most ~26
+  markers per curve so they read as points instead of an opaque chain; a
+  different **shape** per case, and **hollow** for every case after the
+  first, keep curves separable even where two runs share a time grid and
+  their markers coincide exactly (an underlying filled marker still shows
+  through the ring). Finished runs can be opened by dropping
   an `.SMSPEC` on the window (or *Open SMSPEC...*), and adding a deck whose
   `<deck>_run` output already exists registers its case automatically.
 - **Completion notification** — a system-tray toast when the queue finishes
@@ -153,6 +153,10 @@ results, animate them in 3D, and edit decks — all in one window.
   (default), or a custom directory used exactly as given (the directory
   chooser has a *New Folder* button on every platform; the path is created
   if needed).
+- **TUNING** checkbox — `--enable-tuning`, off by default (flow's own
+  default): honor the deck's `TUNING` keyword for schedule-controlled
+  time-stepping instead of ignoring it; remembered between sessions and
+  stored in the project file, like the other run options.
 - **Extra options** passed through to flow verbatim
   (e.g. `--linear-solver=ilu0`).
 - **Live log** — merged stdout/stderr streams into the window while running.

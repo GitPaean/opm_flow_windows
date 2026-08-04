@@ -14,6 +14,7 @@
 #include "DeckEditor.h"
 
 #include <QApplication>
+#include <QCheckBox>
 #include <QCloseEvent>
 #include <QComboBox>
 #include <QDialog>
@@ -296,7 +297,13 @@ FlowGuiWindow::FlowGuiWindow()
         extraEdit_ = new QLineEdit;
         extraEdit_->setToolTip(QStringLiteral(
             "additional flow command line options, e.g. --linear-solver=ilu0"));
-        grid->addWidget(extraEdit_, 2, 1, 1, 5);
+        grid->addWidget(extraEdit_, 2, 1, 1, 4);
+        tuningChk_ = new QCheckBox(QStringLiteral("TUNING"));
+        tuningChk_->setToolTip(QStringLiteral(
+            "--enable-tuning : honor the deck's TUNING keyword (time-step "
+            "control etc. set in the schedule); off by default (flow's own "
+            "default) - the deck's initial time-stepping is used throughout"));
+        grid->addWidget(tuningChk_, 2, 5);
         top->addWidget(box);
     }
 
@@ -410,6 +417,7 @@ void FlowGuiWindow::loadSettings()
     outdirEdit_->setText(s.value(QStringLiteral("outdir")).toString());
     outdirEdit_->setEnabled(outdirMode_->currentIndex() == 1);
     extraEdit_->setText(s.value(QStringLiteral("extra")).toString());
+    tuningChk_->setChecked(s.value(QStringLiteral("tuning"), false).toBool());
 
     // Restore the job queue from the previous session (decks that still exist).
     QStringList restored;
@@ -427,6 +435,7 @@ void FlowGuiWindow::saveSettings()
     s.setValue(QStringLiteral("outmode"), outdirMode_->currentIndex());
     s.setValue(QStringLiteral("outdir"),  outdirEdit_->text());
     s.setValue(QStringLiteral("extra"),   extraEdit_->text());
+    s.setValue(QStringLiteral("tuning"),  tuningChk_->isChecked());
 
     QStringList queue;
     for (const Job& j : jobs_) queue << j.deck;
@@ -825,6 +834,8 @@ void FlowGuiWindow::startNextJob()
     // Always pass the thread count: without the option an OpenMP-enabled
     // flow defaults to 2 threads per process, so "1" must be explicit.
     args << (QStringLiteral("--threads-per-process=") + QString::number(threads));
+    if (tuningChk_ && tuningChk_->isChecked())
+        args << QStringLiteral("--enable-tuning=true");
     const QString extra = extraEdit_->text().trimmed();
     if (!extra.isEmpty())
         args << extra.split(QRegularExpression(QStringLiteral("\\s+")), Qt::SkipEmptyParts);
@@ -1132,6 +1143,7 @@ bool FlowGuiWindow::writeProject(const QString& path)
     root[QStringLiteral("outputMode")] = outdirMode_->currentIndex();
     root[QStringLiteral("outputDir")]  = QDir::fromNativeSeparators(outdirEdit_->text());
     root[QStringLiteral("extraOptions")] = extraEdit_->text();
+    root[QStringLiteral("tuning")]     = tuningChk_->isChecked();
     root[QStringLiteral("simulator")]  = QDir::fromNativeSeparators(simEdit_->text());
 
 #ifdef FLOWGUI_HAVE_SUMMARY
@@ -1200,6 +1212,7 @@ bool FlowGuiWindow::readProject(const QString& path)
     outdirEdit_->setText(QDir::toNativeSeparators(root[QStringLiteral("outputDir")].toString()));
     outdirEdit_->setEnabled(outdirMode_->currentIndex() == 1);
     extraEdit_->setText(root[QStringLiteral("extraOptions")].toString());
+    tuningChk_->setChecked(root[QStringLiteral("tuning")].toBool(false));
     simEdit_->setText(QDir::toNativeSeparators(root[QStringLiteral("simulator")].toString()));
 
     // cases (before decks: addDecks may auto-register cases, dedup handles it)

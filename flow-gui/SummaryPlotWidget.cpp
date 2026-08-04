@@ -1665,18 +1665,21 @@ int SummaryPlotWidget::plotChart(QChart* chart, const QList<int>& sel,
                 // Overlay a scatter with a per-case shape in the line's colour;
                 // keep it out of the legend (the line represents both).
                 //
-                // Two curves running close together used to hide each other's
-                // markers completely. Thin them out - past ~25 per curve they
-                // read as an opaque chain over the line rather than as points -
-                // and stagger the phase per case: two runs of one deck share
-                // report times, so unstaggered markers land exactly on top of
-                // each other and only the last one drawn survives.
+                // Thinned to at most ~kMarkersPerCurve per curve - past that
+                // they read as an opaque chain over the line rather than as
+                // points. Every case marks the SAME time indices (no phase
+                // offset): a marker's x position is real data, comparable
+                // point-for-point across cases, never an artefact of how the
+                // curves happen to be laid out on screen. Where two cases
+                // report at the same time (the common case: two runs of one
+                // deck), their markers coincide exactly - hollow markers on
+                // every case after the first let the one underneath show
+                // through, and shape/colour still separate them on inspection.
                 const QList<QPointF> pts = s->points();
-                const int nc   = std::max<int>(1, int(plotCases.size()));
                 const int step = std::max<int>(1, int(pts.size()) / kMarkersPerCurve);
                 QList<QPointF> marks;
                 marks.reserve(int(pts.size()) / step + 1);
-                for (int k = (step * ci / nc) % step; k < pts.size(); k += step)
+                for (int k = 0; k < pts.size(); k += step)
                     marks.append(pts[k]);
 
                 auto* sc = new QScatterSeries;

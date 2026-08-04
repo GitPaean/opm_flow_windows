@@ -15,6 +15,7 @@
 #include <QStringList>
 #include <QVector>
 
+class QCheckBox;
 class QCloseEvent;
 class QComboBox;
 class QDragEnterEvent;
@@ -69,6 +70,7 @@ private:
     QComboBox*      outdirMode_  = nullptr;
     QLineEdit*      outdirEdit_  = nullptr;
     QLineEdit*      extraEdit_   = nullptr;
+    QCheckBox*      tuningChk_   = nullptr;   // --enable-tuning (off = flow's default)
     QPushButton*    runBtn_      = nullptr;
     QPushButton*    runSelBtn_   = nullptr;   // run only the selected rows
     QPushButton*    stopBtn_     = nullptr;
