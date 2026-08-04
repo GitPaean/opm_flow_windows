@@ -1592,6 +1592,9 @@ int SummaryPlotWidget::plotChart(QChart* chart, const QList<int>& sel,
         QScatterSeries::MarkerShapeRotatedRectangle,
     };
     constexpr int kShapeCount = int(sizeof(kShapes) / sizeof(kShapes[0]));
+    // Markers drawn per curve at most; a denser series gets them thinned out
+    // (every n-th point) so they stay readable as individual points.
+    constexpr int kMarkersPerCurve = 26;
 
     for (int ci = 0; ci < int(plotCases.size()); ++ci) {
         const auto& pc = plotCases[ci];    // (label, reader)
@@ -1659,22 +1662,38 @@ int SummaryPlotWidget::plotChart(QChart* chart, const QList<int>& sel,
             s->attachAxis(side == 1 ? ayR : ayL);
 
             if (showPts) {
-                // Overlay a small scatter with a per-case shape in the line's
-                // color; keep it out of the legend (the line represents both).
+                // Overlay a scatter with a per-case shape in the line's colour;
+                // keep it out of the legend (the line represents both).
+                //
+                // Two curves running close together used to hide each other's
+                // markers completely. Thin them out - past ~25 per curve they
+                // read as an opaque chain over the line rather than as points -
+                // and stagger the phase per case: two runs of one deck share
+                // report times, so unstaggered markers land exactly on top of
+                // each other and only the last one drawn survives.
+                const QList<QPointF> pts = s->points();
+                const int nc   = std::max<int>(1, int(plotCases.size()));
+                const int step = std::max<int>(1, int(pts.size()) / kMarkersPerCurve);
+                QList<QPointF> marks;
+                marks.reserve(int(pts.size()) / step + 1);
+                for (int k = (step * ci / nc) % step; k < pts.size(); k += step)
+                    marks.append(pts[k]);
+
                 auto* sc = new QScatterSeries;
-                sc->replace(s->points());
+                sc->replace(marks);
                 sc->setMarkerShape(kShapes[ci % kShapeCount]);
                 sc->setMarkerSize(markerS);
                 chart->addSeries(sc);
                 sc->attachAxis(ax);
                 sc->attachAxis(side == 1 ? ayR : ayL);
                 const QColor col = s->color();
-                sc->setColor(col);
-                sc->setPen(QPen(col, 1));
-                sc->setBrush(col);
+                // First case filled, the rest hollow: where markers do land on
+                // each other the one underneath still shows through the ring.
+                sc->setBrush(ci == 0 ? QBrush(col) : QBrush(Qt::transparent));
+                sc->setPen(QPen(col, 1.6));
+                sc->setBorderColor(col);
                 const auto lms = chart->legend()->markers(sc);
                 for (auto* m : lms) m->setVisible(false);
-                sc->setBorderColor(col);
             }
         }
     }
