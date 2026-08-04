@@ -32,6 +32,7 @@ class QLabel;
 class QLineEdit;
 class QListWidget;
 class QListWidgetItem;
+class QSpinBox;
 class QTreeWidget;
 class QTreeWidgetItem;
 class QTimer;
@@ -135,6 +136,7 @@ private:
     QCheckBox*   markers_   = nullptr;   // show data points on the curves
     QDoubleSpinBox* lineWidthSpin_   = nullptr;   // curve pen width, points
     QDoubleSpinBox* markerSizeSpin_  = nullptr;   // data-point marker size, px
+    QSpinBox*       markerEverySpin_ = nullptr;   // mark every n-th point (1 = all)
     QLabel*      status_    = nullptr;
     QTimer*      timer_     = nullptr;
 

@@ -42,6 +42,7 @@
 #include <QRegularExpression>
 #include <QScrollBar>
 #include <QSet>
+#include <QSpinBox>
 #include <QSplitter>
 #include <QTimer>
 #include <QCursor>
@@ -403,6 +404,13 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
         markerSizeSpin_->setDecimals(1);
         markerSizeSpin_->setSuffix(QStringLiteral(" px"));
         markerSizeSpin_->setToolTip(QStringLiteral("data-point marker size (when markers are on)"));
+        markerEverySpin_ = new QSpinBox;
+        markerEverySpin_->setRange(1, 1000);
+        markerEverySpin_->setValue(1);
+        markerEverySpin_->setPrefix(QStringLiteral("every "));
+        markerEverySpin_->setToolTip(QStringLiteral(
+            "mark every n-th data point; 1 (the default) marks them all, so "
+            "the markers are exactly the samples in the summary file"));
         auto* bzoom = new QPushButton(QStringLiteral("Reset zoom"));
         auto* bpng  = new QPushButton(QStringLiteral("Save figure..."));
         auto* bcsv  = new QPushButton(QStringLiteral("Save CSV..."));
@@ -423,6 +431,7 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
         row->addWidget(lineWidthSpin_);
         row->addWidget(new QLabel(QStringLiteral("Marker:")));
         row->addWidget(markerSizeSpin_);
+        row->addWidget(markerEverySpin_);
         row->addStretch(1);
         // Legend placement: docked to an edge, or floating in a corner of the
         // plot area (the usual choice for a figure in a paper).
@@ -460,6 +469,7 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
         connect(markers_,  &QCheckBox::toggled, this, [this](bool) { replot(); });
         connect(lineWidthSpin_, &QDoubleSpinBox::valueChanged, this, [this](double) { replot(); });
         connect(markerSizeSpin_, &QDoubleSpinBox::valueChanged, this, [this](double) { replot(); });
+        connect(markerEverySpin_, &QSpinBox::valueChanged, this, [this](int) { replot(); });
         connect(bzoom, &QPushButton::clicked, this, [this] {
             for (int i = 0; i < visibleCharts_; ++i) {
                 charts_[i]->zoomReset();
@@ -1549,6 +1559,8 @@ int SummaryPlotWidget::plotChart(QChart* chart, const QList<int>& sel,
     const bool showPts  = markers_ && markers_->isChecked();
     const double lineW  = lineWidthSpin_  ? lineWidthSpin_->value()  : 2.0;
     const double markerS = markerSizeSpin_ ? markerSizeSpin_->value() : 7.5;
+    // 1 = mark every data point (the default: markers are the data)
+    const int markerEvery = std::max(1, markerEverySpin_ ? markerEverySpin_->value() : 1);
 
     // What colour means depends on which dimension actually varies. Comparing
     // ONE vector across several cases - the usual comparison - colour has to
@@ -1594,17 +1606,6 @@ int SummaryPlotWidget::plotChart(QChart* chart, const QList<int>& sel,
         QScatterSeries::MarkerShapeRotatedRectangle,
     };
     constexpr int kShapeCount = int(sizeof(kShapes) / sizeof(kShapes[0]));
-    // Markers drawn per curve at most; a denser series gets them thinned out
-    // so they stay readable as individual points.
-    constexpr int kMarkersPerCurve = 26;
-
-    // Markers are attached after the loop, once the plotted time span is
-    // known: which points to mark has to be decided in TIME, not by index.
-    // Two runs of a deck rarely have the same number of report steps, so
-    // "every n-th point" picks different instants in each case - which is
-    // what made the markers of two cases interleave instead of lining up.
-    struct PendingMarks { QLineSeries* line; int ci; int side; QString unit; };
-    QVector<PendingMarks> pending;
 
     for (int ci = 0; ci < int(plotCases.size()); ++ci) {
         const auto& pc = plotCases[ci];    // (label, reader)
@@ -1671,7 +1672,53 @@ int SummaryPlotWidget::plotChart(QChart* chart, const QList<int>& sel,
             s->attachAxis(ax);
             s->attachAxis(side == 1 ? ayR : ayL);
 
-            if (showPts) pending.push_back({ s, ci, side, v.unit });
+            if (showPts) {
+                // Overlay a scatter with a per-case shape in the line's colour;
+                // keep it out of the legend (the line represents both).
+                //
+                // Every data point is marked by default - a marker is a real
+                // sample from the summary, so leaving some out would misreport
+                // where the data actually is. "Every" thins that down on a
+                // dense curve, by whole data points, so the markers that are
+                // drawn are still exactly samples.
+                const QList<QPointF> pts = s->points();
+                QList<QPointF> marks;
+                marks.reserve(int(pts.size()) / markerEvery + 1);
+                for (int k = 0; k < pts.size(); k += markerEvery)
+                    marks.append(pts[k]);
+
+                auto* sc = new QScatterSeries;
+                sc->replace(marks);
+                sc->setMarkerShape(kShapes[ci % kShapeCount]);
+                sc->setMarkerSize(markerS);
+                chart->addSeries(sc);
+                sc->attachAxis(ax);
+                sc->attachAxis(side == 1 ? ayR : ayL);
+                const QColor col = s->color();
+                // First case filled, the rest hollow: where markers land on
+                // each other the one underneath shows through the ring.
+                sc->setBrush(ci == 0 ? QBrush(col) : QBrush(Qt::transparent));
+                sc->setPen(QPen(col, 1.6));
+                sc->setBorderColor(col);
+                const auto lms = chart->legend()->markers(sc);
+                for (auto* m : lms) m->setVisible(false);
+
+                // Hovering a marker reports the sample it stands for.
+                const QString name = s->name();
+                const QString unit = v.unit;
+                connect(sc, &QScatterSeries::hovered, this,
+                        [name, unit, useDates](const QPointF& p, bool on) {
+                    if (!on) { QToolTip::hideText(); return; }
+                    const QString when = useDates
+                        ? QDateTime::fromMSecsSinceEpoch(qint64(p.x()), QTimeZone::utc())
+                              .toString(QStringLiteral("yyyy-MM-dd"))
+                        : QStringLiteral("%1 days").arg(p.x(), 0, 'f', 2);
+                    QToolTip::showText(QCursor::pos(),
+                        QStringLiteral("%1\n%2\n%3%4").arg(name, when)
+                            .arg(p.y(), 0, 'g', 6)
+                            .arg(unit.isEmpty() ? QString() : QLatin1Char(' ') + unit));
+                });
+            }
         }
     }
 
@@ -1685,67 +1732,6 @@ int SummaryPlotWidget::plotChart(QChart* chart, const QList<int>& sel,
         }
     }
 
-    // --- markers ------------------------------------------------------------
-    // Pick the points to mark by TIME: walk a grid of target instants across
-    // the plotted span and mark the data point nearest each one. Every marker
-    // is therefore a real (time, value) sample, and cases mark the same
-    // instants even when their report steps differ in number - marking
-    // "every n-th point" instead made two runs interleave.
-    for (const PendingMarks& pm : std::as_const(pending)) {
-        const QList<QPointF> pts = pm.line->points();
-        if (pts.isEmpty()) continue;
-        const int want = std::min<int>(kMarkersPerCurve, int(pts.size()));
-
-        QList<int> idxs;
-        int last = -1;
-        for (int m = 0; m < want; ++m) {
-            const double t = (want == 1 || xmax <= xmin)
-                ? pts.front().x()
-                : xmin + (xmax - xmin) * double(m) / double(want - 1);
-            // nearest sample to the target instant (points are time-ordered)
-            auto it = std::lower_bound(pts.begin(), pts.end(), t,
-                [](const QPointF& p, double v) { return p.x() < v; });
-            int k = int(it - pts.begin());
-            if (k >= pts.size()) k = int(pts.size()) - 1;
-            else if (k > 0 && std::fabs(pts[k - 1].x() - t) <= std::fabs(pts[k].x() - t)) --k;
-            if (k != last) { idxs.append(k); last = k; }   // targets may collide
-        }
-        QList<QPointF> marks;
-        marks.reserve(idxs.size());
-        for (int k : std::as_const(idxs)) marks.append(pts[k]);
-
-        auto* sc = new QScatterSeries;
-        sc->replace(marks);
-        sc->setMarkerShape(kShapes[pm.ci % kShapeCount]);
-        sc->setMarkerSize(markerS);
-        chart->addSeries(sc);
-        sc->attachAxis(ax);
-        sc->attachAxis(pm.side == 1 ? ayR : ayL);
-        const QColor col = pm.line->color();
-        // First case filled, the rest hollow: where markers do land on each
-        // other the one underneath still shows through the ring.
-        sc->setBrush(pm.ci == 0 ? QBrush(col) : QBrush(Qt::transparent));
-        sc->setPen(QPen(col, 1.6));
-        sc->setBorderColor(col);
-        const auto lms = chart->legend()->markers(sc);
-        for (auto* m : lms) m->setVisible(false);
-
-        // Hovering a marker reports the sample it stands for.
-        const QString name = pm.line->name();
-        const QString unit = pm.unit;
-        connect(sc, &QScatterSeries::hovered, this,
-                [name, unit, useDates](const QPointF& p, bool on) {
-            if (!on) { QToolTip::hideText(); return; }
-            const QString when = useDates
-                ? QDateTime::fromMSecsSinceEpoch(qint64(p.x()), QTimeZone::utc())
-                      .toString(QStringLiteral("yyyy-MM-dd"))
-                : QStringLiteral("%1 days").arg(p.x(), 0, 'f', 2);
-            QToolTip::showText(QCursor::pos(),
-                QStringLiteral("%1\n%2\n%3%4").arg(name, when)
-                    .arg(p.y(), 0, 'g', 6)
-                    .arg(unit.isEmpty() ? QString() : QLatin1Char(' ') + unit));
-        });
-    }
     // Round tick values ("6 000 000", not "5581102.4"): applyNiceNumbers()
     // widens the range to the next round step and picks a matching tick count.
     auto pad = [](QValueAxis* a, double lo, double hi) {
