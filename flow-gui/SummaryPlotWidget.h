@@ -28,6 +28,7 @@ class QCheckBox;
 class QComboBox;
 class QDoubleSpinBox;
 class QGridLayout;
+class QJsonObject;
 class QLabel;
 class QLineEdit;
 class QListWidget;
@@ -66,6 +67,14 @@ public:
     struct CaseInfo { QString label; QString path; bool checked; };
     QList<CaseInfo> caseInfos() const;
     void clearCases();
+
+    // Everything needed to come back to this plot in a later session: the
+    // cases and which one is active, the vector filters, what each subplot
+    // shows, and how it is drawn. Stored in the project file and, on exit,
+    // in the settings. Missing entries keep their current value, so a state
+    // written by an older version still restores what it does carry.
+    QJsonObject uiState() const;
+    void restoreUiState(const QJsonObject& state);
 
 signals:
     // Emitted for every newly registered case (dedup already applied) so

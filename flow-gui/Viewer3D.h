@@ -30,6 +30,7 @@
 class QCheckBox;
 class QComboBox;
 class QDoubleSpinBox;
+class QJsonObject;
 class QLabel;
 class QPushButton;
 class QRadioButton;
@@ -126,6 +127,12 @@ public:
     // Follow a rename made in the Summary Plots tab (same case identity).
     void renameCase(const QString& smspecPath, const QString& label);
 
+    // Session state: which case is shown, with which property, and how. The
+    // case itself is only opened once the tab is looked at, so a restored
+    // choice waits in pending* below until then.
+    QJsonObject uiState() const;
+    void restoreUiState(const QJsonObject& state);
+
 protected:
     // The selected case's files may have appeared while the tab was hidden.
     void showEvent(QShowEvent* ev) override;
@@ -156,6 +163,16 @@ private:
     std::vector<int>   steps_;          // restart report step numbers
     std::vector<int>   cellGlob_;       // active index -> global index
     double cx_ = 0, cy_ = 0, cz_ = 0;   // mesh center offset (double precision)
+
+    // Opening a case reads the grid and builds the whole mesh, so it waits
+    // until the tab is actually shown: pendingCase_ is the case to open then,
+    // and pendingProp_/pendingStep_ the restored choice to apply once its
+    // property boxes have been filled.
+    int     pendingCase_ = -1;
+    QString pendingProp_;
+    bool    pendingDynamic_ = false;
+    int     pendingStep_ = -1;
+    bool    havePending_ = false;
 
     void openCase(int idx);
     void buildMesh();

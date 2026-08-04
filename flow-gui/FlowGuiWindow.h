@@ -27,6 +27,8 @@ class QProgressBar;
 class QPushButton;
 class QSpinBox;
 class QSystemTrayIcon;
+class QJsonArray;
+class QJsonObject;
 class QTableWidget;
 class QTabWidget;
 class QTimer;
@@ -120,6 +122,13 @@ private:
     void saveProjectAs();
     bool writeProject(const QString& path);
     bool readProject(const QString& path);
+    // The state of the tabs themselves (plot, 3D view, deck editor) and of
+    // the queue, shared by the project file and the between-sessions
+    // settings so both recover the same working setup.
+    QJsonObject collectUiState() const;
+    void restoreUiState(const QJsonObject& ui);
+    QJsonArray  jobsState() const;
+    void restoreJobs(const QJsonArray& jobs);
     void updateWindowTitle();
     void openJobFolder(int row);
     void viewJobFile(int row, const QString& ext);   // "PRT" or "DBG"

@@ -18,6 +18,7 @@
 
 class QCheckBox;
 class QFileSystemWatcher;
+class QJsonObject;
 class QLabel;
 class QLineEdit;
 class QPushButton;
@@ -73,6 +74,12 @@ public:
     // Write every modified tab back to its file. Called before a run: flow
     // re-reads the decks from disk, so unsaved edits must land first.
     void saveAllTabs();
+
+    // Session state: the scanned deck, the open tabs and which one was in
+    // front, so the same files come back up in the next session. Only the
+    // file names travel - the text itself lives on disk.
+    QJsonObject uiState() const;
+    void restoreUiState(const QJsonObject& state);
 
 private:
     QTreeWidget* tree_       = nullptr;

@@ -12,10 +12,22 @@ results, animate them in 3D, and edit decks — all in one window.
 
 ## Features
 - **Projects** — the *Project* menu saves/loads a `.opmproj` file (readable
-  JSON) holding the deck queue, MPI ranks / OMP threads, output policy and
-  directory, extra flow arguments, and the Summary-Plots-tab cases with their
-  checked state — so a whole study setup is one *Open* away (Ctrl+O/Ctrl+S;
-  missing decks/cases are skipped with a note in the log).
+  JSON) holding the whole working setup, so a study is one *Open* away
+  (Ctrl+O/Ctrl+S; missing decks/cases are skipped with a note in the log):
+  - the **deck queue**, including where each finished job wrote and how it
+    ended, so *Open folder* and *View PRT* still reach its output;
+  - the **run options** — MPI ranks / OMP threads, output policy and
+    directory, TUNING, extra flow arguments, simulator override;
+  - the **Summary Plots** tab — the cases with their checked state and which
+    one is active, the category/type/item/wildcard filters, what each subplot
+    shows, and how it is drawn (subplot layout, legend placement including a
+    dragged one, line width, marker size and interval, date axis);
+  - the **3D view**'s case, property and vertical exaggeration, the **deck
+    editor**'s open files, and which tab was in front.
+- **Sessions** — closing the GUI stores that same state (plus the window
+  geometry), so starting it again simply continues where the last session
+  stopped, project file or not. Loading it is lazy where it costs: the 3D
+  grid is only read once that tab is looked at.
 - **Job queue table** of `*.DATA` input decks (add / remove / clear,
   multi-select, **drag & drop** onto the window) with per-job **status,
   progress bar, elapsed time and ETA** parsed live from flow's
@@ -169,8 +181,11 @@ results, animate them in 3D, and edit decks — all in one window.
 - **Live log** — merged stdout/stderr streams into the window while running.
 - **Stop job** — kills the entire process tree (Windows: `taskkill /T`;
   Linux/macOS: the child leads a process group that is signalled as a whole).
-- **Persistent settings** — simulator path, ranks/threads, output policy and
-  extra options are remembered between sessions (QSettings).
+- **Persistent settings** — the run options (simulator path, ranks/threads,
+  output policy, extra options), the queue with each job's outcome, the plot
+  and 3D setup, the deck editor's open files, the front tab and the window
+  geometry are all remembered between sessions (QSettings; the tab state is
+  stored as the same JSON the project file uses).
 
 ## Building
 

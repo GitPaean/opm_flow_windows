@@ -15,6 +15,8 @@
 #include <QFileSystemWatcher>
 #include <QFontDatabase>
 #include <QHBoxLayout>
+#include <QJsonArray>
+#include <QJsonObject>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMenu>
@@ -949,6 +951,49 @@ bool DeckEditorWidget::hasUnsavedChanges() const
         if (auto* ed = editorAt(i); ed && ed->document()->isModified())
             return true;
     return false;
+}
+
+// -- session state -----------------------------------------------------------
+QJsonObject DeckEditorWidget::uiState() const
+{
+    QJsonObject o;
+    if (!rootDeck_.isEmpty())
+        o[QStringLiteral("deck")] = QDir::fromNativeSeparators(rootDeck_);
+    QJsonArray files;
+    for (int i = 0; i < tabs_->count(); ++i) {
+        const QString p = tabs_->widget(i)->property("filePath").toString();
+        if (!p.isEmpty()) files.append(QDir::fromNativeSeparators(p));
+    }
+    o[QStringLiteral("files")]   = files;
+    o[QStringLiteral("current")] = tabs_->currentIndex();
+    // The line the front tab was left on, so a long deck comes back where it
+    // was being read rather than at the top.
+    if (auto* ed = editorAt(tabs_->currentIndex()))
+        o[QStringLiteral("line")] = ed->textCursor().blockNumber() + 1;
+    return o;
+}
+
+void DeckEditorWidget::restoreUiState(const QJsonObject& state)
+{
+    if (state.isEmpty()) return;
+    const QString deck =
+        QDir::toNativeSeparators(state.value(QStringLiteral("deck")).toString());
+    if (!deck.isEmpty() && QFileInfo::exists(deck)) openDeck(deck);
+
+    const QJsonArray files = state.value(QStringLiteral("files")).toArray();
+    for (const auto& v : files) {
+        const QString p = QDir::toNativeSeparators(v.toString());
+        if (!p.isEmpty() && QFileInfo::exists(p)) openFile(p);   // no-op if open
+    }
+    const int cur = state.value(QStringLiteral("current")).toInt(-1);
+    if (cur >= 0 && cur < tabs_->count()) tabs_->setCurrentIndex(cur);
+    const int line = state.value(QStringLiteral("line")).toInt(-1);
+    if (line > 0) {
+        if (auto* ed = editorAt(tabs_->currentIndex())) {
+            const QTextBlock b = ed->document()->findBlockByNumber(line - 1);
+            if (b.isValid()) { ed->setTextCursor(QTextCursor(b)); ed->centerCursor(); }
+        }
+    }
 }
 
 // -- deck structure ----------------------------------------------------------

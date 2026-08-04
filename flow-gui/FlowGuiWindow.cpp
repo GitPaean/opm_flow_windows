@@ -109,6 +109,24 @@ QString fmtDuration(qint64 ms)
         .arg(s / 3600).arg((s / 60) % 60, 2, 10, QLatin1Char('0'))
         .arg(s % 60, 2, 10, QLatin1Char('0'));
 }
+
+// The session state is the same JSON the project file carries, stored in the
+// settings as text: readable with a text editor, and one key per section
+// instead of a key per control.
+template <class T> QString settingFromJson(const T& j)
+{
+    return QString::fromUtf8(QJsonDocument(j).toJson(QJsonDocument::Compact));
+}
+
+QJsonObject jsonFromSetting(const QVariant& v)
+{
+    return QJsonDocument::fromJson(v.toString().toUtf8()).object();
+}
+
+QJsonArray jsonArrayFromSetting(const QVariant& v)
+{
+    return QJsonDocument::fromJson(v.toString().toUtf8()).array();
+}
 } // namespace
 
 QString FlowGuiWindow::resolveSimulator() const
@@ -418,12 +436,31 @@ void FlowGuiWindow::loadSettings()
     outdirEdit_->setEnabled(outdirMode_->currentIndex() == 1);
     extraEdit_->setText(s.value(QStringLiteral("extra")).toString());
     tuningChk_->setChecked(s.value(QStringLiteral("tuning"), false).toBool());
+    restoreGeometry(s.value(QStringLiteral("geometry")).toByteArray());
 
-    // Restore the job queue from the previous session (decks that still exist).
-    QStringList restored;
-    for (const QString& d : s.value(QStringLiteral("queue")).toStringList())
-        if (QFileInfo::exists(d)) restored << d;
-    if (!restored.isEmpty()) addDecks(restored);
+    // Restore the job queue from the previous session (decks that still
+    // exist), with what each job did if that was recorded.
+    const QJsonArray jobs = jsonArrayFromSetting(s.value(QStringLiteral("jobs")));
+    if (!jobs.isEmpty()) {
+        restoreJobs(jobs);
+    } else {
+        QStringList restored;
+        for (const QString& d : s.value(QStringLiteral("queue")).toStringList())
+            if (QFileInfo::exists(d)) restored << d;
+        if (!restored.isEmpty()) addDecks(restored);
+    }
+
+    // ... and the working setup itself: the plotted cases and what each
+    // subplot shows, the 3D view's case and property, the decks open in the
+    // editor, and which tab was in front. Picking up where the last session
+    // left off is the point of all of it.
+    restoreUiState(jsonFromSetting(s.value(QStringLiteral("ui"))));
+
+    // The project the session belonged to, so Save keeps writing to it and
+    // the title bar still names it.
+    const QString proj = s.value(QStringLiteral("projectPath")).toString();
+    if (!proj.isEmpty() && QFileInfo::exists(proj)) projectPath_ = proj;
+    updateWindowTitle();
 }
 
 void FlowGuiWindow::saveSettings()
@@ -436,10 +473,14 @@ void FlowGuiWindow::saveSettings()
     s.setValue(QStringLiteral("outdir"),  outdirEdit_->text());
     s.setValue(QStringLiteral("extra"),   extraEdit_->text());
     s.setValue(QStringLiteral("tuning"),  tuningChk_->isChecked());
+    s.setValue(QStringLiteral("geometry"), saveGeometry());
+    s.setValue(QStringLiteral("projectPath"), projectPath_);
 
-    QStringList queue;
+    QStringList queue;                       // kept for older versions
     for (const Job& j : jobs_) queue << j.deck;
     s.setValue(QStringLiteral("queue"), queue);
+    s.setValue(QStringLiteral("jobs"), settingFromJson(jobsState()));
+    s.setValue(QStringLiteral("ui"),   settingFromJson(collectUiState()));
 }
 
 void FlowGuiWindow::closeEvent(QCloseEvent* ev)
@@ -1128,15 +1169,108 @@ void FlowGuiWindow::saveProjectAs()
     }
 }
 
+// The queue as it stands: the decks, plus where each finished job wrote and
+// how it ended, so "Open folder" and "View PRT" still reach its output after
+// a restart. A job that was still running is stored as queued - it is not
+// running any more by the time this is read back.
+QJsonArray FlowGuiWindow::jobsState() const
+{
+    static const char* kState[] = { "queued", "queued", "done", "failed", "stopped" };
+    QJsonArray arr;
+    for (const Job& j : jobs_) {
+        QJsonObject o;
+        o[QStringLiteral("deck")]   = QDir::fromNativeSeparators(j.deck);
+        o[QStringLiteral("outdir")] = QDir::fromNativeSeparators(j.outdir);
+        o[QStringLiteral("state")]  = QLatin1String(kState[j.state]);
+        if (j.elapsedMs > 0) o[QStringLiteral("elapsedMs")] = double(j.elapsedMs);
+        if (j.state == Job::Failed) o[QStringLiteral("exitCode")] = j.exitCode;
+        arr.append(o);
+    }
+    return arr;
+}
+
+void FlowGuiWindow::restoreJobs(const QJsonArray& jobs)
+{
+    QStringList decks;
+    QVector<Job> meta;
+    for (const auto& v : jobs) {
+        const QJsonObject o = v.toObject();
+        const QString deck =
+            QDir::toNativeSeparators(o[QStringLiteral("deck")].toString());
+        if (deck.isEmpty() || !QFileInfo::exists(deck)) continue;
+        Job j;
+        j.deck      = deck;
+        j.outdir    = QDir::toNativeSeparators(o[QStringLiteral("outdir")].toString());
+        j.elapsedMs = qint64(o[QStringLiteral("elapsedMs")].toDouble(0));
+        j.exitCode  = o[QStringLiteral("exitCode")].toInt(0);
+        const QString st = o[QStringLiteral("state")].toString();
+        j.state = st == QLatin1String("done")    ? Job::Done
+                : st == QLatin1String("failed")  ? Job::Failed
+                : st == QLatin1String("stopped") ? Job::Stopped
+                                                 : Job::Queued;
+        decks << deck;
+        meta.append(j);
+    }
+    const int base = jobs_.size();
+    addDecks(decks);                       // builds the rows
+    for (int i = 0; i < meta.size() && base + i < jobs_.size(); ++i) {
+        Job& j = jobs_[base + i];
+        j.outdir    = meta[i].outdir;
+        j.state     = meta[i].state;
+        j.elapsedMs = meta[i].elapsedMs;
+        j.exitCode  = meta[i].exitCode;
+        refreshRow(base + i);
+    }
+}
+
+QJsonObject FlowGuiWindow::collectUiState() const
+{
+    QJsonObject ui;
+    ui[QStringLiteral("activeTab")] = tabs_ ? tabs_->currentIndex() : 0;
+#ifdef FLOWGUI_HAVE_SUMMARY
+    if (summary_) ui[QStringLiteral("summary")] = summary_->uiState();
+#endif
+#ifdef FLOWGUI_HAVE_3D
+    if (viewer3D_) ui[QStringLiteral("viewer3d")] = viewer3D_->uiState();
+#endif
+    if (deckEd_) ui[QStringLiteral("deckEditor")] = deckEd_->uiState();
+    return ui;
+}
+
+void FlowGuiWindow::restoreUiState(const QJsonObject& ui)
+{
+    if (ui.isEmpty()) return;
+#ifdef FLOWGUI_HAVE_SUMMARY
+    // The plot first: the 3D tab mirrors its case list, so the case a
+    // restored 3D view asks for only exists once this has run.
+    if (summary_)
+        summary_->restoreUiState(ui[QStringLiteral("summary")].toObject());
+#endif
+#ifdef FLOWGUI_HAVE_3D
+    if (viewer3D_)
+        viewer3D_->restoreUiState(ui[QStringLiteral("viewer3d")].toObject());
+#endif
+    if (deckEd_)
+        deckEd_->restoreUiState(ui[QStringLiteral("deckEditor")].toObject());
+    if (tabs_ && ui.contains(QStringLiteral("activeTab"))) {
+        const int t = ui[QStringLiteral("activeTab")].toInt(0);
+        if (t >= 0 && t < tabs_->count()) tabs_->setCurrentIndex(t);
+    }
+}
+
 bool FlowGuiWindow::writeProject(const QString& path)
 {
     QJsonObject root;
     root[QStringLiteral("format")]  = QStringLiteral("opm-flow-gui-project");
-    root[QStringLiteral("version")] = 1;
+    // 2 added the queue's per-job outcome and the "ui" section; a version 1
+    // file still opens, and version 1 readers still find "decks" and "cases".
+    root[QStringLiteral("version")] = 2;
 
     QJsonArray decks;
     for (const Job& j : jobs_) decks.append(QDir::fromNativeSeparators(j.deck));
     root[QStringLiteral("decks")] = decks;
+    root[QStringLiteral("jobs")]  = jobsState();
+    root[QStringLiteral("ui")]    = collectUiState();
 
     root[QStringLiteral("ranks")]      = ranksSpin_->value();
     root[QStringLiteral("threads")]    = threadsSpin_->value();
@@ -1199,10 +1333,19 @@ bool FlowGuiWindow::readProject(const QString& path)
     jobTable_->setRowCount(0);
     current_ = -1;
     int missingDecks = 0;
+    // Version 2 carries a per-job record (output directory and outcome);
+    // version 1 only the deck paths.
+    const QJsonArray jobArr = root[QStringLiteral("jobs")].toArray();
     QStringList deckFiles;
-    for (const auto& v : root[QStringLiteral("decks")].toArray()) {
-        const QString d = v.toString();
-        if (QFileInfo::exists(d)) deckFiles << d; else ++missingDecks;
+    if (!jobArr.isEmpty()) {
+        for (const auto& v : jobArr)
+            if (!QFileInfo::exists(v.toObject()[QStringLiteral("deck")].toString()))
+                ++missingDecks;
+    } else {
+        for (const auto& v : root[QStringLiteral("decks")].toArray()) {
+            const QString d = v.toString();
+            if (QFileInfo::exists(d)) deckFiles << d; else ++missingDecks;
+        }
     }
 
     // options
@@ -1215,26 +1358,42 @@ bool FlowGuiWindow::readProject(const QString& path)
     tuningChk_->setChecked(root[QStringLiteral("tuning")].toBool(false));
     simEdit_->setText(QDir::toNativeSeparators(root[QStringLiteral("simulator")].toString()));
 
-    // cases (before decks: addDecks may auto-register cases, dedup handles it)
+    // The queue first: adding a deck auto-registers a case when the deck has
+    // output beside it, which the restored case list below then overrides.
+    if (!jobArr.isEmpty()) restoreJobs(jobArr);
+    else                   addDecks(deckFiles);
+    const int deckCount = jobs_.size();
+
+    // Cases. A version 2 file carries them inside "ui" together with the rest
+    // of the plot setup; "cases" at the root is what version 1 wrote (and is
+    // still written, so an older flow-gui can read this file).
     int missingCases = 0;
+    const QJsonObject ui = root[QStringLiteral("ui")].toObject();
+    const QJsonArray rootCases = root[QStringLiteral("cases")].toArray();
+    for (const auto& v : rootCases)
+        if (!QFileInfo::exists(v.toObject()[QStringLiteral("path")].toString()))
+            ++missingCases;
+    if (!ui.isEmpty()) {
+        restoreUiState(ui);
+    } else {
 #ifdef FLOWGUI_HAVE_SUMMARY
-    if (summary_) {
-        summary_->clearCases();
-        for (const auto& v : root[QStringLiteral("cases")].toArray()) {
-            const QJsonObject o = v.toObject();
-            const QString p = o[QStringLiteral("path")].toString();
-            if (!QFileInfo::exists(p)) { ++missingCases; continue; }
-            summary_->addCase(o[QStringLiteral("label")].toString(), p,
-                              o[QStringLiteral("checked")].toBool(true));
+        if (summary_) {
+            summary_->clearCases();
+            for (const auto& v : rootCases) {
+                const QJsonObject o = v.toObject();
+                const QString p = o[QStringLiteral("path")].toString();
+                if (!QFileInfo::exists(p)) continue;
+                summary_->addCase(o[QStringLiteral("label")].toString(), p,
+                                  o[QStringLiteral("checked")].toBool(true));
+            }
         }
-    }
 #endif
-    addDecks(deckFiles);
+    }
 
     QString msg = QStringLiteral("\nproject loaded: %1 (%2 decks, %3 cases")
         .arg(QFileInfo(path).fileName())
-        .arg(deckFiles.size())
-        .arg(root[QStringLiteral("cases")].toArray().size() - missingCases);
+        .arg(deckCount)
+        .arg(rootCases.size() - missingCases);
     if (missingDecks) msg += QStringLiteral("; %1 missing deck(s) skipped").arg(missingDecks);
     if (missingCases) msg += QStringLiteral("; %1 missing case(s) skipped").arg(missingCases);
     appendLog(msg + QStringLiteral(")\n"));

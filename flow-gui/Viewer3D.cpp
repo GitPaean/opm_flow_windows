@@ -12,12 +12,15 @@
 
 #include <QCheckBox>
 #include <QComboBox>
+#include <QDir>
 #include <QDoubleSpinBox>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QHBoxLayout>
+#include <QJsonObject>
 #include <QLabel>
 #include <QMouseEvent>
+#include <QSignalBlocker>
 #include <QPainter>
 #include <QPushButton>
 #include <QRadioButton>
@@ -608,10 +611,59 @@ void Viewer3DWidget::caseFinished(const QString& smspecPath)
 void Viewer3DWidget::showEvent(QShowEvent* ev)
 {
     QWidget::showEvent(ev);
-    const int idx = caseBox_->currentIndex();
+    // A case picked while the tab was hidden (a restored session, or a job
+    // that finished on another tab) is opened now, when there is finally
+    // something to draw.
+    const int idx = pendingCase_ >= 0 ? pendingCase_ : caseBox_->currentIndex();
+    pendingCase_ = -1;
     if (!grid_ && idx >= 0 && idx < cases_.size() &&
         QFileInfo::exists(cases_[idx].egrid))
         openCase(idx);
+}
+
+// ---------------------------------------------------------------------------
+QJsonObject Viewer3DWidget::uiState() const
+{
+    QJsonObject o;
+    const int idx = caseBox_ ? caseBox_->currentIndex() : -1;
+    if (idx >= 0 && idx < cases_.size())
+        o[QStringLiteral("case")] = QDir::fromNativeSeparators(cases_[idx].egrid);
+    const bool dyn = dynSel_ && dynSel_->isChecked();
+    o[QStringLiteral("dynamic")]  = dyn;
+    if (auto* box = dyn ? dynBox_ : staticBox_)
+        o[QStringLiteral("property")] = box->currentText();
+    if (wellsChk_)   o[QStringLiteral("wells")]  = wellsChk_->isChecked();
+    if (zscale_)     o[QStringLiteral("zscale")] = zscale_->value();
+    if (stepSlider_ && stepSlider_->isEnabled())
+        o[QStringLiteral("step")] = stepSlider_->value();
+    return o;
+}
+
+void Viewer3DWidget::restoreUiState(const QJsonObject& state)
+{
+    if (state.isEmpty()) return;
+    if (wellsChk_ && state.contains(QStringLiteral("wells")))
+        wellsChk_->setChecked(state.value(QStringLiteral("wells")).toBool(true));
+    if (zscale_ && state.contains(QStringLiteral("zscale")))
+        zscale_->setValue(state.value(QStringLiteral("zscale")).toDouble(3.0));
+
+    // The case list is mirrored from the Summary Plots tab, so by now it holds
+    // the restored cases; select ours without opening it (see showEvent).
+    const QString egrid =
+        QDir::toNativeSeparators(state.value(QStringLiteral("case")).toString());
+    if (!egrid.isEmpty() && caseBox_) {
+        for (int i = 0; i < cases_.size(); ++i) {
+            if (cases_[i].egrid != egrid) continue;
+            const QSignalBlocker block(caseBox_);
+            caseBox_->setCurrentIndex(i);
+            pendingCase_ = i;
+            break;
+        }
+    }
+    pendingDynamic_ = state.value(QStringLiteral("dynamic")).toBool(false);
+    pendingProp_    = state.value(QStringLiteral("property")).toString();
+    pendingStep_    = state.value(QStringLiteral("step")).toInt(-1);
+    havePending_    = !pendingProp_.isEmpty() || pendingStep_ >= 0;
 }
 
 void Viewer3DWidget::openCase(int idx)
@@ -624,6 +676,10 @@ void Viewer3DWidget::openCase(int idx)
     gl_->setWells({});
     gl_->setStepText(QString());
     if (idx < 0 || idx >= cases_.size()) return;
+    // Reading the grid and building the mesh is the expensive part of this
+    // tab; with the tab hidden there is nothing to show for it, so hold the
+    // case until showEvent asks for it.
+    if (!isVisible()) { pendingCase_ = idx; return; }
     const CaseFiles& cf = cases_[idx];
 
     if (!QFileInfo::exists(cf.egrid)) {
@@ -653,6 +709,20 @@ void Viewer3DWidget::openCase(int idx)
         stepSlider_->setEnabled(true);
         stepSlider_->setRange(0, int(steps_.size()) - 1);
         stepSlider_->setValue(int(steps_.size()) - 1);
+    }
+    // A restored session chose its property before this grid was open; the
+    // boxes only exist now, so apply the choice here - before showProperty()
+    // below draws whatever the defaults left selected.
+    if (havePending_) {
+        havePending_ = false;
+        if (QRadioButton* r = pendingDynamic_ ? dynSel_ : staticSel_) r->setChecked(true);
+        if (QComboBox* b = pendingDynamic_ ? dynBox_ : staticBox_) {
+            const int i = b->findText(pendingProp_);
+            if (i >= 0) b->setCurrentIndex(i);
+        }
+        if (pendingStep_ >= 0 && stepSlider_->isEnabled()
+            && pendingStep_ <= stepSlider_->maximum())
+            stepSlider_->setValue(pendingStep_);
     }
     const auto d = grid_->dimension();
     setStatus(QStringLiteral("%1: %2x%3x%4, %5 active cells, %6 static, %7 dynamic, %8 report steps")

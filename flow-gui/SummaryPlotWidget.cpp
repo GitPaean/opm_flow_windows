@@ -26,6 +26,8 @@
 #include <QHBoxLayout>
 #include <QHash>
 #include <QImage>
+#include <QJsonArray>
+#include <QJsonObject>
 #include <QTextStream>
 #include <QLabel>
 #include <QLineEdit>
@@ -117,6 +119,23 @@ QPen legendPen(const QPen& curve, qreal width)
     default:              break;                 // solid: nothing to rescale
     }
     return p;
+}
+
+// "WECON-02 [tuning_fix]" -> "WECON-02", but only when the bracketed part is
+// really a tag this widget added: a directory on the case's own path. A name
+// the user typed that happens to end in brackets is left alone.
+QString untaggedLabel(const QString& shown, const QString& smspecPath)
+{
+    if (!shown.endsWith(QLatin1Char(']'))) return shown;
+    const int open = shown.lastIndexOf(QStringLiteral(" ["));
+    if (open <= 0) return shown;
+    const QString tag = shown.mid(open + 2, shown.size() - open - 3);
+    const QStringList dirs = QFileInfo(smspecPath).absolutePath()
+                                 .split(QLatin1Char('/'), Qt::SkipEmptyParts);
+    for (const QString& part : dirs)
+        if (tag == part || tag.endsWith(QLatin1Char('/') + part))
+            return shown.left(open);
+    return shown;
 }
 
 // The scatter shape a case is marked with, drawn as an image for its legend
@@ -979,6 +998,155 @@ QList<SummaryPlotWidget::CaseInfo> SummaryPlotWidget::caseInfos() const
                         it->checkState() == Qt::Checked });
     }
     return out;
+}
+
+// ---------------------------------------------------------------------------
+// Session state. Paths go out with forward slashes so a project file written
+// on one platform still opens on the other.
+QJsonObject SummaryPlotWidget::uiState() const
+{
+    QJsonObject o;
+
+    QJsonArray cases;
+    for (int i = 0; i < caseList_->count(); ++i) {
+        const auto* it = caseList_->item(i);
+        QJsonObject e;
+        e[QStringLiteral("label")]   = it->text();     // as shown, tag and all
+        // ... and the name behind it, so restoring re-derives the tags from
+        // the list that is actually there rather than freezing today's.
+        e[QStringLiteral("base")]    = it->data(RoleCaseBase).toString();
+        if (it->data(RoleCaseCustom).toBool()) e[QStringLiteral("custom")] = true;
+        e[QStringLiteral("path")]    =
+            QDir::fromNativeSeparators(it->data(Qt::UserRole).toString());
+        e[QStringLiteral("checked")] = it->checkState() == Qt::Checked;
+        cases.append(e);
+    }
+    o[QStringLiteral("cases")]  = cases;
+    o[QStringLiteral("active")] = QDir::fromNativeSeparators(activePath());
+
+    // What each subplot shows, subplot by subplot (not only the focused one).
+    QJsonArray sel;
+    for (const QStringList& keys : chartSel_) {
+        QJsonArray a;
+        for (const QString& k : keys) a.append(k);
+        sel.append(a);
+    }
+    o[QStringLiteral("selections")] = sel;
+    o[QStringLiteral("layout")] = layoutBox_ ? layoutBox_->currentData().toInt() : 1;
+    o[QStringLiteral("focus")]  = focusChart_;
+
+    // A dragged legend, as the fraction of the chart rect it was left at.
+    QJsonArray lpos;
+    for (const QPointF& p : legendPos_) {
+        QJsonArray xy;                       // empty = never dragged
+        if (!p.isNull()) { xy.append(p.x()); xy.append(p.y()); }
+        lpos.append(xy);
+    }
+    o[QStringLiteral("legendPos")] = lpos;
+    o[QStringLiteral("legend")]    = legendBox_ ? legendBox_->currentIndex() : 0;
+
+    o[QStringLiteral("dateAxis")]    = dateAxis_ && dateAxis_->isChecked();
+    o[QStringLiteral("markers")]     = markers_  && markers_->isChecked();
+    o[QStringLiteral("autoRefresh")] = autoRef_  && autoRef_->isChecked();
+    if (lineWidthSpin_)   o[QStringLiteral("lineWidth")]   = lineWidthSpin_->value();
+    if (markerSizeSpin_)  o[QStringLiteral("markerSize")]  = markerSizeSpin_->value();
+    if (markerEverySpin_) o[QStringLiteral("markerEvery")] = markerEverySpin_->value();
+
+    // Filters by TEXT: the boxes list only what the loaded case actually has,
+    // so an index would mean something else next time.
+    if (catBox_)     o[QStringLiteral("category")] = catBox_->currentText();
+    if (typeBox_)    o[QStringLiteral("type")]     = typeBox_->currentText();
+    if (itemBox_)    o[QStringLiteral("item")]     = itemBox_->currentText();
+    if (subItemBox_) o[QStringLiteral("subItem")]  = subItemBox_->currentText();
+    if (filter_)     o[QStringLiteral("filter")]   = filter_->text();
+    return o;
+}
+
+void SummaryPlotWidget::restoreUiState(const QJsonObject& state)
+{
+    if (state.isEmpty()) return;
+    auto has = [&state](const char* k) { return state.contains(QLatin1String(k)); };
+    auto val = [&state](const char* k) { return state.value(QLatin1String(k)); };
+
+    // Drawing options first: they are cheap, and everything restored below is
+    // then plotted with them already in force instead of being replotted.
+    if (dateAxis_ && has("dateAxis")) dateAxis_->setChecked(val("dateAxis").toBool(true));
+    if (markers_  && has("markers"))  markers_->setChecked(val("markers").toBool(false));
+    if (lineWidthSpin_   && has("lineWidth"))   lineWidthSpin_->setValue(val("lineWidth").toDouble(2.0));
+    if (markerSizeSpin_  && has("markerSize"))  markerSizeSpin_->setValue(val("markerSize").toDouble(7.5));
+    if (markerEverySpin_ && has("markerEvery")) markerEverySpin_->setValue(val("markerEvery").toInt(1));
+    if (legendBox_ && has("legend")) {
+        const int i = val("legend").toInt(0);
+        if (i >= 0 && i < legendBox_->count()) legendBox_->setCurrentIndex(i);
+    }
+
+    // Cases: skip the ones whose files are gone, and make the same one active
+    // (that is the case whose vectors fill the tree).
+    if (has("cases")) {
+        clearCases();
+        const QJsonArray cases = val("cases").toArray();
+        for (const auto& v : cases) {
+            const QJsonObject e = v.toObject();
+            const QString p =
+                QDir::toNativeSeparators(e.value(QStringLiteral("path")).toString());
+            if (p.isEmpty() || !QFileInfo::exists(p)) continue;
+            const QString label = e.value(QStringLiteral("label")).toString();
+            const bool custom = e.value(QStringLiteral("custom")).toBool(false);
+            // Older states stored only the shown name; the tag in it is ours
+            // to re-derive, so take it off again (only when it really is one
+            // - a directory on the case's own path).
+            QString base = e.value(QStringLiteral("base")).toString();
+            if (base.isEmpty()) base = untaggedLabel(label, p);
+            addCase(base, p, e.value(QStringLiteral("checked")).toBool(true));
+            if (custom) setCaseLabel(p, label);
+        }
+        const QString active = QDir::toNativeSeparators(val("active").toString());
+        if (!active.isEmpty()) activateCase(active);
+    }
+
+    // Filters after the case: the boxes are (re)filled from its vectors, and
+    // the cascade repopulates each level as the one above it is set.
+    auto pick = [](QComboBox* box, const QString& text) {
+        if (!box || text.isEmpty()) return;
+        const int i = box->findText(text);
+        if (i >= 0) box->setCurrentIndex(i);
+    };
+    pick(catBox_,  val("category").toString());
+    pick(typeBox_, val("type").toString());
+    pick(itemBox_, val("item").toString());
+    pick(subItemBox_, val("subItem").toString());
+    if (filter_ && has("filter")) filter_->setText(val("filter").toString());
+
+    // Layout BEFORE the per-subplot selections: shrinking the layout shuffles
+    // them (it keeps the focused subplot), which would scramble what is being
+    // restored here.
+    if (layoutBox_ && has("layout")) {
+        const int i = layoutBox_->findData(val("layout").toInt(1));
+        if (i >= 0) layoutBox_->setCurrentIndex(i);
+    }
+    if (has("selections")) {
+        const QJsonArray sel = val("selections").toArray();
+        for (int i = 0; i < sel.size() && i < chartSel_.size(); ++i) {
+            QStringList keys;
+            const QJsonArray a = sel[i].toArray();
+            for (const auto& k : a) keys << k.toString();
+            chartSel_[i] = keys;
+        }
+    }
+    if (has("legendPos")) {
+        const QJsonArray lpos = val("legendPos").toArray();
+        for (int i = 0; i < lpos.size() && i < legendPos_.size(); ++i) {
+            const QJsonArray xy = lpos[i].toArray();
+            legendPos_[i] = xy.size() == 2 ? QPointF(xy[0].toDouble(), xy[1].toDouble())
+                                           : QPointF();
+        }
+    }
+    setFocusChart(std::clamp(val("focus").toInt(0), 0, visibleCharts_ - 1));
+    replot();
+
+    // Last: a running refresh timer would otherwise reload while the state is
+    // still being put back.
+    if (autoRef_ && has("autoRefresh")) autoRef_->setChecked(val("autoRefresh").toBool(false));
 }
 
 void SummaryPlotWidget::clearCases()
