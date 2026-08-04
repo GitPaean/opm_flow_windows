@@ -53,6 +53,10 @@ public:
     // Make the given registered case the active one (no-op if unknown).
     void activateCase(const QString& smspecPath);
 
+    // Give a case the name the user chose for it (restored from a project or
+    // a session): it replaces the automatic label and is never tagged.
+    void setCaseLabel(const QString& smspecPath, const QString& label);
+
     // The job writing this case just finished: reload if it is the active
     // case (it was registered at job start, possibly before the SMSPEC
     // existed), else refresh the comparison curves it may contribute to.
@@ -150,9 +154,11 @@ private:
     QString activePath() const;
     QString activeLabel() const;
     void caseItemChanged(QListWidgetItem* it);   // check toggle or rename
-    // Short tag distinguishing same-named cases (the run directory, or the
-    // deck's folder when the run directory is the default "<deck>_run").
-    static QString caseQualifier(const QString& smspecPath, const QString& label);
+    // Name every case by what tells it apart: its own name while that is
+    // unique in the list, otherwise the name plus the part of its path that
+    // separates it from the cases sharing that name. Run over the whole list
+    // after every add, remove or rename.
+    void relabelCases();
     void removeCurrentCase();
     void clearActiveCase();
     void browseCase();

@@ -125,11 +125,16 @@ results, animate them in 3D, and edit decks — all in one window.
   the list. Cases can be **renamed** (*Rename*, double-click or F2) — the
   new name is what the legend shows, so a comparison can read
   `Base case | FOPR` instead of a run directory name; names are kept unique
-  and travel with the project file. A single case keeps its plain name;
-  only when two runs of the same deck are loaded are **both** tagged with
-  what separates them — the output directory, or the deck's folder when
-  that directory is just the default `<deck>_run` (full path in the
-  tooltip). The *markers* toggle marks **every data point** in the summary
+  and travel with the project file. A case keeps its plain name while that
+  name is unique in the list; as soon as another run of the same deck is
+  loaded, **every** one of them is tagged with the part of its path that
+  tells them apart — the run directory, or as much of the path above it as
+  it takes when those directories are named alike (they usually are: the
+  default is `<deck>_run` for all of them). Full path in the tooltip. The
+  tags are worked out over the whole list on every add, remove and rename,
+  so removing a case lets the survivor go back to reading plainly, and a
+  name you typed yourself is never tagged.
+  The *markers* toggle marks **every data point** in the summary
   — no sampling by default, so the markers are exactly the samples the run
   wrote — and **hovering a marker** shows its case, date and value with
   unit. With markers on, the **legend shows them too**: each entry's sample

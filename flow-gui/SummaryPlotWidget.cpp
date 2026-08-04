@@ -71,6 +71,8 @@ namespace {
 
 const int RoleVecIndex = Qt::UserRole + 1;   // leaf item -> index into vecs_
 const int RoleCaseLabel = Qt::UserRole + 2;  // case item -> its current name
+const int RoleCaseBase  = Qt::UserRole + 3;  // ... -> its name before tagging
+const int RoleCaseCustom = Qt::UserRole + 4; // ... -> the user typed the name
 
 // legend placement (values stored in legendBox_)
 enum LegendPos { LegendBottom, LegendTop, LegendLeft, LegendRight,
@@ -793,69 +795,142 @@ QString SummaryPlotWidget::activeLabel() const
     return it ? it->text() : QString();
 }
 
-QString SummaryPlotWidget::caseQualifier(const QString& smspecPath,
-                                         const QString& label)
-{
-    // What actually tells two runs of the same deck apart is the output
-    // directory - except when it is the default "<deck>_run", which only
-    // repeats the case name; there the deck's own folder is the useful tag.
-    const QDir d = QFileInfo(smspecPath).absoluteDir();
-    const QString dir = d.dirName();
-    if (dir.compare(label + QStringLiteral("_run"), Qt::CaseInsensitive) == 0) {
-        QDir up = d;
-        if (up.cdUp() && !up.dirName().isEmpty()) return up.dirName();
-    }
-    return dir;
-}
-
 void SummaryPlotWidget::addCase(const QString& label, const QString& smspecPath,
                                 bool checked)
 {
     for (int i = 0; i < caseList_->count(); ++i)
         if (caseList_->item(i)->data(Qt::UserRole).toString() == smspecPath) return;
 
-    // Same-named cases from different runs need telling apart. Qualify BOTH
-    // of them - tagging only the newcomer leaves the older one bare, which
-    // says nothing about which run it is. A counter is the last resort.
-    QString shown = label;
-    auto labelTaken = [this](const QString& l) {
-        for (int i = 0; i < caseList_->count(); ++i)
-            if (caseList_->item(i)->text() == l) return true;
-        return false;
-    };
-    if (labelTaken(shown)) {
-        const QString q = caseQualifier(smspecPath, label);
-        if (!q.isEmpty()) shown = label + QStringLiteral(" [") + q + QLatin1Char(']');
-        // Re-tag the case still carrying the plain name. Only that one: a
-        // case the user has renamed reads differently and never collides.
-        for (int i = 0; i < caseList_->count(); ++i) {
-            auto* other = caseList_->item(i);
-            if (other->text() != label) continue;
-            const QString op = other->data(Qt::UserRole).toString();
-            const QString oq = caseQualifier(op, label);
-            if (oq.isEmpty() || oq == q) continue;      // nothing to gain
-            const QString text = label + QStringLiteral(" [") + oq + QLatin1Char(']');
-            caseList_->blockSignals(true);
-            other->setText(text);
-            caseList_->blockSignals(false);
-            other->setData(RoleCaseLabel, text);
-            emit caseRenamed(op, text);
-        }
-    }
-    for (int n = 2; labelTaken(shown); ++n)
-        shown = label + QStringLiteral(" (%1)").arg(n);
-
-    auto* it = new QListWidgetItem(shown);
+    auto* it = new QListWidgetItem(label);
     it->setData(Qt::UserRole, smspecPath);
-    it->setData(RoleCaseLabel, shown);   // to tell a rename from a check toggle
+    it->setData(RoleCaseBase, label);    // the case's own name, before tagging
+    it->setData(RoleCaseLabel, label);   // to tell a rename from a check toggle
     it->setToolTip(smspecPath);
     it->setFlags(it->flags() | Qt::ItemIsUserCheckable | Qt::ItemIsEditable);
     it->setCheckState(checked ? Qt::Checked : Qt::Unchecked);
     caseList_->blockSignals(true);       // no premature replot from itemChanged
     caseList_->addItem(it);
     caseList_->blockSignals(false);
+    relabelCases();                      // tag this one and its twins, if any
     if (caseList_->count() == 1) caseList_->setCurrentItem(it);
-    emit caseAdded(shown, smspecPath);
+    emit caseAdded(it->text(), smspecPath);
+}
+
+void SummaryPlotWidget::setCaseLabel(const QString& smspecPath, const QString& label)
+{
+    if (label.isEmpty()) return;
+    for (int i = 0; i < caseList_->count(); ++i) {
+        auto* it = caseList_->item(i);
+        if (it->data(Qt::UserRole).toString() != smspecPath) continue;
+        it->setData(RoleCaseBase, label);
+        it->setData(RoleCaseCustom, true);
+        relabelCases();                  // may free a tag on the cases it left
+        return;
+    }
+}
+
+// Name every case by what actually tells it apart: its own name while that is
+// unique, otherwise the name plus the part of its path that separates it from
+// the cases sharing that name.
+//
+// This runs over the WHOLE list after every add, remove or rename rather than
+// tagging each newcomer as it arrives: a case that shows up once its twin has
+// already been tagged collides with nothing, and incremental tagging left it
+// bare - the one case in the list saying nothing about which run it is.
+void SummaryPlotWidget::relabelCases()
+{
+    const int n = caseList_->count();
+    if (n == 0) return;
+
+    // The directory components of each case, deepest last.
+    auto dirParts = [this](int row) {
+        const QString path = caseList_->item(row)->data(Qt::UserRole).toString();
+        QStringList parts = QFileInfo(path).absolutePath()
+                                .split(QLatin1Char('/'), Qt::SkipEmptyParts);
+        return parts;
+    };
+
+    QVector<QString> text(n);
+    QHash<QString, QList<int>> byName;
+    for (int i = 0; i < n; ++i) {
+        auto* it = caseList_->item(i);
+        const QString base = it->data(RoleCaseBase).toString();
+        text[i] = base;                       // plain name unless ambiguous
+        // A name the user typed is theirs: it is never tagged, and it does
+        // not drag another case into a tag either.
+        if (!it->data(RoleCaseCustom).toBool()) byName[base].append(i);
+    }
+
+    for (auto g = byName.cbegin(); g != byName.cend(); ++g) {
+        const QList<int>& rows = g.value();
+        if (rows.size() < 2) continue;        // nothing to tell apart
+
+        QVector<QStringList> parts;
+        for (int r : rows) parts.append(dirParts(r));
+
+        // Trailing components shared by every one of them carry no
+        // information - the default output directory is "<deck>_run" for all
+        // of them, and saying so three times says nothing. Drop those first,
+        // keeping at least one component each.
+        int common = 0;
+        for (;;) {
+            bool same = true;
+            for (const QStringList& p : parts) {
+                if (p.size() - common < 2) { same = false; break; }
+                if (p[p.size() - 1 - common] != parts[0][parts[0].size() - 1 - common])
+                    { same = false; break; }
+            }
+            if (!same) break;
+            ++common;
+        }
+
+        // Then the shallowest tail that is different for every case; every
+        // member gets the same depth, so the tags read as alternatives.
+        auto tailOf = [&](const QStringList& p, int depth) {
+            const int end = p.size() - common;
+            return QStringList(p.mid(std::max(0, end - depth), std::min(depth, end)))
+                       .join(QLatin1Char('/'));
+        };
+        int depth = 1;
+        const int maxDepth = 4;
+        for (; depth < maxDepth; ++depth) {
+            QSet<QString> seen;
+            bool unique = true;
+            for (const QStringList& p : parts) {
+                const QString t = tailOf(p, depth);
+                if (t.isEmpty() || seen.contains(t)) { unique = false; break; }
+                seen.insert(t);
+            }
+            if (unique) break;
+        }
+        for (int k = 0; k < rows.size(); ++k) {
+            const QString tag = tailOf(parts[k], depth);
+            if (!tag.isEmpty())
+                text[rows[k]] = g.key() + QStringLiteral(" [") + tag + QLatin1Char(']');
+        }
+    }
+
+    // Last resort - two cases that still read the same (paths too alike, or a
+    // typed name that happens to clash) get a counter, so the legend can
+    // never show one name for two curves.
+    QSet<QString> used;
+    for (int i = 0; i < n; ++i) {
+        QString t = text[i];
+        for (int k = 2; used.contains(t); ++k)
+            t = text[i] + QStringLiteral(" (%1)").arg(k);
+        used.insert(t);
+        text[i] = t;
+    }
+
+    for (int i = 0; i < n; ++i) {
+        auto* it = caseList_->item(i);
+        if (it->text() == text[i]) continue;
+        caseList_->blockSignals(true);        // not a rename by the user
+        it->setText(text[i]);
+        caseList_->blockSignals(false);
+        it->setData(RoleCaseLabel, text[i]);
+        emit caseRenamed(it->data(Qt::UserRole).toString(), text[i]);
+    }
 }
 
 void SummaryPlotWidget::caseItemChanged(QListWidgetItem* it)
@@ -885,7 +960,12 @@ void SummaryPlotWidget::caseItemChanged(QListWidgetItem* it)
         caseList_->blockSignals(false);
     }
     it->setData(RoleCaseLabel, unique);
+    // The name is the user's from here on: it is never tagged, and the cases
+    // it used to be confused with may no longer need their own tag.
+    it->setData(RoleCaseBase, unique);
+    it->setData(RoleCaseCustom, true);
     emit caseRenamed(it->data(Qt::UserRole).toString(), unique);
+    relabelCases();
     setStatus(QStringLiteral("case renamed to \"%1\"").arg(unique));
     replot();                                     // legend picks up the new name
 }
@@ -940,8 +1020,9 @@ void SummaryPlotWidget::removeCurrentCase()
         others_.erase(it->data(Qt::UserRole).toString());
         delete it;
     }
-    if (caseList_->count() == 0) clearActiveCase();
-    else replot();     // plotted set may have changed even if active did not
+    if (caseList_->count() == 0) { clearActiveCase(); return; }
+    relabelCases();    // a case left alone with its name drops the tag again
+    replot();          // plotted set may have changed even if active did not
 }
 
 void SummaryPlotWidget::clearActiveCase()
