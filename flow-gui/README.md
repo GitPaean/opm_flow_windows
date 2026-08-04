@@ -129,15 +129,18 @@ results, animate them in 3D, and edit decks — all in one window.
   only when two runs of the same deck are loaded are **both** tagged with
   what separates them — the output directory, or the deck's folder when
   that directory is just the default `<deck>_run` (full path in the
-  tooltip). The *markers* toggle marks the
-  data points on each curve at their **exact report times** (never shifted
-  or staggered for legibility); **Line** and **Marker** spin boxes set the
-  curve width and marker size. A denser series is thinned to at most ~26
-  markers per curve so they read as points instead of an opaque chain; a
-  different **shape** per case, and **hollow** for every case after the
-  first, keep curves separable even where two runs share a time grid and
-  their markers coincide exactly (an underlying filled marker still shows
-  through the ring). Finished runs can be opened by dropping
+  tooltip). The *markers* toggle marks
+  actual samples on each curve — always a real `(time, value)` pair, never
+  a point shifted for legibility — and **hovering a marker** shows its
+  case, date and value with unit. **Line** and **Marker** spin boxes set
+  the curve width and marker size. A dense series is thinned to at most ~26
+  markers per curve so they read as points rather than an opaque chain;
+  which samples get marked is chosen **by time**, so cases mark comparable
+  instants even when their runs have different numbers of report steps
+  (choosing every n-th *point* instead made two runs drift apart and
+  interleave). A different **shape** per case and a **hollow** fill on
+  every case after the first keep curves separable where markers do
+  coincide. Finished runs can be opened by dropping
   an `.SMSPEC` on the window (or *Open SMSPEC...*), and adding a deck whose
   `<deck>_run` output already exists registers its case automatically.
 - **Completion notification** — a system-tray toast when the queue finishes
