@@ -82,6 +82,9 @@ signals:
     void caseAdded(const QString& label, const QString& smspecPath);
     // A case was renamed, so mirrors of the list (the 3D tab) can follow.
     void caseRenamed(const QString& smspecPath, const QString& label);
+    // A case was dropped from the list; mirrors drop it too rather than keep
+    // growing with cases this tab no longer knows about.
+    void caseRemoved(const QString& smspecPath);
 
 protected:
     // The active case's files may have appeared while the tab was hidden.

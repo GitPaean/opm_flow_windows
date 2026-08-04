@@ -127,6 +127,10 @@ public:
     // Follow a rename made in the Summary Plots tab (same case identity).
     void renameCase(const QString& smspecPath, const QString& label);
 
+    // Drop a case from the list - the Summary Plots tab dropped the same one,
+    // or the Remove button here. The files on disk are left alone.
+    void removeCase(const QString& smspecPath);
+
     // Session state: which case is shown, with which property, and how. The
     // case itself is only opened once the tab is looked at, so a restored
     // choice waits in pending* below until then.
@@ -161,6 +165,9 @@ private:
     std::unique_ptr<Opm::EclIO::EInit> init_;
     std::unique_ptr<Opm::EclIO::ERst>  rst_;
     std::vector<int>   steps_;          // restart report step numbers
+    // Bytes the restart reader has been asked for since it last dropped its
+    // cache; see kRstCacheBudget in the .cpp.
+    qint64             rstBytes_ = 0;
     std::vector<int>   cellGlob_;       // active index -> global index
     double cx_ = 0, cy_ = 0, cz_ = 0;   // mesh center offset (double precision)
 
@@ -175,6 +182,8 @@ private:
     bool    havePending_ = false;
 
     void openCase(int idx);
+    void removeCaseAt(int idx);
+    void clearView();
     void buildMesh();
     void populateProperties();
     void showProperty();

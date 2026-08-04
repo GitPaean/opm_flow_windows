@@ -79,7 +79,10 @@ results, animate them in 3D, and edit decks — all in one window.
   rendered with a self-contained OpenGL widget (no external engine) —
   colored by any selectable static (INIT) or dynamic (UNRST) cell property,
   well trajectories from the restart well/connection arrays, report-step
-  animation with play button and date display, vertical exaggeration,
+  animation with play button and date display — **drag the step bar, or click
+  anywhere on it, to jump straight to that report step** (the date is shown
+  next to it and on the view; scrubbing switches to the dynamic property, so
+  the bar always shows what it says it does) — vertical exaggeration,
   orbit/pan/zoom camera, and a color legend. The default view frames the
   model with its long horizontal axis across the screen (from a principal-
   axis analysis of the grid), seen from the side and slightly above. The
@@ -87,7 +90,11 @@ results, animate them in 3D, and edit decks — all in one window.
   the model and look at the base of the reservoir — and a *View* menu jumps
   to the Home / Top / Bottom / Side viewpoints, keeping the current zoom and
   pan (*Reset view* re-frames everything). Cases mirror the Summary Plots tab
-  (or open any `.EGRID` directly).
+  (or open any `.EGRID` directly), and *Remove* drops the selected one so the
+  list does not just grow with every job of a long session — the run's files
+  are left alone, and the view moves to the neighbouring case (or goes blank
+  once the last one is gone). Removing a case in the Summary Plots tab drops
+  it here too, the same way adding and renaming already carry over.
 - **Deck Editor tab** — edit the deck and its INCLUDE files directly: a
   section tree (RUNSPEC ... SCHEDULE) lists every keyword with file and
   line, INCLUDEs expanded recursively; clicking opens the real file in a

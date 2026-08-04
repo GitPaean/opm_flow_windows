@@ -6,6 +6,8 @@
 */
 #include "Viewer3D.h"
 
+#include "CasePath.h"
+
 #include <opm/io/eclipse/EGrid.hpp>
 #include <opm/io/eclipse/EInit.hpp>
 #include <opm/io/eclipse/ERst.hpp>
@@ -22,6 +24,7 @@
 #include <QMouseEvent>
 #include <QSignalBlocker>
 #include <QPainter>
+#include <QProxyStyle>
 #include <QPushButton>
 #include <QRadioButton>
 #include <QSlider>
@@ -40,6 +43,23 @@
 // GridGLWidget
 // ===========================================================================
 namespace {
+
+// Qt's default is that a click on a slider's groove pages *towards* the click
+// (by pageStep) instead of going there. For a report-step bar that is useless -
+// clicking a moment in the run should show that moment. This style hint is the
+// supported way to ask for it, and it also lets a press anywhere on the groove
+// grab the handle so the drag continues from there.
+class AbsoluteSeekStyle : public QProxyStyle
+{
+public:
+    using QProxyStyle::QProxyStyle;
+    int styleHint(StyleHint hint, const QStyleOption* opt, const QWidget* w,
+                  QStyleHintReturn* ret) const override
+    {
+        if (hint == SH_Slider_AbsoluteSetButtons) return Qt::LeftButton;
+        return QProxyStyle::styleHint(hint, opt, w, ret);
+    }
+};
 
 const char* kVert = R"(#version 130
 in vec3 aPos;
@@ -121,6 +141,9 @@ void GridGLWidget::setMesh(std::vector<float> pos, std::vector<float> nrm, int c
         bboxMin_.setZ(std::min(bboxMin_.z(), pos_[i+2]));
         bboxMax_.setZ(std::max(bboxMax_.z(), pos_[i+2]));
     }
+    // An empty mesh (the last case was removed) leaves the sentinels above
+    // untouched; collapse them so resetCamera() below sees a sane box.
+    if (pos_.empty()) bboxMin_ = bboxMax_ = QVector3D();
     meshDirty_ = colorDirty_ = true;
 
     // Default orientation: put the model's long horizontal axis across the
@@ -446,6 +469,10 @@ Viewer3DWidget::Viewer3DWidget(QWidget* parent)
         row->addWidget(caseBox_, 1);
         auto* bopen = new QPushButton(QStringLiteral("Open EGRID..."));
         row->addWidget(bopen);
+        auto* bremove = new QPushButton(QStringLiteral("Remove"));
+        bremove->setToolTip(QStringLiteral(
+            "drop the selected case from the list - the run's files are left alone"));
+        row->addWidget(bremove);
         row->addSpacing(12);
 
         staticSel_ = new QRadioButton(QStringLiteral("static:"));
@@ -502,6 +529,8 @@ Viewer3DWidget::Viewer3DWidget(QWidget* parent)
             addCase(QFileInfo(f).completeBaseName(), base + QStringLiteral(".SMSPEC"));
             caseBox_->setCurrentIndex(caseBox_->count() - 1);
         });
+        connect(bremove, &QPushButton::clicked, this,
+                [this] { removeCaseAt(caseBox_->currentIndex()); });
         connect(caseBox_, &QComboBox::currentIndexChanged, this,
                 [this](int i) { openCase(i); });
         auto onProp = [this] { showProperty(); };
@@ -522,6 +551,15 @@ Viewer3DWidget::Viewer3DWidget(QWidget* parent)
         playBtn_->setCheckable(true);
         stepSlider_ = new QSlider(Qt::Horizontal);
         stepSlider_->setEnabled(false);
+        // click the bar to jump to that report step (see AbsoluteSeekStyle);
+        // the style is parented to the slider, which owns it from here on.
+        {
+            auto* seek = new AbsoluteSeekStyle;
+            seek->setParent(stepSlider_);
+            stepSlider_->setStyle(seek);
+        }
+        stepSlider_->setToolTip(QStringLiteral(
+            "drag, or click anywhere on the bar, to show that report step"));
         stepLabel_ = new QLabel(QStringLiteral("-"));
         stepLabel_->setMinimumWidth(160);
         row->addWidget(rewindBtn);
@@ -554,6 +592,19 @@ Viewer3DWidget::Viewer3DWidget(QWidget* parent)
             playBtn_->setChecked(false);          // stops the timer, text -> Play
             stepSlider_->setValue(0);
         });
+        // Moving the bar is a request to see that moment, but stepChanged()
+        // only draws when a dynamic property is on show - so with a static one
+        // selected the bar would move and the view never change. Switch over
+        // the way Play does. Only user input gets here (sliderPressed and
+        // actionTriggered are not emitted by setValue()), so restoring a
+        // session or opening a case still keeps the static choice it was given.
+        auto toDynamic = [this] {
+            if (dynSel_->isChecked() || dynBox_->count() == 0) return;
+            dynSel_->setChecked(true);   // toggled -> showProperty() -> stepChanged()
+        };
+        connect(stepSlider_, &QSlider::sliderPressed, this, toDynamic);
+        connect(stepSlider_, &QSlider::actionTriggered, this,
+                [toDynamic](int) { toDynamic(); });
         connect(stepSlider_, &QSlider::valueChanged, this,
                 [this](int v) { stepChanged(v); });
     }
@@ -570,16 +621,26 @@ Viewer3DWidget::~Viewer3DWidget() = default;
 
 void Viewer3DWidget::setStatus(const QString& s) { status_->setText(s); }
 
+// A case is handed to this tab as its SMSPEC path and the grid files are its
+// siblings. Normalized (see CasePath.h) so that one run is one entry however
+// the path was spelled - a custom output directory arrives in native
+// separators, a file dialog or a project file in '/'.
+static QString caseBaseOf(const QString& smspecPath)
+{
+    QString base = flowgui::normalizeCasePath(smspecPath);
+    if (base.endsWith(QStringLiteral(".SMSPEC"), Qt::CaseInsensitive)) base.chop(7);
+    return base;
+}
+
 void Viewer3DWidget::addCase(const QString& label, const QString& smspecPath)
 {
-    QString base = smspecPath;
-    if (base.endsWith(QStringLiteral(".SMSPEC"), Qt::CaseInsensitive)) base.chop(7);
+    const QString base = caseBaseOf(smspecPath);
     const CaseFiles cf{ label,
                         base + QStringLiteral(".EGRID"),
                         base + QStringLiteral(".INIT"),
                         base + QStringLiteral(".UNRST") };
     for (const auto& c : cases_)
-        if (c.egrid == cf.egrid) return;
+        if (flowgui::sameCasePath(c.egrid, cf.egrid)) return;
     cases_.push_back(cf);
     caseBox_->addItem(label, cf.egrid);
     if (caseBox_->count() == 1) caseBox_->setCurrentIndex(0);
@@ -587,24 +648,78 @@ void Viewer3DWidget::addCase(const QString& label, const QString& smspecPath)
 
 void Viewer3DWidget::renameCase(const QString& smspecPath, const QString& label)
 {
-    QString base = smspecPath;
-    if (base.endsWith(QStringLiteral(".SMSPEC"), Qt::CaseInsensitive)) base.chop(7);
-    const QString egrid = base + QStringLiteral(".EGRID");
+    const QString egrid = caseBaseOf(smspecPath) + QStringLiteral(".EGRID");
     for (int i = 0; i < cases_.size(); ++i)
-        if (cases_[i].egrid == egrid) {
+        if (flowgui::sameCasePath(cases_[i].egrid, egrid)) {
             cases_[i].label = label;
             if (i < caseBox_->count()) caseBox_->setItemText(i, label);
             return;
         }
 }
 
+void Viewer3DWidget::removeCase(const QString& smspecPath)
+{
+    const QString egrid = caseBaseOf(smspecPath) + QStringLiteral(".EGRID");
+    for (int i = 0; i < cases_.size(); ++i)
+        if (flowgui::sameCasePath(cases_[i].egrid, egrid)) { removeCaseAt(i); return; }
+}
+
+// The list is what grows over a session - every job that runs adds to it - so
+// dropping an entry only forgets it here; nothing on disk is touched.
+void Viewer3DWidget::removeCaseAt(int idx)
+{
+    if (idx < 0 || idx >= cases_.size()) {
+        setStatus(QStringLiteral("no case selected to remove"));
+        return;
+    }
+    const bool wasShown = (idx == caseBox_->currentIndex());
+    const QString gone  = cases_[idx].label;
+
+    cases_.remove(idx);
+    {   // choose the replacement below rather than let removeItem() pick one
+        const QSignalBlocker block(caseBox_);
+        caseBox_->removeItem(idx);
+    }
+    // Indices shift down over the hole; a case still waiting to be opened
+    // moves with them, or goes away with the entry it referred to.
+    if (pendingCase_ == idx)     pendingCase_ = -1;
+    else if (pendingCase_ > idx) --pendingCase_;
+
+    if (cases_.isEmpty()) {
+        clearView();
+        setStatus(QStringLiteral("removed %1 - no cases left").arg(gone));
+        return;
+    }
+    // Only the shown case needs a successor: removing any other one leaves the
+    // combo on the same entry (its index already shifted with cases_).
+    if (wasShown) {
+        const int next = std::min(idx, int(cases_.size()) - 1);
+        {
+            const QSignalBlocker block(caseBox_);
+            caseBox_->setCurrentIndex(next);
+        }
+        openCase(next);
+    }
+    setStatus(QStringLiteral("removed %1").arg(gone));
+}
+
+// Nothing left to show: drop the readers and blank the canvas, so the tab does
+// not keep drawing a case that is no longer in the list.
+void Viewer3DWidget::clearView()
+{
+    if (playBtn_->isChecked()) playBtn_->setChecked(false);   // also stops the timer
+    openCase(-1);            // resets readers, property boxes, slider and wells
+    gl_->setMesh({}, {}, 0);
+    pendingCase_ = -1;
+    havePending_ = false;
+}
+
 void Viewer3DWidget::caseFinished(const QString& smspecPath)
 {
-    QString base = smspecPath;
-    if (base.endsWith(QStringLiteral(".SMSPEC"), Qt::CaseInsensitive)) base.chop(7);
+    const QString egrid = caseBaseOf(smspecPath) + QStringLiteral(".EGRID");
     const int idx = caseBox_->currentIndex();
     if (idx >= 0 && idx < cases_.size() &&
-        cases_[idx].egrid == base + QStringLiteral(".EGRID"))
+        flowgui::sameCasePath(cases_[idx].egrid, egrid))
         openCase(idx);
 }
 
@@ -649,11 +764,12 @@ void Viewer3DWidget::restoreUiState(const QJsonObject& state)
 
     // The case list is mirrored from the Summary Plots tab, so by now it holds
     // the restored cases; select ours without opening it (see showEvent).
-    const QString egrid =
-        QDir::toNativeSeparators(state.value(QStringLiteral("case")).toString());
+    // Compared, not spelled: a project file written by an older version holds
+    // whatever separators that session happened to use.
+    const QString egrid = state.value(QStringLiteral("case")).toString();
     if (!egrid.isEmpty() && caseBox_) {
         for (int i = 0; i < cases_.size(); ++i) {
-            if (cases_[i].egrid != egrid) continue;
+            if (!flowgui::sameCasePath(cases_[i].egrid, egrid)) continue;
             const QSignalBlocker block(caseBox_);
             caseBox_->setCurrentIndex(i);
             pendingCase_ = i;
@@ -669,6 +785,7 @@ void Viewer3DWidget::restoreUiState(const QJsonObject& state)
 void Viewer3DWidget::openCase(int idx)
 {
     grid_.reset(); init_.reset(); rst_.reset();
+    rstBytes_ = 0;                      // the old reader's cache went with it
     steps_.clear(); cellGlob_.clear();
     staticBox_->clear(); dynBox_->clear();
     stepSlider_->setEnabled(false);
@@ -848,9 +965,23 @@ void Viewer3DWidget::showProperty()
     }
 }
 
+// opm-common's EclFile caches every array it hands out and offers no per-array
+// eviction, so stepping through a long run accumulates them: one dynamic
+// property is 4 bytes per active cell per step, which on a multi-million-cell
+// model reaches gigabytes over a full sweep. Past this much, drop the reader's
+// cache with clearData(); it keeps the file index, so the only cost is
+// re-reading a step that is visited again.
+constexpr qint64 kRstCacheBudget = 256ll * 1024 * 1024;
+
 void Viewer3DWidget::stepChanged(int sliderPos)
 {
     if (!grid_ || !rst_ || steps_.empty() || !dynSel_->isChecked()) return;
+    // Before anything is read: getRestartData() hands out references into the
+    // reader, and those must not be alive across a clearData().
+    if (rstBytes_ > kRstCacheBudget) {
+        rst_->clearData();
+        rstBytes_ = 0;
+    }
     const int step = steps_[std::clamp(sliderPos, 0, int(steps_.size()) - 1)];
     const QString name = dynBox_->currentText();
     if (name.isEmpty()) return;
@@ -859,6 +990,7 @@ void Viewer3DWidget::stepChanged(int sliderPos)
         const std::string n = name.toStdString();
         if (rst_->hasArray(n, step)) {
             v = rst_->getRestartData<float>(n, step);
+            rstBytes_ += qint64(v.size()) * qint64(sizeof(float));
         } else if (name == QLatin1String("SOIL")) {
             // synthesized oil saturation: 1 - SWAT - SGAS, with a phase
             // that is not stored treated as absent (two-phase runs)
@@ -866,6 +998,7 @@ void Viewer3DWidget::stepChanged(int sliderPos)
             for (const char* sat : { "SWAT", "SGAS" }) {
                 if (!rst_->hasArray(sat, step)) continue;
                 const auto& s = rst_->getRestartData<float>(sat, step);
+                rstBytes_ += qint64(s.size()) * qint64(sizeof(float));
                 const size_t nn = std::min(v.size(), s.size());
                 for (size_t i = 0; i < nn; ++i) v[i] -= s[i];
             }

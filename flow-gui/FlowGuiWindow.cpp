@@ -388,6 +388,8 @@ FlowGuiWindow::FlowGuiWindow()
                 [this](const QString& path, const QString& label) {
                     viewer3D_->renameCase(path, label);
                 });
+        connect(summary_, &SummaryPlotWidget::caseRemoved, viewer3D_,
+                [this](const QString& path) { viewer3D_->removeCase(path); });
     }
 #endif
 #endif

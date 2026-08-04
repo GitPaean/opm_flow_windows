@@ -6,6 +6,8 @@
 */
 #include "SummaryPlotWidget.h"
 
+#include "CasePath.h"
+
 #include <opm/io/eclipse/ESmry.hpp>
 #include <opm/io/eclipse/EclFile.hpp>
 #include <opm/io/eclipse/EclUtil.hpp>
@@ -814,11 +816,15 @@ QString SummaryPlotWidget::activeLabel() const
     return it ? it->text() : QString();
 }
 
-void SummaryPlotWidget::addCase(const QString& label, const QString& smspecPath,
+void SummaryPlotWidget::addCase(const QString& label, const QString& rawPath,
                                 bool checked)
 {
+    // One spelling per case: the same run arrives written several ways (see
+    // CasePath.h), and comparing raw strings would register it twice.
+    const QString smspecPath = flowgui::normalizeCasePath(rawPath);
     for (int i = 0; i < caseList_->count(); ++i)
-        if (caseList_->item(i)->data(Qt::UserRole).toString() == smspecPath) return;
+        if (flowgui::sameCasePath(caseList_->item(i)->data(Qt::UserRole).toString(),
+                                  smspecPath)) return;
 
     auto* it = new QListWidgetItem(label);
     it->setData(Qt::UserRole, smspecPath);
@@ -840,7 +846,7 @@ void SummaryPlotWidget::setCaseLabel(const QString& smspecPath, const QString& l
     if (label.isEmpty()) return;
     for (int i = 0; i < caseList_->count(); ++i) {
         auto* it = caseList_->item(i);
-        if (it->data(Qt::UserRole).toString() != smspecPath) continue;
+        if (!flowgui::sameCasePath(it->data(Qt::UserRole).toString(), smspecPath)) continue;
         it->setData(RoleCaseBase, label);
         it->setData(RoleCaseCustom, true);
         relabelCases();                  // may free a tag on the cases it left
@@ -1160,15 +1166,19 @@ void SummaryPlotWidget::clearCases()
 void SummaryPlotWidget::activateCase(const QString& smspecPath)
 {
     for (int i = 0; i < caseList_->count(); ++i)
-        if (caseList_->item(i)->data(Qt::UserRole).toString() == smspecPath) {
+        if (flowgui::sameCasePath(caseList_->item(i)->data(Qt::UserRole).toString(),
+                                  smspecPath)) {
             caseList_->setCurrentItem(caseList_->item(i));  // triggers reload
             return;
         }
 }
 
-void SummaryPlotWidget::caseFinished(const QString& smspecPath)
+void SummaryPlotWidget::caseFinished(const QString& rawPath)
 {
-    if (activePath() == smspecPath) { reload(true); return; }
+    // The job's output path is spelled its own way; match and key the reader
+    // map by the one spelling the list stores.
+    const QString smspecPath = flowgui::normalizeCasePath(rawPath);
+    if (flowgui::sameCasePath(activePath(), smspecPath)) { reload(true); return; }
     others_.erase(smspecPath);   // drop a possibly stale comparison reader
     replot();
 }
@@ -1185,8 +1195,10 @@ void SummaryPlotWidget::removeCurrentCase()
     if (row < 0) return;
     QListWidgetItem* it = caseList_->takeItem(row);   // fires currentItemChanged
     if (it) {
-        others_.erase(it->data(Qt::UserRole).toString());
+        const QString path = it->data(Qt::UserRole).toString();
+        others_.erase(path);
         delete it;
+        emit caseRemoved(path);
     }
     if (caseList_->count() == 0) { clearActiveCase(); return; }
     relabelCases();    // a case left alone with its name drops the tag again

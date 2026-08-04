@@ -14,7 +14,7 @@ find_package(Qt6 QUIET COMPONENTS Charts OpenGLWidgets)
 qt_standard_project_setup()
 
 set(FLOWGUI_SOURCES main.cpp FlowGuiWindow.cpp FlowGuiWindow.h
-                    DeckEditor.cpp DeckEditor.h)
+                    DeckEditor.cpp DeckEditor.h CasePath.h)
 
 # --- optional summary plotting: Qt Charts + opm-common's EclIO::ESmry -------
 # Auto-detected from this harness' layout (../install-mpi + vcpkg); can be
