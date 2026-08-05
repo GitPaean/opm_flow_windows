@@ -170,10 +170,32 @@ and build with testing on:
 `obstacle_pvs`, which are built from `EXAMPLE_SOURCE_FILES`. That is an upstream
 constraint, not something these branches introduce.
 
-The expected Windows ctest result for opm-common is 226/229. The three failures
--- `ParserIncludeTests`, `rst_deck_test`, `rst_deck_test2` -- are environmental
-(git symlinks, and a shell test driver) and fail identically on an unmodified
-upstream checkout. Compare against that baseline, not against zero.
+Neither module reaches a green ctest on Windows, and that is expected:
+
+  * **opm-common: 226/229.** `ParserIncludeTests` needs git symlinks;
+    `rst_deck_test` and `rst_deck_test2` are driven by a shell script.
+
+  * **opm-simulators: 73/139.** All 66 failures are `BAD_COMMAND` -- ctest
+    could not launch the process at all -- and the failing set is *exactly* the
+    set of tests whose ctest command is a `.sh` script (`run-vtu-test.sh`,
+    `run-parallel-unitTest.sh`). Windows cannot execute those directly. Every
+    test that does start passes.
+
+That last point is worth reproducing rather than taking on trust, because it
+makes the result independent of any baseline. Compare the failing names against
+the shell-driven ones:
+
+```bash
+ctest --show-only=json-v1 | jq -r '.tests[] | select((.command|join(" "))|test("\\.sh")) | .name' | sort > /tmp/sh.txt
+```
+
+If the two sets match exactly, no test regressed. If a name appears in the
+failures that is not in `/tmp/sh.txt`, that is a real failure and needs
+investigating.
+
+Beware of truncating ctest's output when checking this. `| Select-Object -Last N`
+drops the `"N tests failed out of M"` summary line and leaves only the tail of
+the failure list, which reads as a much smaller failure count than the real one.
 
 ## If a PR stalls
 
