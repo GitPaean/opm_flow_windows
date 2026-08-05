@@ -336,7 +336,8 @@ if (-not $SkipDeps) {
         & (Join-Path $Root 'vcpkg\vcpkg.exe') install --triplet x64-windows `
             suitesparse-umfpack fmt lapack `
             boost-test boost-date-time boost-property-tree boost-mpl `
-            boost-range boost-spirit boost-filesystem boost-system
+            boost-range boost-spirit boost-filesystem boost-system `
+            boost-iostreams
     }
 } else {
     Step "3/4  Dependencies (skipped)"
