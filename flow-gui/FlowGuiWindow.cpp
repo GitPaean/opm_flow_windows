@@ -98,6 +98,8 @@ static void exemptFromPowerThrottling(qint64 pid)
 }
 
 static const char* kAppName = "flow-gui";
+// First entry of the simulator box: the empty choice, spelled out.
+static const char* kShippedSimulator = "(the flow shipped with the GUI)";
 static const char* kVersion = FLOWGUI_VERSION;
 
 namespace {
@@ -130,9 +132,55 @@ QJsonArray jsonArrayFromSetting(const QVariant& v)
 }
 } // namespace
 
+// What the simulator box says, with the "shipped with the GUI" entry read as
+// the empty choice it stands for.
+QString FlowGuiWindow::currentSimulator() const
+{
+    if (!simBox_) return QString();
+    const QString text = simBox_->currentText().trimmed();
+    return text == QLatin1String(kShippedSimulator) ? QString() : text;
+}
+
+// The builds used before, most recent first (the "shipped" entry is not one).
+QStringList FlowGuiWindow::simulators() const
+{
+    QStringList list;
+    if (!simBox_) return list;
+    for (int i = 0; i < simBox_->count(); ++i) {
+        const QString p = simBox_->itemText(i).trimmed();
+        if (!p.isEmpty() && p != QLatin1String(kShippedSimulator)) list << p;
+    }
+    return list;
+}
+
+void FlowGuiWindow::setSimulators(const QStringList& list, const QString& current)
+{
+    if (!simBox_) return;
+    const QSignalBlocker block(simBox_);
+    simBox_->clear();
+    simBox_->addItem(QLatin1String(kShippedSimulator));
+    for (const QString& p : list)
+        if (!p.trimmed().isEmpty()) simBox_->addItem(QDir::toNativeSeparators(p));
+    if (current.trimmed().isEmpty()) simBox_->setCurrentIndex(0);
+    else                             simBox_->setCurrentText(QDir::toNativeSeparators(current));
+}
+
+// Put a build at the top of the list, so the two or three being compared stay
+// within reach however long the session runs.
+void FlowGuiWindow::rememberSimulator(const QString& path)
+{
+    const QString p = QDir::toNativeSeparators(path.trimmed());
+    if (p.isEmpty() || p == QLatin1String(kShippedSimulator)) return;
+    QStringList list = simulators();
+    list.removeAll(p);
+    list.prepend(p);
+    while (list.size() > 10) list.removeLast();
+    setSimulators(list, p);
+}
+
 QString FlowGuiWindow::resolveSimulator() const
 {
-    const QString custom = simEdit_ ? simEdit_->text().trimmed() : QString();
+    const QString custom = currentSimulator();
     if (!custom.isEmpty()) return custom;
     return findFlowExe();
 }
@@ -190,13 +238,20 @@ FlowGuiWindow::FlowGuiWindow()
     {
         auto* row = new QHBoxLayout;
         row->addWidget(new QLabel(QStringLiteral("Simulator:")));
-        simEdit_ = new QLineEdit;
-        simEdit_->setPlaceholderText(
+        // A list, not a plain field: comparing a release build against one's
+        // own is switching back and forth between two paths, and typing the
+        // second one again each time is the annoying part.
+        simBox_ = new QComboBox;
+        simBox_->setEditable(true);
+        simBox_->setInsertPolicy(QComboBox::NoInsert);   // the history is ours
+        simBox_->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+        simBox_->lineEdit()->setPlaceholderText(
             QStringLiteral("auto - the flow executable shipped next to this program"));
-        simEdit_->setToolTip(QStringLiteral(
-            "leave empty to use the flow shipped with the GUI; set a path to "
-            "test another build, e.g. a freshly compiled flow"));
-        row->addWidget(simEdit_, 1);
+        simBox_->setToolTip(QStringLiteral(
+            "which flow to run: pick a build you have used before, type a path, "
+            "or choose the first entry to use the flow shipped with the GUI"));
+        setSimulators(QStringList(), QString());     // the "shipped" entry
+        row->addWidget(simBox_, 1);
         auto* bsim = new QPushButton(QStringLiteral("Browse..."));
         row->addWidget(bsim);
         top->addLayout(row);
@@ -207,10 +262,21 @@ FlowGuiWindow::FlowGuiWindow()
             const QString filter = QStringLiteral("All files (*)");
 #endif
             const QString f = QFileDialog::getOpenFileName(
-                this, QStringLiteral("Select flow executable"), QString(), filter);
-            if (!f.isEmpty()) simEdit_->setText(QDir::toNativeSeparators(f));
+                this, QStringLiteral("Select flow executable"),
+                flowgui::startDir(QStringLiteral("simulator"), currentSimulator()),
+                filter);
+            if (f.isEmpty()) return;
+            flowgui::rememberDir(QStringLiteral("simulator"), f);
+            rememberSimulator(f);                    // to the top of the list
         });
-        connect(simEdit_, &QLineEdit::editingFinished, this, [this] {
+        // Typing a path or picking one from the list: both report what will
+        // run, and a typed one joins the list.
+        connect(simBox_->lineEdit(), &QLineEdit::editingFinished, this, [this] {
+            rememberSimulator(currentSimulator());
+            appendLog(QStringLiteral("simulator: %1\n")
+                          .arg(QDir::toNativeSeparators(resolveSimulator())));
+        });
+        connect(simBox_, &QComboBox::activated, this, [this](int) {
             appendLog(QStringLiteral("simulator: %1\n")
                           .arg(QDir::toNativeSeparators(resolveSimulator())));
         });
@@ -434,7 +500,7 @@ FlowGuiWindow::FlowGuiWindow()
     else
         appendLog(QStringLiteral("simulator: %1%2\n")
                       .arg(QDir::toNativeSeparators(exePath_),
-                           simEdit_->text().trimmed().isEmpty()
+                           currentSimulator().isEmpty()
                                ? QString() : QStringLiteral("  (override)")));
 }
 
@@ -442,7 +508,8 @@ FlowGuiWindow::FlowGuiWindow()
 void FlowGuiWindow::loadSettings()
 {
     QSettings s(QStringLiteral("OPM"), QLatin1String(kAppName));
-    simEdit_->setText(s.value(QStringLiteral("simulator")).toString());
+    setSimulators(s.value(QStringLiteral("simulators")).toStringList(),
+                  s.value(QStringLiteral("simulator")).toString());
     ranksSpin_->setValue(s.value(QStringLiteral("ranks"), 1).toInt());
     threadsSpin_->setValue(s.value(QStringLiteral("threads"), 1).toInt());
     outdirMode_->setCurrentIndex(s.value(QStringLiteral("outmode"), 0).toInt());
@@ -480,7 +547,8 @@ void FlowGuiWindow::loadSettings()
 void FlowGuiWindow::saveSettings()
 {
     QSettings s(QStringLiteral("OPM"), QLatin1String(kAppName));
-    s.setValue(QStringLiteral("simulator"), simEdit_->text());
+    s.setValue(QStringLiteral("simulator"),  currentSimulator());
+    s.setValue(QStringLiteral("simulators"), simulators());
     s.setValue(QStringLiteral("ranks"),   ranksSpin_->value());
     s.setValue(QStringLiteral("threads"), threadsSpin_->value());
     s.setValue(QStringLiteral("outmode"), outdirMode_->currentIndex());
@@ -824,7 +892,7 @@ void FlowGuiWindow::onRun(bool selectedOnly)
     // last run, and it must win over whatever executable ran previously
     exePath_ = resolveSimulator();
     if (exePath_.isEmpty() || !QFileInfo::exists(exePath_)) {
-        const QString custom = simEdit_ ? simEdit_->text().trimmed() : QString();
+        const QString custom = currentSimulator();
         QMessageBox::critical(this, QLatin1String(kAppName),
             custom.isEmpty()
                 ? QStringLiteral("No flow executable was found next to this program.\n"
@@ -1297,7 +1365,10 @@ bool FlowGuiWindow::writeProject(const QString& path)
     root[QStringLiteral("outputDir")]  = QDir::fromNativeSeparators(outdirEdit_->text());
     root[QStringLiteral("extraOptions")] = extraEdit_->text();
     root[QStringLiteral("tuning")]     = tuningChk_->isChecked();
-    root[QStringLiteral("simulator")]  = QDir::fromNativeSeparators(simEdit_->text());
+    root[QStringLiteral("simulator")]  = QDir::fromNativeSeparators(currentSimulator());
+    QJsonArray sims;
+    for (const QString& p : simulators()) sims.append(QDir::fromNativeSeparators(p));
+    root[QStringLiteral("simulators")] = sims;
 
 #ifdef FLOWGUI_HAVE_SUMMARY
     if (summary_) {
@@ -1375,7 +1446,12 @@ bool FlowGuiWindow::readProject(const QString& path)
     outdirEdit_->setEnabled(outdirMode_->currentIndex() == 1);
     extraEdit_->setText(root[QStringLiteral("extraOptions")].toString());
     tuningChk_->setChecked(root[QStringLiteral("tuning")].toBool(false));
-    simEdit_->setText(QDir::toNativeSeparators(root[QStringLiteral("simulator")].toString()));
+    QStringList sims;
+    for (const auto& v : root[QStringLiteral("simulators")].toArray())
+        sims << QDir::toNativeSeparators(v.toString());
+    if (sims.isEmpty()) sims = simulators();      // a version 1 file has none
+    setSimulators(sims, QDir::toNativeSeparators(
+                            root[QStringLiteral("simulator")].toString()));
 
     // The queue first: adding a deck auto-registers a case when the deck has
     // output beside it, which the restored case list below then overrides.

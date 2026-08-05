@@ -128,9 +128,12 @@ results, animate them in 3D, and edit decks — all in one window.
   development checkout it falls back to the harness build tree); the resolved
   path is shown in the log at startup. `flow` contains every model variant,
   so end users never need to change it. For **developers** the *Simulator*
-  field overrides this: point it at a freshly built executable to test your
-  own build (leave empty for the automatic choice; remembered between
-  sessions and stored in the project file).
+  box overrides this: point it at a freshly built executable to test your own
+  build. It is a **list** — every build you browse to or type joins it, most
+  recent first, so comparing a release against your own build is a pick from
+  the drop-down rather than a path to retype; the first entry is the flow
+  shipped with the GUI, i.e. no override. The choice and the list are
+  remembered between sessions and stored in the project file.
 - **Queue control** — *Stop queue* kills the running job and aborts the rest;
   *Skip job* kills the running job and continues with the next; *Validate
   deck* parse-and-initializes the selected deck (`flow --enable-dry-run`)
@@ -192,15 +195,15 @@ results, animate them in 3D, and edit decks — all in one window.
 - **Live log** — merged stdout/stderr streams into the window while running.
 - **Stop job** — kills the entire process tree (Windows: `taskkill /T`;
   Linux/macOS: the child leads a process group that is signalled as a whole).
-- **Persistent settings** — the run options (simulator path, ranks/threads,
-  output policy, extra options), the queue with each job's outcome, the plot
-  and 3D setup, the deck editor's open files, the front tab and the window
-  geometry are all remembered between sessions (QSettings; the tab state is
-  stored as the same JSON the project file uses). **File dialogs** are too:
-  each kind (decks, SMSPEC, figures, CSV, grids, projects, output
-  directories) reopens where you left it, unless the field it belongs to
-  already points somewhere — the folder of the case, deck or project in hand
-  wins over the last one used.
+- **Persistent settings** — the run options (simulator and the builds it
+  lists, ranks/threads, output policy, extra options), the queue with each
+  job's outcome, the plot and 3D setup, the deck editor's open files, the
+  front tab and the window geometry are all remembered between sessions
+  (QSettings; the tab state is stored as the same JSON the project file
+  uses). **File dialogs** are too: each kind (decks, SMSPEC, figures, CSV,
+  grids, projects, output directories) reopens where you left it, unless the
+  field it belongs to already points somewhere — the folder of the case, deck
+  or project in hand wins over the last one used.
 
 ## Building
 

@@ -65,7 +65,8 @@ private:
 
     // widgets
     QTabWidget*     tabs_        = nullptr;
-    QLineEdit*      simEdit_     = nullptr;   // developer override; empty = auto
+    QComboBox*      simBox_      = nullptr;   // which flow to run, plus the
+                                              // builds used before; empty = auto
     QTableWidget*   jobTable_    = nullptr;
     QSpinBox*       ranksSpin_   = nullptr;
     QSpinBox*       threadsSpin_ = nullptr;
@@ -100,6 +101,12 @@ private:
     // helpers
     static QString findFlowExe();
     QString resolveSimulator() const;   // override when set, else auto-detect
+    // The simulator box: what it says now, the builds it remembers, and
+    // how a build gets in (browsing to one, typing one, or a project).
+    QString     currentSimulator() const;
+    QStringList simulators() const;
+    void setSimulators(const QStringList& list, const QString& current);
+    void rememberSimulator(const QString& path);
     void loadSettings();
     void saveSettings();
     void appendLog(const QString& text);
