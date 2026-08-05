@@ -12,6 +12,7 @@
   #include "Viewer3D.h"
 #endif
 #include "DeckEditor.h"
+#include "GuiPaths.h"
 
 #include <QApplication>
 #include <QCheckBox>
@@ -411,11 +412,22 @@ FlowGuiWindow::FlowGuiWindow()
     });
     tick->start();
 
+    // A working directory that no longer exists (the GUI was started from a
+    // run folder a later run cleaned out) makes opm-common refuse every
+    // summary and grid file with "cannot get current path", which reads like
+    // the cases are broken rather than the directory. Step out of it once,
+    // here, and say so - the tabs re-check before each read.
+    const QString moved = flowgui::ensureWorkingDirectory();
+
     loadSettings();
     exePath_ = resolveSimulator();
 
     appendLog(QString::fromLatin1("%1 %2 - queue OPM Flow simulations and watch them run.\n")
                   .arg(QLatin1String(kAppName), QLatin1String(kVersion)));
+    if (!moved.isEmpty())
+        appendLog(QStringLiteral("NOTE: the directory this was started from is gone; "
+                                 "working from %1 instead\n")
+                      .arg(QDir::toNativeSeparators(moved)));
     if (exePath_.isEmpty())
         appendLog(QStringLiteral("WARNING: no flow executable found next to this "
                                  "program - simulations cannot be started.\n"));

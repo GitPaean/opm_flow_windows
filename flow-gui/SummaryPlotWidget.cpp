@@ -7,6 +7,7 @@
 #include "SummaryPlotWidget.h"
 
 #include "CasePath.h"
+#include "GuiPaths.h"
 
 #include <opm/io/eclipse/ESmry.hpp>
 #include <opm/io/eclipse/EclFile.hpp>
@@ -1243,17 +1244,35 @@ void SummaryPlotWidget::reload(bool keepSelection)
             if (it->data(0, RoleVecIndex).isValid())
                 reselect << it->data(0, RoleVecIndex).toString();   // key stored below
 
+    // opm-common resolves the file against the working directory even though
+    // this path is absolute, so a deleted working directory would make every
+    // case unreadable. Step out of it before trying.
+    flowgui::ensureWorkingDirectory();
+
     // Re-open for a fresh snapshot; while flow is still writing, a read can
     // transiently fail - keep the previous data and try again next refresh.
     std::unique_ptr<ESmry> next;
     try {
         next = std::make_unique<ESmry>(path.toStdString());
     } catch (const std::exception& e) {
-        setStatus(QStringLiteral("could not read summary (still being written?): %1")
-                      .arg(QString::fromLocal8Bit(e.what())));
+        // Keeping the old data is right for a REFRESH of the case already
+        // shown. For a different case it would leave the plot showing one run
+        // under another one's name, which is worse than showing nothing: drop
+        // it, and say which case failed rather than just that one did.
+        if (!flowgui::sameCasePath(smryPath_, path)) {
+            smry_.reset();
+            smryPath_.clear();
+            vecs_.clear();
+            tree_->clear();
+            rebuildFilters();
+            replot();
+        }
+        setStatus(QStringLiteral("could not read %1 (still being written?): %2")
+                      .arg(activeLabel(), QString::fromLocal8Bit(e.what())));
         return;
     }
     smry_ = std::move(next);
+    smryPath_ = path;
     others_.clear();   // comparison readers reopen lazily on the next replot
 
     // Grid dimensions from the SMSPEC's DIMENS array (needed to show block /
@@ -1507,24 +1526,31 @@ void SummaryPlotWidget::rebuildTree(const QStringList& reselect)
 std::vector<std::pair<QString, Opm::EclIO::ESmry*>> SummaryPlotWidget::checkedCases()
 {
     std::vector<std::pair<QString, Opm::EclIO::ESmry*>> plotCases;
+    checkedCount_ = 0;
+    unreadable_.clear();
     const QString active = activePath();
+    flowgui::ensureWorkingDirectory();      // see reload()
     for (int i = 0; i < caseList_->count(); ++i) {
         auto* item = caseList_->item(i);
         if (item->checkState() != Qt::Checked) continue;
+        ++checkedCount_;
         const QString p = item->data(Qt::UserRole).toString();
         if (p == active) {
             if (smry_) plotCases.push_back({ item->text(), smry_.get() });
+            else       unreadable_ << item->text();
             continue;
         }
         auto it = others_.find(p);
         if (it == others_.end()) {
             std::unique_ptr<Opm::EclIO::ESmry> s;
             try { s = std::make_unique<Opm::EclIO::ESmry>(p.toStdString()); }
-            catch (...) { continue; }
+            // A checked case that cannot be read is not plotted, and silence
+            // there reads as "this run has no such curve": name it instead.
+            catch (...) { unreadable_ << item->text(); continue; }
             it = others_.emplace(p, std::move(s)).first;
         }
-        if (it->second)
-            plotCases.push_back({ item->text(), it->second.get() });
+        if (it->second) plotCases.push_back({ item->text(), it->second.get() });
+        else            unreadable_ << item->text();
     }
     return plotCases;
 }
@@ -1683,7 +1709,16 @@ void SummaryPlotWidget::replot()
         }
         c->setTitle(QString());
     }
-    if (!smry_) return;
+    if (!smry_) {
+        // The vector list comes from the ACTIVE case, so nothing can be drawn
+        // while that one is unreadable - not even the other checked cases.
+        // Saying so beats an empty plot with no explanation.
+        if (!activePath().isEmpty())
+            setStatus(QStringLiteral("%1 could not be read - highlight another "
+                                     "case in the list to plot that one")
+                          .arg(activeLabel()));
+        return;
+    }
 
     const auto plotCases = checkedCases();
 
@@ -1704,9 +1739,16 @@ void SummaryPlotWidget::replot()
             else zoomSnap_[c] = ZoomSnap();    // axis type changed: let go
         }
     }
+    QStringList notes;
+    // A checked case that could not be read is simply absent from the plot,
+    // which looks exactly like a run that has no such curve. Name it.
+    if (!unreadable_.isEmpty())
+        notes << QStringLiteral("not plotted (could not be read): %1")
+                     .arg(unreadable_.join(QStringLiteral(", ")));
     if (skipped > 0)
-        setStatus(QStringLiteral("%1 selected vector(s) not shown - a chart mixes "
-                                 "at most two units").arg(skipped));
+        notes << QStringLiteral("%1 selected vector(s) not shown - a chart mixes "
+                                "at most two units").arg(skipped);
+    if (!notes.isEmpty()) setStatus(notes.join(QStringLiteral("; ")));
 }
 
 SummaryPlotWidget::ZoomSnap SummaryPlotWidget::captureZoom(QChart* chart) const
@@ -1887,7 +1929,11 @@ int SummaryPlotWidget::plotChart(QChart* chart, const QList<int>& sel,
         chart->setTitle(!title.isEmpty() ? title : activeLabel());
         return 0;
     }
-    const bool multi = plotCases.size() > 1;
+    // Name the case in every entry as soon as more than one is CHECKED - not
+    // only when more than one could be read. With a case missing, an unnamed
+    // curve leaves the reader guessing which of the checked runs is on screen,
+    // which is exactly when the answer matters.
+    const bool multi = std::max<int>(checkedCount_, int(plotCases.size())) > 1;
 
     // Two Y axes at most, keyed by unit (from the active case). The left axis
     // carries the first distinct unit (or a generic "value" axis when the
@@ -2131,10 +2177,15 @@ int SummaryPlotWidget::plotChart(QChart* chart, const QList<int>& sel,
     };
     if (lset) pad(ayL, lmin, lmax);
     if (ayR && rset) pad(ayR, rmin, rmax);
-    chart->setTitle(!title.isEmpty()
-        ? title
-        : (multi ? QStringLiteral("%1 cases").arg(plotCases.size())
-                 : plotCases.front().first));
+    // The title counts what is DRAWN, and says so when that is not every case
+    // that was asked for.
+    QString shown = plotCases.size() > 1
+        ? QStringLiteral("%1 cases").arg(plotCases.size())
+        : plotCases.front().first;
+    if (checkedCount_ > int(plotCases.size()))
+        shown += QStringLiteral("  (%1 of %2 checked cases)")
+                     .arg(plotCases.size()).arg(checkedCount_);
+    chart->setTitle(!title.isEmpty() ? title : shown);
     placeLegend(chart);      // the legend just changed size
     return skipped;
 }

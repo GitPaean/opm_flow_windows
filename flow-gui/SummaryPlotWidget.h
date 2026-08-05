@@ -157,6 +157,12 @@ private:
     QTimer*      timer_     = nullptr;
 
     std::unique_ptr<Opm::EclIO::ESmry> smry_;   // the ACTIVE case
+    QString smryPath_;                           // ... and the case it holds:
+                                                 // a failed read of ANOTHER
+                                                 // case must not leave this
+                                                 // one on screen under its name
+    int         checkedCount_ = 0;   // cases asked for by the last replot
+    QStringList unreadable_;         // ... of those, the ones that would not open
     QVector<Vec> vecs_;                          // parsed from the active case
     int nx_ = 0, ny_ = 0, nz_ = 0;   // grid dims from SMSPEC DIMENS (0 = unknown)
     // lazily-opened other cases for comparison plots (path -> reader);

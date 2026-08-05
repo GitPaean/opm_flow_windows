@@ -6,6 +6,8 @@
 */
 #include "Viewer3D.h"
 
+#include "GuiPaths.h"
+
 #include "CasePath.h"
 
 #include <opm/io/eclipse/EGrid.hpp>
@@ -803,6 +805,9 @@ void Viewer3DWidget::openCase(int idx)
         setStatus(QStringLiteral("no EGRID yet at %1").arg(cf.egrid));
         return;
     }
+    // opm-common resolves the file against the working directory, so a
+    // deleted one would make every grid unreadable (see GuiPaths.h).
+    flowgui::ensureWorkingDirectory();
     try {
         grid_ = std::make_unique<Opm::EclIO::EGrid>(cf.egrid.toStdString());
         buildMesh();

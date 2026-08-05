@@ -139,9 +139,13 @@ results, animate them in 3D, and edit decks — all in one window.
   confirmation, since their previous output is overwritten). The queue
   itself is remembered between sessions.
 - **Case manager & comparison** — loaded cases appear in a checkable list:
-  **checked cases are plotted together** (legend shows `case | vector`), the
-  highlighted case drives the vector tree, and *Remove* drops a case from
-  the list. Cases can be **renamed** (*Rename*, double-click or F2) — the
+  **checked cases are plotted together** (legend shows `case | vector`
+  whenever more than one is checked, so a curve always says which run it is),
+  the highlighted case drives the vector tree, and *Remove* drops a case from
+  the list. A checked case that cannot be read is **named** in the status
+  line and counted in the plot title (`2 of 3 checked cases`) rather than
+  quietly missing, and a case that fails to load never leaves the previous
+  one on screen under its name. Cases can be **renamed** (*Rename*, double-click or F2) — the
   new name is what the legend shows, so a comparison can read
   `Base case | FOPR` instead of a run directory name; names are kept unique
   and travel with the project file. A case keeps its plain name while that
