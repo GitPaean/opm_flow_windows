@@ -196,7 +196,11 @@ results, animate them in 3D, and edit decks — all in one window.
   output policy, extra options), the queue with each job's outcome, the plot
   and 3D setup, the deck editor's open files, the front tab and the window
   geometry are all remembered between sessions (QSettings; the tab state is
-  stored as the same JSON the project file uses).
+  stored as the same JSON the project file uses). **File dialogs** are too:
+  each kind (decks, SMSPEC, figures, CSV, grids, projects, output
+  directories) reopens where you left it, unless the field it belongs to
+  already points somewhere — the folder of the case, deck or project in hand
+  wins over the last one used.
 
 ## Building
 

@@ -1,5 +1,6 @@
 /*
-  GuiPaths - keeping the process' working directory usable.
+  GuiPaths - where a file dialog should start, and keeping the process'
+  working directory usable.
 
   Copyright (C) 2026 SINTEF Digital
 
@@ -10,6 +11,15 @@
 #include <QString>
 
 namespace flowgui {
+
+// Where a file dialog of this kind should open: the folder of `current` when
+// that names something on disk (the field the dialog belongs to is the best
+// guess there is), else where a dialog of this kind was left last time, else
+// the home directory. `key` names the kind - "deck", "figure", "smspec", ...
+QString startDir(const QString& key, const QString& current = QString());
+
+// Remember where a dialog ended up, for the next one with the same key.
+void rememberDir(const QString& key, const QString& chosenPath);
 
 // opm-common resolves summary and grid files against the process' working
 // directory - ESmry calls std::filesystem::current_path() even when handed an

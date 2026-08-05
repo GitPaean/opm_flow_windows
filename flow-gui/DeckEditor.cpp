@@ -6,6 +6,8 @@
 */
 #include "DeckEditor.h"
 
+#include "GuiPaths.h"
+
 #include <QAction>
 #include <QCheckBox>
 #include <QDir>
@@ -300,9 +302,12 @@ DeckEditorWidget::DeckEditorWidget(QWidget* parent)
 
         connect(bopen, &QPushButton::clicked, this, [this] {
             const QString f = QFileDialog::getOpenFileName(
-                this, QStringLiteral("Open input deck"), QString(),
+                this, QStringLiteral("Open input deck"),
+                flowgui::startDir(QStringLiteral("deck"), rootDeck_),
                 QStringLiteral("Eclipse decks (*.DATA *.data);;All files (*)"));
-            if (!f.isEmpty()) openDeck(f);
+            if (f.isEmpty()) return;
+            flowgui::rememberDir(QStringLiteral("deck"), f);
+            openDeck(f);
         });
         connect(bsave, &QPushButton::clicked, this, [this] { saveTab(tabs_->currentIndex()); });
         connect(ball,  &QPushButton::clicked, this, [this] { saveAll(); });

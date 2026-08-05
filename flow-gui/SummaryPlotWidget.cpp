@@ -753,10 +753,13 @@ void SummaryPlotWidget::savePng()
     const QString pngScreen = QStringLiteral("PNG, screen resolution (*.png)");
     QString chosen = pdfFilter;
     const QString f = QFileDialog::getSaveFileName(
-        this, QStringLiteral("Save chart"), suggested + QStringLiteral(".pdf"),
+        this, QStringLiteral("Save chart"),
+        QDir(flowgui::startDir(QStringLiteral("figure")))
+            .filePath(suggested + QStringLiteral(".pdf")),
         pdfFilter + QStringLiteral(";;") + pngFilter + QStringLiteral(";;") + pngScreen,
         &chosen);
     if (f.isEmpty()) return;
+    flowgui::rememberDir(QStringLiteral("figure"), f);
 
     const bool wantPdf = chosen == pdfFilter
         || (chosen != pngFilter && chosen != pngScreen
@@ -1220,9 +1223,11 @@ void SummaryPlotWidget::clearActiveCase()
 void SummaryPlotWidget::browseCase()
 {
     const QString f = QFileDialog::getOpenFileName(
-        this, QStringLiteral("Open summary specification"), QString(),
+        this, QStringLiteral("Open summary specification"),
+        flowgui::startDir(QStringLiteral("smspec"), activePath()),
         QStringLiteral("Summary spec (*.SMSPEC);;All files (*)"));
     if (!f.isEmpty()) {
+        flowgui::rememberDir(QStringLiteral("smspec"), f);
         addCase(QFileInfo(f).completeBaseName(), f);
         activateCase(f);
     }
@@ -2223,8 +2228,11 @@ void SummaryPlotWidget::saveCsv()
     if (suggested.isEmpty()) suggested = QStringLiteral("summary");
     const QString f = QFileDialog::getSaveFileName(
         this, QStringLiteral("Export plotted vectors as CSV"),
-        suggested + QStringLiteral(".csv"), QStringLiteral("CSV (*.csv)"));
+        QDir(flowgui::startDir(QStringLiteral("csv")))
+            .filePath(suggested + QStringLiteral(".csv")),
+        QStringLiteral("CSV (*.csv)"));
     if (f.isEmpty()) return;
+    flowgui::rememberDir(QStringLiteral("csv"), f);
 
     struct Col { QString header; std::vector<float> data; };
     std::vector<Col> cols;

@@ -556,9 +556,14 @@ void FlowGuiWindow::dropEvent(QDropEvent* ev)
 
 void FlowGuiWindow::onAddDecks()
 {
-    addDecks(QFileDialog::getOpenFileNames(
-        this, QStringLiteral("Select input deck(s)"), QString(),
-        QStringLiteral("Eclipse decks (*.DATA *.data);;All files (*)")));
+    const QStringList files = QFileDialog::getOpenFileNames(
+        this, QStringLiteral("Select input deck(s)"),
+        flowgui::startDir(QStringLiteral("deck"),
+                          jobs_.isEmpty() ? QString() : jobs_.last().deck),
+        QStringLiteral("Eclipse decks (*.DATA *.data);;All files (*)"));
+    if (files.isEmpty()) return;
+    flowgui::rememberDir(QStringLiteral("deck"), files.first());
+    addDecks(files);
 }
 
 void FlowGuiWindow::addDecks(const QStringList& files)
@@ -592,7 +597,7 @@ void FlowGuiWindow::addDecks(const QStringList& files)
 void FlowGuiWindow::onBrowseOutdir()
 {
     QFileDialog dlg(this, QStringLiteral("Select or create the output directory"),
-                    outdirEdit_->text());
+                    flowgui::startDir(QStringLiteral("outdir"), outdirEdit_->text()));
     dlg.setFileMode(QFileDialog::Directory);
     dlg.setOption(QFileDialog::ShowDirsOnly);
     dlg.setOption(QFileDialog::DontUseNativeDialog);
@@ -1147,12 +1152,12 @@ void FlowGuiWindow::openProject()
     QSettings s(QStringLiteral("OPM"), QLatin1String(kAppName));
     const QString f = QFileDialog::getOpenFileName(
         this, QStringLiteral("Open project"),
-        s.value(QStringLiteral("lastProjectDir")).toString(),
+        flowgui::startDir(QStringLiteral("project"), projectPath_),
         QStringLiteral("OPM Flow GUI project (*.opmproj);;All files (*)"));
     if (f.isEmpty()) return;
     if (readProject(f)) {
         projectPath_ = f;
-        s.setValue(QStringLiteral("lastProjectDir"), QFileInfo(f).absolutePath());
+        flowgui::rememberDir(QStringLiteral("project"), f);
         updateWindowTitle();
     }
 }
@@ -1170,14 +1175,14 @@ void FlowGuiWindow::saveProjectAs()
     QSettings s(QStringLiteral("OPM"), QLatin1String(kAppName));
     QString f = QFileDialog::getSaveFileName(
         this, QStringLiteral("Save project as"),
-        s.value(QStringLiteral("lastProjectDir")).toString(),
+        flowgui::startDir(QStringLiteral("project"), projectPath_),
         QStringLiteral("OPM Flow GUI project (*.opmproj)"));
     if (f.isEmpty()) return;
     if (!f.endsWith(QStringLiteral(".opmproj"), Qt::CaseInsensitive))
         f += QStringLiteral(".opmproj");
     if (writeProject(f)) {
         projectPath_ = f;
-        s.setValue(QStringLiteral("lastProjectDir"), QFileInfo(f).absolutePath());
+        flowgui::rememberDir(QStringLiteral("project"), f);
         updateWindowTitle();
         appendLog(QStringLiteral("project saved: %1\n").arg(QDir::toNativeSeparators(f)));
     }

@@ -523,10 +523,15 @@ Viewer3DWidget::Viewer3DWidget(QWidget* parent)
         top->addLayout(row);
 
         connect(bopen, &QPushButton::clicked, this, [this] {
+            const int cur = caseBox_->currentIndex();
             const QString f = QFileDialog::getOpenFileName(
-                this, QStringLiteral("Open grid file"), QString(),
+                this, QStringLiteral("Open grid file"),
+                flowgui::startDir(QStringLiteral("grid"),
+                                  cur >= 0 && cur < cases_.size() ? cases_[cur].egrid
+                                                                  : QString()),
                 QStringLiteral("Eclipse grid (*.EGRID);;All files (*)"));
             if (f.isEmpty()) return;
+            flowgui::rememberDir(QStringLiteral("grid"), f);
             QString base = f; base.chop(6);   // ".EGRID"
             addCase(QFileInfo(f).completeBaseName(), base + QStringLiteral(".SMSPEC"));
             caseBox_->setCurrentIndex(caseBox_->count() - 1);
