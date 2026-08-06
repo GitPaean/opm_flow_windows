@@ -98,6 +98,9 @@ private:
     // Watches the open files so edits made outside the GUI are noticed.
     QFileSystemWatcher* watcher_ = nullptr;
     QString      rootDeck_;
+    // Sections the user has opened; the tree starts closed and a rescan
+    // puts back what was open rather than folding it up again.
+    QSet<QString> expandedSections_;
 
     void filterTree(const QString& needle);
     void showFindBar(bool withReplace);
@@ -131,6 +134,7 @@ private:
     bool saveTab(int tab);
     void saveAll();
     void closeTab(int tab);
+    void closeAllTabs();            // every tab, one prompt for the lot
     void updateTabTitle(int tab);
     void setStatus(const QString& s);
 };

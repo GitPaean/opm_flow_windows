@@ -112,9 +112,13 @@ results, animate them in 3D, and edit decks — all in one window.
   section tree (RUNSPEC ... SCHEDULE) lists every keyword with file and
   line, INCLUDEs expanded recursively; clicking opens the real file in a
   tabbed editor with Eclipse syntax highlighting and line numbers. The tree
-  has a **keyword filter** (matches keyword or file name, hits expanded
-  automatically), Expand/Collapse for the selected subtree and
-  Expand all / Collapse all buttons; the editor a **find & replace bar**
+  starts with every section **collapsed** — eight sections say more than
+  the hundreds of keywords under them — and a section you open stays open
+  across a rescan. It has a **keyword filter** (matches keyword or file
+  name, hits expanded automatically), Expand/Collapse for the selected
+  subtree and Expand all / Collapse all buttons; **Close all** shuts every
+  open tab at once (following INCLUDEs leaves a row of them), asking once
+  for the lot if any have unsaved changes; the editor a **find & replace bar**
   (the *Find / Replace* button, or Ctrl+F / Ctrl+H — Enter/F3 next,
   Shift+F3 previous, wrap-around, every match highlighted with a count;
   the *Replace...* toggle in the bar opens *Replace* and *Replace all*,

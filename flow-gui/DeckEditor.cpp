@@ -264,6 +264,10 @@ DeckEditorWidget::DeckEditorWidget(QWidget* parent)
         auto* bopen = new QPushButton(QStringLiteral("Open DATA..."));
         auto* bsave = new QPushButton(QStringLiteral("Save"));
         auto* ball  = new QPushButton(QStringLiteral("Save all"));
+        auto* bclose = new QPushButton(QStringLiteral("Close all"));
+        bclose->setToolTip(QStringLiteral(
+            "close every open file - following INCLUDEs leaves a lot of tabs "
+            "behind, and the files themselves are not touched"));
         auto* brel  = new QPushButton(QStringLiteral("Reload"));
         brel->setToolTip(QStringLiteral(
             "re-read the current file from disk (picks up edits made outside "
@@ -283,7 +287,7 @@ DeckEditorWidget::DeckEditorWidget(QWidget* parent)
             "search this file and replace matches (Ctrl+F finds, Ctrl+H replaces)"));
         auto* bscan = new QPushButton(QStringLiteral("Rescan structure"));
         row->addWidget(bopen); row->addWidget(bsave); row->addWidget(ball);
-        row->addWidget(brel);
+        row->addWidget(bclose); row->addWidget(brel);
         row->addWidget(undoBtn_); row->addWidget(redoBtn_);
         row->addWidget(bcom); row->addWidget(bfind);
         row->addWidget(bscan); row->addStretch(1);
@@ -311,6 +315,7 @@ DeckEditorWidget::DeckEditorWidget(QWidget* parent)
         });
         connect(bsave, &QPushButton::clicked, this, [this] { saveTab(tabs_->currentIndex()); });
         connect(ball,  &QPushButton::clicked, this, [this] { saveAll(); });
+        connect(bclose, &QPushButton::clicked, this, [this] { closeAllTabs(); });
         connect(bscan, &QPushButton::clicked, this, [this] { scanDeck(); });
         auto* sc = new QShortcut(QKeySequence::Save, this);
         connect(sc, &QShortcut::activated, this, [this] { saveTab(tabs_->currentIndex()); });
@@ -932,6 +937,50 @@ void DeckEditorWidget::saveAll()
 
 void DeckEditorWidget::saveAllTabs() { saveAll(); }
 
+// Following an INCLUDE opens a tab, and a deck of any size leaves a row of
+// them behind. Closing them one at a time is the tedious way; this asks once
+// for the lot rather than once per modified file.
+void DeckEditorWidget::closeAllTabs()
+{
+    if (tabs_->count() == 0) {
+        setStatus(QStringLiteral("no open files to close"));
+        return;
+    }
+    int modified = 0;
+    for (int i = 0; i < tabs_->count(); ++i)
+        if (auto* ed = editorAt(i); ed && ed->document()->isModified()) ++modified;
+
+    if (modified > 0) {
+        const auto a = QMessageBox::question(this, QStringLiteral("Deck editor"),
+            QStringLiteral("%1 of the %2 open files %3 unsaved changes. "
+                           "Save them before closing?")
+                .arg(modified).arg(tabs_->count())
+                .arg(modified == 1 ? QStringLiteral("has") : QStringLiteral("have")),
+            QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel);
+        if (a == QMessageBox::Cancel) return;
+        if (a == QMessageBox::Save) {
+            for (int i = 0; i < tabs_->count(); ++i) {
+                auto* ed = editorAt(i);
+                // A file that will not write keeps everything open: closing
+                // the rest would leave the failure buried.
+                if (ed && ed->document()->isModified() && !saveTab(i)) return;
+            }
+        }
+    }
+
+    const int n = tabs_->count();
+    while (tabs_->count() > 0) {
+        auto* ed = editorAt(0);
+        const QString path = ed ? ed->property("filePath").toString() : QString();
+        tabs_->removeTab(0);
+        if (ed) ed->deleteLater();
+        if (watcher_ && !path.isEmpty() && tabForPath(path) < 0)
+            watcher_->removePath(path);
+    }
+    setStatus(QStringLiteral("closed %1 file%2").arg(n).arg(n == 1 ? QString()
+                                                                  : QStringLiteral("s")));
+}
+
 void DeckEditorWidget::closeTab(int tab)
 {
     auto* ed = editorAt(tab);
@@ -1016,12 +1065,23 @@ QTreeWidgetItem* DeckEditorWidget::sectionItem(const QString& name)
             return tree_->topLevelItem(i);
     auto* it = new QTreeWidgetItem(tree_, { name, QString() });
     QFont f = it->font(0); f.setBold(true); it->setFont(0, f);
-    it->setExpanded(name != QLatin1String("SCHEDULE"));   // SCHEDULE can be huge
+    // Closed to begin with: a deck has eight sections and hundreds of
+    // keywords, and a wall of them says less than the sections do. Expand,
+    // Expand all and the filter are all one click away. A section the user
+    // had open stays open across a rescan (see scanDeck).
+    it->setExpanded(expandedSections_.contains(name));
     return it;
 }
 
 void DeckEditorWidget::scanDeck()
 {
+    // A rescan rebuilds the tree, so remember which sections were open - a
+    // file changing on disk should not fold the tree back up under you.
+    for (int i = 0; i < tree_->topLevelItemCount(); ++i) {
+        auto* it = tree_->topLevelItem(i);
+        if (it->isExpanded()) expandedSections_.insert(it->text(0));
+        else                  expandedSections_.remove(it->text(0));
+    }
     tree_->clear();
     if (rootDeck_.isEmpty()) return;
     QString section = QStringLiteral("(preamble)");
