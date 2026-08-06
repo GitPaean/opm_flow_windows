@@ -61,6 +61,35 @@ Builds Zoltan (from a Trilinos clone) + the MPI modules into separate
 `build-mpi\` / `install-mpi\` trees (the serial build is untouched). See
 [BUILD_WINDOWS.md](BUILD_WINDOWS.md) §13.
 
+## Quick start (Intel MPI)
+An alternative to MS-MPI, built into its own `build-impi\` / `install-impi\`
+trees so the MS-MPI build is untouched. Two reasons to prefer it:
+
+- **It needs no administrator rights.** Its runtime installs into your own
+  profile, where installing MS-MPI needs an administrator — which is what
+  otherwise stops OPM Flow running at all on a managed work laptop, since the
+  simulator links an MPI library even for serial runs.
+- **It measured faster.** On Norne, 4 ranks × 2 threads: 125 s of simulation
+  time against 157 s for MS-MPI, with identical iteration counts. Note that
+  the assembly time fell by about as much as the linear solve did, and assembly
+  is local compute — so some of that gain is likely Intel MPI's default process
+  pinning rather than faster message passing.
+
+```powershell
+python -m pip install --user impi-rt impi-devel   # no administrator needed
+.\build-intelmpi.ps1 -Jobs 8
+```
+`pip` installs the runtime under `%APPDATA%\Python\Library`, which Windows does
+not search, so anything using it has to put that directory on `PATH` first —
+`flow-gui` does so for the simulators it launches, and the packaged
+`bin\flow-impi.cmd` does it for terminal use.
+
+The Intel MPI runtime is **not** redistributed in the packages: OPM Flow is
+GPLv3 and Intel MPI is proprietary, so shipping them together raises a
+licensing question this project does not try to answer. Users install it
+themselves with the one `pip` command above — the same posture the MS-MPI
+package takes by shipping Microsoft's installer rather than `msmpi.dll`.
+
 ## Where the OPM Windows fixes live
 The Windows/MSVC fixes to opm-common/opm-grid/opm-simulators (and opm-upscaling,
 with `-Upscaling`) must be present in the sources. They are maintained on the
@@ -87,11 +116,20 @@ automatically regardless):
 `-Mpi` and `-OpenMP` are independent and compose. For hybrid runs use
 `mpiexec -n <ranks> flow_blackoil <deck> --threads-per-process=<threads>`.
 
+Intel MPI is selected per module rather than through `build-all.ps1`, since it
+uses its own build trees:
+```powershell
+.\build-intelmpi.ps1 -Jobs 8              # the whole chain, Zoltan included
+.\build-module.ps1 opm-simulators -IntelMpi -OpenMP -Target flow -Jobs 8
+.\package-flow.ps1 -IntelMpi -Zip         # package that build (runtime not bundled)
+```
+
 ## What's in this repo
 | Path | Purpose |
 |------|---------|
 | `build-all.ps1` | One-shot driver — the entry point (serial or `-Mpi`) |
-| `build-module.ps1` | Configure/build/install one module with the MSVC flags |
+| `build-module.ps1` | Configure/build/install one module with the MSVC flags (`-Mpi`, `-IntelMpi`, `-OpenMP`) |
+| `build-intelmpi.ps1` | The whole chain against Intel MPI, into `build-impi\` — no administrator rights needed |
 | `setup-env.ps1` | Loads MSVC (vcvars64) + vcpkg (+ MS-MPI) into the shell |
 | `compat/include/` | POSIX/Fortran shim headers MSVC lacks (getopt, unistd, sys/*, FCMacros) |
 | `patches/` | DUNE Windows patches, auto-applied after the DUNE checkout |
