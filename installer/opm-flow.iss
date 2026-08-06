@@ -5,9 +5,10 @@
 ;         2. ISCC installer\opm-flow.iss     (or /DAppVersion=... to override)
 ; Output: dist\OPM-Flow-<ver>-Setup.exe
 ;
-; The installer copies the staged bin\ tree to Program Files, creates Start
-; menu shortcuts, and silently installs the VC++ and MS-MPI runtimes when
-; they are missing.
+; The installer copies the staged bin\ tree to Program Files (or, for a
+; per-user install, to %LOCALAPPDATA%\Programs), creates Start menu shortcuts,
+; and silently installs the VC++ and MS-MPI runtimes when they are missing and
+; it has the rights to do so.
 ;
 ; Sign (optional): pass /DSignExe plus a named SignTool "opmsign" to ISCC to
 ; code-sign the installer (and its embedded uninstaller) during compile
@@ -43,7 +44,14 @@ SolidCompression=yes
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 WizardStyle=modern
+; Default to a machine-wide install, but let the user choose "just for me" when
+; they have no administrator rights - the common case on a managed work laptop,
+; where an admin-only installer is not an inconvenience but a wall. The {auto*}
+; constants below follow that choice: {autopf} is Program Files for a machine
+; install and {localappdata}\Programs for a per-user one, and {group} and
+; {autodesktop} likewise pick the common or the per-user location.
 PrivilegesRequired=admin
+PrivilegesRequiredOverridesAllowed=dialog
 
 #ifdef SignExe
 ; Code-sign the installer and its embedded uninstaller with the named SignTool
@@ -68,14 +76,18 @@ Name: "{autodesktop}\OPM Flow GUI"; Filename: "{app}\bin\flow-gui.exe"; Tasks: d
 Name: "desktopicon"; Description: "Create a &desktop shortcut"; Flags: unchecked
 
 [Run]
-; VC++ runtime: quiet, no restart; harmless if already present (fast no-op).
+; Both bundled runtimes install machine-wide and need administrator rights, so
+; they are skipped in a per-user install. That is safe for the VC++ runtime -
+; the CRT is also shipped app-local in bin\, which is why redist\ calls it a
+; fallback - but not for MS-MPI: without it nothing runs at all, so say so
+; rather than leave the user with a DLL error (see CurStepChanged below).
 Filename: "{tmp}\vc_redist.x64.exe"; Parameters: "/install /quiet /norestart"; \
     StatusMsg: "Installing Microsoft Visual C++ runtime..."; \
-    Check: VCRedistNeeded
+    Check: InstallVCRedist
 ; MS-MPI runtime: required even for serial runs (the simulators link msmpi.dll).
 Filename: "{tmp}\msmpisetup.exe"; Parameters: "-unattend"; \
     StatusMsg: "Installing Microsoft MPI runtime..."; \
-    Check: MsMpiNeeded
+    Check: InstallMsMpi
 Filename: "{app}\bin\flow-gui.exe"; Description: "Launch OPM Flow GUI"; \
     Flags: nowait postinstall skipifsilent
 
@@ -91,4 +103,38 @@ end;
 function MsMpiNeeded: Boolean;
 begin
   Result := not FileExists(ExpandConstant('{sys}\msmpi.dll'));
+end;
+
+// Both installers write machine-wide, so only run them when we actually hold
+// the rights to do so. Attempting them in a per-user install would either
+// raise a UAC prompt the user cannot satisfy, or fail mid-way.
+function InstallVCRedist: Boolean;
+begin
+  Result := VCRedistNeeded and IsAdminInstallMode;
+end;
+
+function InstallMsMpi: Boolean;
+begin
+  Result := MsMpiNeeded and IsAdminInstallMode;
+end;
+
+// If MS-MPI is still absent once we are done - either because this was a
+// per-user install, or because its installer failed - the simulator will not
+// start at all, and the error it gives ("the code execution cannot proceed
+// because msmpi.dll was not found") says nothing about the cause. Say it here.
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if (CurStep = ssPostInstall) and MsMpiNeeded then
+    MsgBox('OPM Flow is installed, but Microsoft MPI is not present on this'
+           + #13#10 + 'machine, and the simulator cannot start without it -'
+           + #13#10 + 'not even for a serial run.'
+           + #13#10 + #13#10
+           + 'Installing MS-MPI needs administrator rights. Either ask an'
+           + #13#10 + 'administrator to run:'
+           + #13#10 + #13#10
+           + '    winget install Microsoft.msmpi'
+           + #13#10 + #13#10
+           + 'or re-run this installer as an administrator, which installs'
+           + #13#10 + 'it for you.',
+           mbInformation, MB_OK);
 end;
