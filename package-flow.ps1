@@ -41,6 +41,11 @@ $SimBin = if ($IntelMpi) { Join-Path $Root 'build-impi\opm-simulators\bin' }
 # Where the pip wheels (impi-rt / impi-devel) put the Intel MPI runtime.
 $ImpiRoot = Join-Path $env:APPDATA 'Python\Library'
 $GuiBin = Join-Path $Root 'build-gui'
+# The Intel MPI package has to carry its own name. Both variants stage into
+# dist\opm-flow-<Version>\ and zip to opm-flow-<Version>-win64.zip, so sharing
+# a version means the second build silently overwrites the first - and the two
+# differ only in which MPI the exes link, which nothing about the file shows.
+if ($IntelMpi -and $Version -notmatch '-impi$') { $Version = "$Version-impi" }
 $Stage  = Join-Path $Root "dist\opm-flow-$Version"
 $Bin    = Join-Path $Stage 'bin'
 $Redist = Join-Path $Stage 'redist'
