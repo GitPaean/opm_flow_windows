@@ -111,7 +111,8 @@ Set-Location $Root\vcpkg
 .\vcpkg.exe install --triplet x64-windows `
   suitesparse-umfpack fmt lapack `
   boost-test boost-date-time boost-property-tree boost-mpl `
-  boost-range boost-spirit boost-filesystem boost-system
+  boost-range boost-spirit boost-filesystem boost-system `
+  boost-iostreams
 ```
 
 What this gives OPM:
@@ -121,6 +122,11 @@ What this gives OPM:
   use `suitesparse-umfpack`, **not** the full `suitesparse` metapackage, to skip
   GraphBLAS/SPEX (heavy, need GMP/MPFR, unused by OPM).
 - **`fmt`**, and the **Boost** components OPM actually uses.
+- **`boost-iostreams`** → needed by opm-upscaling (`-Upscaling`): its
+  `CMakeLists_files.cmake` adds `benchmarks/upscale_relperm_benchmark.cpp` to the
+  build whenever `Boost_VERSION > 1.66`, without checking that the
+  `Boost::iostreams` target exists, so the compile fails on a missing
+  `boost/iostreams/copy.hpp` if the package is absent.
 
 cJSON is **not** installed via vcpkg — opm-common downloads and builds it itself
 at configure time (works offline only if previously cached).

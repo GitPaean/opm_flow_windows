@@ -289,9 +289,15 @@ examples/ (so this uses BUILD_EXAMPLES=ON). Depends only on opm-common + opm-gri
   scalar/matrix operator*=); use a double literal `*= 2.0` (4 solver-variant sites).
 - compat `unistd.h`: added a `gethostname()` shim (MSVC only provides it via
   winsock); upscale_elasticity.cpp uses it for a log banner.
-Result: opmupscaling.lib + 24 tools build clean (serial / MPI / OpenMP / hybrid).
-Optional deps cJSON / QuadMath / PTScotch / Boost-iostreams are not required — only
-upscale_relperm_benchmark needs boost-iostreams and is skipped without it.
+Result: opmupscaling.lib + 25 tools build clean (serial / MPI / OpenMP / hybrid).
+Optional deps cJSON / QuadMath / PTScotch are not required. **boost-iostreams IS
+required** (it is in `build-all.ps1`'s vcpkg list): `CMakeLists_files.cmake` adds
+`benchmarks/upscale_relperm_benchmark.cpp` to the build whenever
+`Boost_VERSION VERSION_GREATER 1.66`, *without* the `TARGET Boost::iostreams`
+guard that `CMakeLists.txt` uses for the target itself — so without the package
+the build fails on a missing `boost/iostreams/copy.hpp` rather than skipping the
+benchmark. (Upstream inconsistency; worth reporting. Note `-SkipDeps` on an older
+vcpkg tree will reproduce this.)
 
 ## dune-common PoolAllocator::max_size() — AMG/CPR crash at runtime (MSVC STL)
 Symptom: any AMG-based linear solver (`amg`, `cpr`, `cprw` — flow's default)
