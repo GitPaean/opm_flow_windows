@@ -71,8 +71,8 @@ New-Logo  50  50 "$Pack\Assets\StoreLogo.png"         11
   <Identity Name="OPM.Flow" Publisher="$Publisher" Version="$MsixVersion"
             ProcessorArchitecture="x64" />
   <Properties>
-    <DisplayName>OPM Flow</DisplayName>
-    <PublisherDisplayName>Open Porous Media (Windows build)</PublisherDisplayName>
+    <DisplayName>OPM Flow (unofficial Windows build)</DisplayName>
+    <PublisherDisplayName>opm_flow_windows (unofficial build)</PublisherDisplayName>
     <Logo>Assets\StoreLogo.png</Logo>
   </Properties>
   <Dependencies>
@@ -85,8 +85,8 @@ New-Logo  50  50 "$Pack\Assets\StoreLogo.png"         11
   <Applications>
     <Application Id="OPMFlowGUI" Executable="bin\flow-gui.exe"
                  EntryPoint="Windows.FullTrustApplication">
-      <uap:VisualElements DisplayName="OPM Flow"
-          Description="Run OPM Flow reservoir simulations from a graphical job queue."
+      <uap:VisualElements DisplayName="OPM Flow (unofficial)"
+          Description="Run OPM Flow reservoir simulations from a graphical job queue. An unofficial Windows build, not a release of the OPM project."
           BackgroundColor="transparent"
           Square150x150Logo="Assets\Square150x150Logo.png"
           Square44x44Logo="Assets\Square44x44Logo.png" />

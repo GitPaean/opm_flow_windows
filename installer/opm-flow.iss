@@ -1,5 +1,6 @@
 ; Copyright (C) 2026 SINTEF Digital, Mathematics & Cybernetics; GPL-3.0-or-later (see LICENSE).
-; opm-flow.iss - Inno Setup installer for OPM Flow for Windows.
+; opm-flow.iss - Inno Setup installer for the unofficial Windows build of
+; OPM Flow. Not a release of the OPM project; see AppPublisher below.
 ;
 ; Build:  1. .\package-flow.ps1              (stages dist\opm-flow-<ver>\)
 ;         2. ISCC installer\opm-flow.iss     (or /DAppVersion=... to override)
@@ -30,10 +31,21 @@
 
 [Setup]
 AppId={{6F1C6E39-8B0A-4D0B-9C63-0OPMFLOW0001}
-AppName=OPM Flow
+; This is an unofficial Windows build, not a release of the OPM project, and
+; the naming has to say so: AppName and AppPublisher are what Windows shows in
+; "Installed apps" and in the UAC prompt, so an installer publishing itself as
+; "The Open Porous Media project" would claim an endorsement it does not have.
+;
+; AppPublisher names the repository the build comes from rather than any
+; organisation. Copyright and publisher are different claims: the work is
+; SINTEF-funded and carries SINTEF's copyright (see LICENSE.txt), but who
+; stands behind the distribution is a separate question that has not been
+; settled. Naming the repository claims only what is true.
+AppName=OPM Flow for Windows (unofficial build)
 AppVersion={#AppVersion}
-AppPublisher=The Open Porous Media project (Windows build)
-AppPublisherURL=https://opm-project.org
+AppPublisher=opm_flow_windows (unofficial build)
+AppPublisherURL=https://github.com/GitPaean/opm_flow_windows
+AppSupportURL=https://github.com/GitPaean/opm_flow_windows/issues
 DefaultDirName={autopf}\OPM Flow
 DefaultGroupName=OPM Flow
 LicenseFile={#StageDir}\LICENSE.txt

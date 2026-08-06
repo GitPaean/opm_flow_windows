@@ -217,6 +217,14 @@ Prerequisite: Microsoft MPI
 OPM Flow for Windows - $Version
 ================================
 
+UNOFFICIAL BUILD. OPM Flow is developed by the Open Porous Media initiative
+(https://opm-project.org). This is an independent Windows build of it, not a
+release of the OPM project, and the OPM project does not support it. Report
+problems with this package at
+    https://github.com/GitPaean/opm_flow_windows/issues
+and not to OPM - unless the same thing happens on Linux, in which case it is
+OPM's to hear about.
+
 Contents
   bin\flow.exe            reservoir simulator (all model variants,
                           including black-oil)
