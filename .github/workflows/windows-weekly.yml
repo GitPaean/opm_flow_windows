@@ -83,8 +83,15 @@ jobs:
       # even if a later step fails.
       - name: Free disk before
         run: |
-          Get-PSDrive C | Select-Object -Property Used, Free |
-            Format-List | Out-String | Write-Host
+          # Every fixed drive, not a hardcoded C:. The workspace is on D: on a
+          # hosted runner, so measuring C: reports a volume the build never
+          # touches - which looks reassuring and says nothing.
+          Get-PSDrive -PSProvider FileSystem |
+            Select-Object Name,
+              @{n='UsedGB';e={[math]::Round($_.Used/1GB,1)}},
+              @{n='FreeGB';e={[math]::Round($_.Free/1GB,1)}} |
+            Format-Table -AutoSize | Out-String | Write-Host
+          Write-Host "workspace: $env:GITHUB_WORKSPACE"
 
       - name: Fetch the forks and rebase onto upstream
         id: rebase
@@ -162,16 +169,31 @@ jobs:
           $deck = '.\src\opm-simulators\python\test_data\SPE1CASE1a\SPE1CASE1.DATA'
           & $exe $deck --output-dir=spe1_out --threads-per-process=1
           if ($LASTEXITCODE -ne 0) { throw "SPE1 run failed ($LASTEXITCODE)" }
-          # A run that exits 0 having written nothing would still be a failure.
-          if (-not (Test-Path 'spe1_out\SPE1CASE1.UNSMRY')) { throw 'SPE1 wrote no summary output' }
+
+          # A run that exits 0 having written nothing would still be a failure,
+          # so check the output exists - but check for what flow actually
+          # writes. The summary payload is .ESMRY for this deck, not the .UNSMRY
+          # an earlier version of this step looked for, which failed a run whose
+          # simulation had completed perfectly. .SMSPEC accompanies either form.
+          $spec = Test-Path 'spe1_out\SPE1CASE1.SMSPEC'
+          $data = (Test-Path 'spe1_out\SPE1CASE1.ESMRY') -or
+                  (Test-Path 'spe1_out\SPE1CASE1.UNSMRY')
+          if (-not ($spec -and $data)) {
+              Write-Host 'output directory contained:'
+              Get-ChildItem spe1_out | Select-Object -ExpandProperty Name | Write-Host
+              throw 'SPE1 wrote no summary output'
+          }
           "`n## Smoke test`nSPE1 ran to completion and wrote its summary output." |
             Out-File -Append $env:GITHUB_STEP_SUMMARY
 
       - name: Free disk after
         if: always()
         run: |
-          Get-PSDrive C | Select-Object -Property Used, Free |
-            Format-List | Out-String | Write-Host
+          Get-PSDrive -PSProvider FileSystem |
+            Select-Object Name,
+              @{n='UsedGB';e={[math]::Round($_.Used/1GB,1)}},
+              @{n='FreeGB';e={[math]::Round($_.Free/1GB,1)}} |
+            Format-Table -AutoSize | Out-String | Write-Host
 
       - name: Upload the binary
         if: success()
