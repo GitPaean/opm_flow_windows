@@ -126,6 +126,7 @@ private:
     QVector<QChart*>     charts_;        // fixed pool of 4, shown as needed
     QVector<QChartView*> chartViews_;
     int          visibleCharts_ = 1;
+    int          layoutRows_ = 1, layoutCols_ = 1;
     // Per-subplot selection (vector keys, e.g. "WBHP:B-1H"). The tree edits
     // the FOCUSED subplot's list; clicking a subplot moves the focus.
     QVector<QStringList> chartSel_;
@@ -218,7 +219,8 @@ private:
     void setStatus(const QString& s);
     // Every checked case, the active one first-hand, others opened lazily.
     std::vector<std::pair<QString, Opm::EclIO::ESmry*>> checkedCases();
-    void applyChartLayout(int n);   // n = 1, 2 or 4 visible subplots
+    void ensureCharts(int n);        // grow the pool to n charts
+    void applyChartLayout(int rows, int cols);   // the visible grid
     void setFocusChart(int i);      // focus subplot i, mirror its keys in the tree
     void updateChartFrames();       // border highlight on the focused subplot
     // Build one chart from the given vecs_ indices; returns the number of

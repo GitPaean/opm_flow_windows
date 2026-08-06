@@ -77,6 +77,22 @@ using Type = Opm::EclIO::SummaryNode::Type;
 
 namespace {
 
+// Subplot layouts offered, rows x columns. 4x4 is the end of the ladder:
+// beyond that a subplot is smaller than its own axis labels on any screen
+// anyone actually has, and the grid stops being plots and becomes sparklines.
+struct Layout { int rows, cols; };
+const Layout kLayouts[] = {
+    {1, 1}, {2, 1}, {1, 2}, {2, 2}, {2, 3}, {3, 2}, {3, 3}, {3, 4},
+    {4, 4}, {4, 6}, {5, 5}, {6, 6},
+};
+// Where the ladder stops rather than where it should be used: 4x4 is already
+// past the point where a date axis fits on a 1920 screen (the tick count
+// thins to suit, see plotChart), and 6x6 is for a wall of screen or a
+// deliberately small-multiples look. It is not our business to say no.
+constexpr int kMaxRows = 6;
+constexpr int kMaxCols = 6;
+constexpr int kMaxCharts = kMaxRows * kMaxCols;
+
 // The legend's size before any scaling; plotChart() scales from here.
 constexpr double kLegendPointSize = 10.5;
 
@@ -555,12 +571,17 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
         auto* bcsv  = new QPushButton(QStringLiteral("Save CSV..."));
         bcsv->setToolTip(QStringLiteral("export the plotted vectors of every checked case"));
         layoutBox_ = new QComboBox;
-        layoutBox_->addItem(QStringLiteral("1 chart"), 1);
-        layoutBox_->addItem(QStringLiteral("2x1"), 2);
-        layoutBox_->addItem(QStringLiteral("2x2"), 4);
+        // rows x columns. The ladder stops at 4x4: on a 4K screen that is
+        // still a ~900x500 px plot each, while on a 1920 screen it is about
+        // as small as a date axis stays readable at.
+        for (const auto& l : kLayouts)
+            layoutBox_->addItem(l.rows * l.cols == 1
+                                    ? QStringLiteral("1 chart")
+                                    : QStringLiteral("%1x%2").arg(l.rows).arg(l.cols),
+                                QPoint(l.rows, l.cols));
         layoutBox_->setToolTip(QStringLiteral(
-            "subplot layout - click a subplot to focus it, then the vector tree "
-            "selects what that subplot shows"));
+            "subplot layout, rows x columns - click a subplot to focus it, then "
+            "the vector tree selects what that subplot shows"));
         row->addWidget(bbrowse);
         row->addWidget(brefresh);
         row->addWidget(autoRef_);
@@ -761,10 +782,11 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
         connect(caseList_, &QListWidget::itemChanged, this,
                 [this](QListWidgetItem* it) { caseItemChanged(it); });
 
-        // A fixed pool of four charts in a grid; applyChartLayout() shows the
-        // first 1, 2 (stacked) or 4 (2x2) of them. Each keeps its own vector
-        // selection (chartSel_); a click focuses a subplot and the tree then
-        // edits that one.
+        // A pool of charts in a grid; applyChartLayout() shows the first
+        // rows x cols of them, and the pool grows to whatever a layout asks
+        // for (see ensureCharts). Each chart keeps its own vector selection
+        // (chartSel_); a click focuses a subplot and the tree then edits that
+        // one, and Ctrl+drag swaps one subplot with another.
         resizeTimer_ = new QTimer(this);
         resizeTimer_->setSingleShot(true);
         resizeTimer_->setInterval(180);
@@ -775,31 +797,8 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
         chartGrid_ = new QGridLayout(chartArea_);
         chartGrid_->setContentsMargins(0, 0, 0, 0);
         chartGrid_->setSpacing(2);
-        for (int i = 0; i < 4; ++i) {
-            auto* c = new QChart;
-            c->legend()->setVisible(true);
-            c->legend()->setAlignment(Qt::AlignBottom);
-            styleChart(c);
-            // a floating legend must follow the plot area as the chart resizes
-            connect(c, &QChart::plotAreaChanged, this,
-                    [this, c](const QRectF&) { placeLegend(c); });
-            auto* v = new QChartView(c, chartArea_);
-            v->setRenderHint(QPainter::Antialiasing);
-            v->setRubberBand(QChartView::RectangleRubberBand);   // drag to zoom
-            // size hints vary with legend content; ignore them so the grid
-            // splits the area into equal-sized subplots
-            v->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
-            v->installEventFilter(this);
-            v->viewport()->installEventFilter(this);
-            v->setMouseTracking(true);      // to show the drag cursor on hover
-            charts_.push_back(c);
-            chartViews_.push_back(v);
-            chartSel_.push_back({});
-            zoomSnap_.push_back({});
-            legendPos_.push_back(QPointF());
-            if (i == 0) chartGrid_->addWidget(v, 0, 0);
-            else        v->hide();
-        }
+        ensureCharts(1);
+        chartGrid_->addWidget(chartViews_[0], 0, 0);
         split->addWidget(chartArea_);
         split->setStretchFactor(0, 0);
         split->setStretchFactor(1, 1);
@@ -1123,14 +1122,23 @@ QJsonObject SummaryPlotWidget::uiState() const
     o[QStringLiteral("active")] = QDir::fromNativeSeparators(activePath());
 
     // What each subplot shows, subplot by subplot (not only the focused one).
+    // Only as many subplots as are in use, or hold a selection: sixteen
+    // arrays, twelve of them empty, is noise in a project file.
+    int used = visibleCharts_;
+    for (int i = 0; i < chartSel_.size(); ++i)
+        if (!chartSel_[i].isEmpty()) used = std::max(used, i + 1);
     QJsonArray sel;
-    for (const QStringList& keys : chartSel_) {
+    for (int i = 0; i < used && i < chartSel_.size(); ++i) {
         QJsonArray a;
-        for (const QString& k : keys) a.append(k);
+        for (const QString& k : chartSel_[i]) a.append(k);
         sel.append(a);
     }
     o[QStringLiteral("selections")] = sel;
-    o[QStringLiteral("layout")] = layoutBox_ ? layoutBox_->currentData().toInt() : 1;
+    o[QStringLiteral("layoutRows")] = layoutRows_;
+    o[QStringLiteral("layoutCols")] = layoutCols_;
+    // ... and the subplot COUNT as well, which is all a 0.7.0 state carried:
+    // one written here still opens in a build that only knows 1 / 2 / 4.
+    o[QStringLiteral("layout")] = visibleCharts_;
     o[QStringLiteral("focus")]  = focusChart_;
 
     // A dragged legend, as the fraction of the chart rect it was left at.
@@ -1232,8 +1240,18 @@ void SummaryPlotWidget::restoreUiState(const QJsonObject& state)
     // Layout BEFORE the per-subplot selections: shrinking the layout shuffles
     // them (it keeps the focused subplot), which would scramble what is being
     // restored here.
-    if (layoutBox_ && has("layout")) {
-        const int i = layoutBox_->findData(val("layout").toInt(1));
+    if (layoutBox_) {
+        // A state from before the grid was rows x columns has only the count.
+        QPoint want(val("layoutRows").toInt(0), val("layoutCols").toInt(0));
+        if (want.x() < 1 || want.y() < 1) {
+            switch (val("layout").toInt(1)) {
+            case 2:  want = QPoint(2, 1); break;
+            case 4:  want = QPoint(2, 2); break;
+            default: want = QPoint(1, 1); break;
+            }
+        }
+        int i = layoutBox_->findData(want);
+        if (i < 0) i = layoutBox_->findData(QPoint(1, 1));
         if (i >= 0) layoutBox_->setCurrentIndex(i);
     }
     if (has("selections")) {
@@ -1669,6 +1687,38 @@ std::vector<std::pair<QString, Opm::EclIO::ESmry*>> SummaryPlotWidget::checkedCa
     return plotCases;
 }
 
+// Build charts up to `n` of them. Called for whatever layout is asked for,
+// so a session that never leaves one chart never pays for sixteen - and a
+// grid nobody expected is a matter of adding more, not of a limit.
+void SummaryPlotWidget::ensureCharts(int n)
+{
+    n = std::min(n, kMaxCharts);
+    while (charts_.size() < n) {
+        auto* c = new QChart;
+        c->legend()->setVisible(true);
+        c->legend()->setAlignment(Qt::AlignBottom);
+        styleChart(c);
+        // a floating legend must follow the plot area as the chart resizes
+        connect(c, &QChart::plotAreaChanged, this,
+                [this, c](const QRectF&) { placeLegend(c); });
+        auto* v = new QChartView(c, chartArea_);
+        v->setRenderHint(QPainter::Antialiasing);
+        v->setRubberBand(QChartView::RectangleRubberBand);   // drag to zoom
+        // size hints vary with legend content; ignore them so the grid
+        // splits the area into equal-sized subplots
+        v->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
+        v->installEventFilter(this);
+        v->viewport()->installEventFilter(this);
+        v->setMouseTracking(true);      // to show the drag cursor on hover
+        v->hide();
+        charts_.push_back(c);
+        chartViews_.push_back(v);
+        chartSel_.push_back({});
+        zoomSnap_.push_back({});
+        legendPos_.push_back(QPointF());
+    }
+}
+
 double SummaryPlotWidget::plotScale(QChart* chart) const
 {
     if (!autoScale_ || !autoScale_->isChecked()) return 1.0;
@@ -1755,9 +1805,14 @@ void SummaryPlotWidget::sortCases(int mode)
     caseOrderChanged();
 }
 
-void SummaryPlotWidget::applyChartLayout(int n)
+void SummaryPlotWidget::applyChartLayout(int rows, int cols)
 {
-    if (n == visibleCharts_) return;
+    rows = std::clamp(rows, 1, kMaxRows);
+    cols = std::clamp(cols, 1, kMaxCols);
+    const int n = std::min(rows * cols, kMaxCharts);
+    ensureCharts(n);
+    if (n == visibleCharts_ && rows == layoutRows_) return;
+
     // Shrinking below the focused subplot: the focused one survives, in the
     // last still-visible slot (its curves and kept zoom move with it).
     if (focusChart_ >= n) {
@@ -1766,24 +1821,20 @@ void SummaryPlotWidget::applyChartLayout(int n)
         focusChart_ = n - 1;
     }
     for (auto* v : chartViews_) chartGrid_->removeWidget(v);
-    struct Pos { int r, c; };
-    static const Pos stacked[] = { {0,0}, {1,0}, {2,0}, {3,0} };
-    static const Pos grid2x2[] = { {0,0}, {0,1}, {1,0}, {1,1} };
-    const Pos* pos = (n == 4) ? grid2x2 : stacked;
     for (int i = 0; i < chartViews_.size(); ++i) {
         if (i < n) {
-            chartGrid_->addWidget(chartViews_[i], pos[i].r, pos[i].c);
+            chartGrid_->addWidget(chartViews_[i], i / cols, i % cols);
             chartViews_[i]->show();
         } else {
             chartViews_[i]->hide();
         }
     }
     // equal-sized subplots: stretch the used rows/columns evenly
-    const int rows = (n == 1) ? 1 : 2;
-    const int cols = (n == 4) ? 2 : 1;
-    for (int r = 0; r < 4; ++r) chartGrid_->setRowStretch(r, r < rows ? 1 : 0);
-    for (int c = 0; c < 2; ++c) chartGrid_->setColumnStretch(c, c < cols ? 1 : 0);
+    for (int r = 0; r < kMaxRows; ++r) chartGrid_->setRowStretch(r, r < rows ? 1 : 0);
+    for (int c = 0; c < kMaxCols; ++c) chartGrid_->setColumnStretch(c, c < cols ? 1 : 0);
     visibleCharts_ = n;
+    layoutRows_ = rows;
+    layoutCols_ = cols;
     setFocusChart(focusChart_);   // re-mirror the tree, refresh the frames
 }
 
@@ -1904,9 +1955,8 @@ bool SummaryPlotWidget::eventFilter(QObject* obj, QEvent* ev)
 
 void SummaryPlotWidget::replot()
 {
-    int want = layoutBox_ ? layoutBox_->currentData().toInt() : 1;
-    if (want <= 0) want = 1;
-    applyChartLayout(want);
+    const QPoint want = layoutBox_ ? layoutBox_->currentData().toPoint() : QPoint(1, 1);
+    applyChartLayout(std::max(1, want.x()), std::max(1, want.y()));
 
     for (int i = 0; i < charts_.size(); ++i) {
         QChart* c = charts_[i];
@@ -2199,15 +2249,28 @@ int SummaryPlotWidget::plotChart(QChart* chart, const QList<int>& sel,
     // case, so both dimensions stay readable.
     const bool colourByCase = multi && sel.size() == 1;
 
+    // How many ticks a subplot this size can label. Qt ELIDES a label that
+    // does not fit rather than dropping the tick, so in a dense grid a date
+    // turns into "2018-1..." unless there are fewer of them. The labels
+    // themselves stay at full size - they are the last thing that should
+    // shrink.
+    const int vidx = charts_.indexOf(chart);
+    const QSize vsz = (vidx >= 0 && vidx < chartViews_.size())
+                          ? chartViews_[vidx]->size() : QSize(900, 600);
+    const int xTicks = std::clamp(vsz.width()  / (useDates ? 170 : 130), 2, 6);
+    const int yTicks = std::clamp(vsz.height() / 90, 2, 6);
+
     QAbstractAxis* ax = nullptr;
     if (useDates) {
         auto* a = new QDateTimeAxis;
         a->setFormat(QStringLiteral("yyyy-MM-dd"));
         a->setTitleText(QStringLiteral("date"));
+        a->setTickCount(xTicks);
         ax = a;
     } else {
         auto* a = new QValueAxis;
         a->setTitleText(QStringLiteral("time [days]"));
+        a->setTickCount(xTicks);
         ax = a;
     }
     chart->addAxis(ax, Qt::AlignBottom);
@@ -2391,7 +2454,8 @@ int SummaryPlotWidget::plotChart(QChart* chart, const QList<int>& sel,
 
     // Round tick values ("6 000 000", not "5581102.4"): applyNiceNumbers()
     // widens the range to the next round step and picks a matching tick count.
-    auto pad = [](QValueAxis* a, double lo, double hi) {
+    auto pad = [yTicks](QValueAxis* a, double lo, double hi) {
+        a->setTickCount(yTicks);
         if (hi > lo) a->setRange(lo - 0.05 * (hi - lo), hi + 0.05 * (hi - lo));
         else         a->setRange(lo - 1.0, hi + 1.0);
         a->applyNiceNumbers();

@@ -54,10 +54,18 @@ results, animate them in 3D, and edit decks — all in one window.
   written anything). The search box also accepts comma-separated
   **wildcard filters** qsummary-style — `WBHP:B*, WOPR*` narrows the tree
   to the matching `KEYWORD:ITEM` keys (plain text still matches anywhere).
-  **Subplots** (layout 1 / 2x1 / 2x2) each keep their own selection:
-  click a subplot to focus it — the focused one gets a blue frame — and
-  the vector tree then shows and edits that subplot's curves; subplots are
-  equally sized, and shrinking the layout keeps the focused one. Drag to
+  **Subplots** — the *Layout* box offers grids from a single chart up to
+  **6×6** (1, 2×1, 1×2, 2×2, 2×3, 3×2, 3×3, 3×4, 4×4, 4×6, 5×5, 6×6), and
+  each subplot keeps its own selection: click one to focus it — the focused
+  one gets a blue frame — and the vector tree then shows and edits that
+  subplot's curves; subplots are equally sized, and shrinking the layout
+  keeps the focused one. Charts are built as a layout asks for them, so a
+  session that stays on one chart pays for one.
+  How dense a grid is *useful* is a matter of screen: 2×2 is comfortable
+  anywhere, 3×3 wants about 1920 px across, and 4×4 and beyond want a 4K
+  panel or a deliberately small-multiples look — the axes thin their tick
+  count to whatever the subplot can label rather than shrinking the labels
+  or eliding them, so a dense grid stays readable as far as it can.
   zoom — a zoomed view survives refreshes until *Reset zoom* — and
   refreshes also keep the tree's expansion and scroll position. Calendar
   dates on the X axis by default (untick *date axis* for days).
