@@ -1,0 +1,177 @@
+# Copyright (C) 2026 SINTEF Digital, Mathematics & Cybernetics; GPL-3.0-or-later (see LICENSE).
+#
+# Weekly canary: does the Windows patch series still build against today's
+# upstream OPM?
+#
+# The series lives on the 'windows' branch of the GitPaean forks and is rebased
+# onto upstream master as it moves. Left alone, the cost of that rebase grows
+# with the gap: a week of upstream is usually one small conflict, three months
+# is a pile of them plus a build failure with a dozen candidate causes. So this
+# rebases first and builds the result - the point is to hear about a break in
+# the week it happens, not at the next release.
+#
+# A conflict and a build failure are reported as different outcomes on purpose:
+# a conflict needs a human judgement about the code, a build failure usually
+# names the upstream commit that caused it.
+#
+# Deliberately NOT triggered by pull_request. If this is ever moved to a
+# self-hosted runner, a fork PR would otherwise run arbitrary code on that
+# machine - these repositories are public.
+
+name: windows-weekly
+
+on:
+  schedule:
+    - cron: '0 3 * * 1'          # Mondays, 03:00 UTC
+  workflow_dispatch:
+    inputs:
+      sim_target:
+        description: 'opm-simulators target to build'
+        type: choice
+        options: [flow_blackoil, flow]
+        default: flow_blackoil
+      rebase:
+        description: 'Rebase onto upstream master before building'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-weekly
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: windows-latest
+    # Below the 6 h hosted-runner ceiling, so an overrun is reported as a
+    # timeout here rather than as an opaque cancellation.
+    timeout-minutes: 330
+    defaults:
+      run:
+        shell: pwsh
+
+    env:
+      FORK_ORG: GitPaean
+      FORK_BRANCH: windows
+      # vcpkg builds the dependencies once and restores them from the Actions
+      # cache on later runs; without this every run pays for Boost from source.
+      VCPKG_BINARY_SOURCES: 'clear;x-gha,readwrite'
+
+    steps:
+      - name: Check out the build harness
+        uses: actions/checkout@v4
+
+      - name: Export Actions cache endpoints for vcpkg
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
+      # Disk is the constraint most likely to sink this on a hosted runner: the
+      # working trees measured ~35 GB on a developer machine, of which vcpkg is
+      # the bulk. Report it up front so a first manual run answers that question
+      # even if a later step fails.
+      - name: Free disk before
+        run: |
+          Get-PSDrive C | Select-Object -Property Used, Free |
+            Format-List | Out-String | Write-Host
+
+      - name: Fetch the forks and rebase onto upstream
+        id: rebase
+        run: |
+          $ErrorActionPreference = 'Continue'
+          git config --global user.email 'windows-weekly@users.noreply.github.com'
+          git config --global user.name  'windows-weekly'
+          # An input is empty on a scheduled run, so default to rebasing.
+          $doRebase = '${{ inputs.rebase }}' -ne 'false'
+          New-Item -ItemType Directory -Force -Path src | Out-Null
+
+          $conflicted = @()
+          $summary = @()
+          foreach ($m in 'opm-common', 'opm-grid', 'opm-simulators') {
+            Write-Host "::group::$m"
+            git clone --quiet -c core.autocrlf=false `
+              --branch $env:FORK_BRANCH "https://github.com/$env:FORK_ORG/$m.git" "src/$m"
+            if ($LASTEXITCODE -ne 0) { throw "could not clone $m" }
+            git -C "src/$m" remote add upstream "https://github.com/OPM/$m.git"
+            git -C "src/$m" fetch --quiet upstream master
+            if ($LASTEXITCODE -ne 0) { throw "could not fetch upstream/$m" }
+
+            $behind = (git -C "src/$m" rev-list --count 'HEAD..upstream/master').Trim()
+            $ahead  = (git -C "src/$m" rev-list --count 'upstream/master..HEAD').Trim()
+            Write-Host "$m : $ahead patch commit(s), $behind upstream commit(s) not yet in $env:FORK_BRANCH"
+
+            if ($doRebase -and $behind -ne '0') {
+              git -C "src/$m" rebase upstream/master
+              if ($LASTEXITCODE -ne 0) {
+                # Leave nothing half-rebased behind; the report is the output.
+                git -C "src/$m" rebase --abort
+                $conflicted += $m
+                $summary += "| $m | $ahead | $behind | **conflict** |"
+                Write-Host "::warning title=Rebase conflict::$m does not rebase cleanly onto upstream/master"
+              } else {
+                $summary += "| $m | $ahead | $behind | rebased |"
+              }
+            } else {
+              $summary += "| $m | $ahead | $behind | up to date |"
+            }
+            Write-Host '::endgroup::'
+          }
+
+          "## Rebase onto upstream master`n"                      | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          "| module | patch commits | upstream commits behind | result |" | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          "|---|---|---|---|"                                     | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          $summary | Out-File -Append $env:GITHUB_STEP_SUMMARY
+
+          if ($conflicted.Count -gt 0) {
+            $names = $conflicted -join ', '
+            "`n**Conflicts in: $names** - these need a human, not a rerun." |
+              Out-File -Append $env:GITHUB_STEP_SUMMARY
+            Write-Host "::error title=Rebase conflict::$names conflict with upstream/master. Resolve locally; the build was not attempted."
+            exit 1
+          }
+
+      # build-all.ps1 clones vcpkg and DUNE and applies the DUNE MSVC patches.
+      # It skips any OPM module that is already present, so the rebased trees
+      # above are kept. Do NOT pass -SkipClone: that also skips Apply-DunePatch,
+      # and the DUNE build then fails on Windows.
+      - name: Build
+        id: build
+        run: |
+          $target = '${{ inputs.sim_target }}'
+          if (-not $target) { $target = 'flow_blackoil' }
+          Write-Host "building target: $target"
+          .\build-all.ps1 -SimTarget $target -Jobs 4
+          if ($LASTEXITCODE -ne 0) { throw "build failed" }
+
+      - name: Run SPE1
+        run: |
+          $target = '${{ inputs.sim_target }}'
+          if (-not $target) { $target = 'flow_blackoil' }
+          $exe  = ".\build\opm-simulators\bin\$target.exe"
+          $deck = '.\src\opm-simulators\python\test_data\SPE1CASE1a\SPE1CASE1.DATA'
+          & $exe $deck --output-dir=spe1_out --threads-per-process=1
+          if ($LASTEXITCODE -ne 0) { throw "SPE1 run failed ($LASTEXITCODE)" }
+          # A run that exits 0 having written nothing would still be a failure.
+          if (-not (Test-Path 'spe1_out\SPE1CASE1.UNSMRY')) { throw 'SPE1 wrote no summary output' }
+          "`n## Smoke test`nSPE1 ran to completion and wrote its summary output." |
+            Out-File -Append $env:GITHUB_STEP_SUMMARY
+
+      - name: Free disk after
+        if: always()
+        run: |
+          Get-PSDrive C | Select-Object -Property Used, Free |
+            Format-List | Out-String | Write-Host
+
+      - name: Upload the binary
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: flow-windows-x64
+          retention-days: 14
+          path: |
+            build/opm-simulators/bin/*.exe
+            build/opm-simulators/bin/*.dll

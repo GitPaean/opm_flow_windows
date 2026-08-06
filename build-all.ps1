@@ -349,6 +349,11 @@ Step "4/4  Build DUNE -> opm-common -> opm-grid -> opm-simulators$(if($Upscaling
 
 $buildModule = Join-Path $Root 'build-module.ps1'
 
+# The executable to report at the end. -SimTarget names a target, and for every
+# target except 'all' that is also the exe name; 'all' builds every flow_*
+# variant, of which 'flow' is the one that carries them all.
+$builtExe = if ($SimTarget -eq 'all') { 'flow' } else { $SimTarget }
+
 # OpenMP applies to the OPM modules only; DUNE is always built without it.
 if ($Mpi) {
     Ensure-MsMpi
@@ -362,7 +367,7 @@ if ($Mpi) {
     & $buildModule opm-simulators -Mpi -OpenMP:$OpenMP -Target $SimTarget -Jobs $Jobs
     # opm-upscaling tools live in examples/, so build the 'all' target with examples on.
     if ($Upscaling) { & $buildModule opm-upscaling -Mpi -OpenMP:$OpenMP -Target all -Extra '-DBUILD_EXAMPLES=ON' -Jobs $Jobs }
-    $exe = Join-Path $Root 'build-mpi\opm-simulators\bin\flow_blackoil.exe'
+    $exe = Join-Path $Root "build-mpi\opm-simulators\bin\$builtExe.exe"
 } else {
     & $buildModule dune-common   -Jobs $Jobs
     & $buildModule dune-geometry -Jobs $Jobs
@@ -373,7 +378,7 @@ if ($Mpi) {
     & $buildModule opm-simulators -OpenMP:$OpenMP -Target $SimTarget -Jobs $Jobs
     # opm-upscaling tools live in examples/, so build the 'all' target with examples on.
     if ($Upscaling) { & $buildModule opm-upscaling -OpenMP:$OpenMP -Target all -Extra '-DBUILD_EXAMPLES=ON' -Jobs $Jobs }
-    $exe = Join-Path $Root 'build\opm-simulators\bin\flow_blackoil.exe'
+    $exe = Join-Path $Root "build\opm-simulators\bin\$builtExe.exe"
 }
 
 if (Test-Path $exe) {
@@ -383,7 +388,7 @@ if (Test-Path $exe) {
         Write-Host "Run in parallel:  mpiexec -n 2 `"$exe`" <deck>.DATA --output-dir=<dir>"
     }
 } else {
-    throw "flow_blackoil.exe was not produced"
+    throw "$builtExe.exe was not produced"
 }
 
 if ($Upscaling) {
