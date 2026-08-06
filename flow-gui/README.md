@@ -68,7 +68,8 @@ results, animate them in 3D, and edit decks — all in one window.
   panel or a deliberately small-multiples look — the axes thin their tick
   count to whatever the subplot can label rather than shrinking the labels
   or eliding them, so a dense grid stays readable as far as it can. Drag to
-  zoom — a zoomed view survives refreshes until *Reset zoom* — and
+  zoom — a zoomed view survives refreshes until *Reset zoom*, which clears
+  every subplot, or just the focused one from the arrow beside it — and
   refreshes also keep the tree's expansion and scroll position. Calendar
   dates on the X axis by default (untick *date axis* for days).
   The **legend** can be docked to any edge, floated in a corner *inside* the

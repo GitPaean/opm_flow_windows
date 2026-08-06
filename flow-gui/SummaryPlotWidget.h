@@ -225,6 +225,7 @@ private:
     void setFocusChart(int i);      // focus subplot i, mirror its keys in the tree
     int  chartAt(const QPoint& globalPos) const;   // subplot under the cursor
     void swapCharts(int a, int b);  // exchange what two subplots show
+    void resetZoom(bool focusedOnly);   // all subplots, or just the focused
     void updateChartFrames();       // border highlight on the focused subplot
     // Build one chart from the given vecs_ indices; returns the number of
     // vectors skipped because the chart already carries two units.

@@ -566,7 +566,21 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
             "line width, marker size and legend size follow the size of the "
             "chart they are drawn in, so a 2x2 layout is not four heavy plots; "
             "off pins them to exactly the values set here"));
-        auto* bzoom = new QPushButton(QStringLiteral("Reset zoom"));
+        // A zoom belongs to one subplot, so undoing it should be able to as
+        // well: the button clears them all (what it always did), the arrow
+        // beside it offers the focused one on its own.
+        auto* bzoom = new QToolButton;
+        bzoom->setText(QStringLiteral("Reset zoom"));
+        bzoom->setPopupMode(QToolButton::MenuButtonPopup);
+        bzoom->setToolTip(QStringLiteral(
+            "back to the full range - every subplot; the arrow resets only the "
+            "focused one"));
+        auto* zoomMenu = new QMenu(bzoom);
+        zoomMenu->addAction(QStringLiteral("All subplots"), this,
+                            [this] { resetZoom(false); });
+        zoomMenu->addAction(QStringLiteral("This subplot only"), this,
+                            [this] { resetZoom(true); });
+        bzoom->setMenu(zoomMenu);
         auto* bpng  = new QPushButton(QStringLiteral("Save figure..."));
         auto* bcsv  = new QPushButton(QStringLiteral("Save CSV..."));
         bcsv->setToolTip(QStringLiteral("export the plotted vectors of every checked case"));
@@ -635,13 +649,7 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
         connect(markerEverySpin_, &QSpinBox::valueChanged, this, [this](int) { replot(); });
         connect(legendScaleSpin_, &QDoubleSpinBox::valueChanged, this, [this](double) { replot(); });
         connect(autoScale_, &QCheckBox::toggled, this, [this](bool) { replot(); });
-        connect(bzoom, &QPushButton::clicked, this, [this] {
-            for (int i = 0; i < visibleCharts_; ++i) {
-                charts_[i]->zoomReset();
-                zoomSnap_[i] = ZoomSnap();   // forget the kept view
-            }
-            replot();                        // back to the natural ranges
-        });
+        connect(bzoom, &QToolButton::clicked, this, [this] { resetZoom(false); });
         connect(bpng,  &QPushButton::clicked, this, [this] { savePng(); });
         connect(bcsv,  &QPushButton::clicked, this, [this] { saveCsv(); });
         timer_ = new QTimer(this);
@@ -1836,6 +1844,20 @@ void SummaryPlotWidget::applyChartLayout(int rows, int cols)
     layoutRows_ = rows;
     layoutCols_ = cols;
     setFocusChart(focusChart_);   // re-mirror the tree, refresh the frames
+}
+
+// Back to the natural ranges: every subplot, or only the focused one.
+void SummaryPlotWidget::resetZoom(bool focusedOnly)
+{
+    for (int i = 0; i < visibleCharts_ && i < charts_.size(); ++i) {
+        if (focusedOnly && i != focusChart_) continue;
+        charts_[i]->zoomReset();
+        zoomSnap_[i] = ZoomSnap();       // forget the kept view
+    }
+    replot();
+    if (focusedOnly && visibleCharts_ > 1)
+        setStatus(QStringLiteral("subplot %1 back to its full range")
+                      .arg(focusChart_ + 1));
 }
 
 // Which visible subplot is under this point on screen, or -1.
