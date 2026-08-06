@@ -117,7 +117,7 @@ private:
     QComboBox*   subItemBox_ = nullptr;
     QLineEdit*   filter_    = nullptr;
     QTreeWidget* tree_      = nullptr;
-    QComboBox*   layoutBox_ = nullptr;   // subplot layout: 1 / 2x1 / 2x2
+    QToolButton* layoutBtn_ = nullptr;   // the subplot grid, picked as a shape
     QSplitter*   caseSplit_ = nullptr;   // case list over vector tree
     QSplitter*   mainSplit_ = nullptr;   // that panel next to the charts
     QComboBox*   legendBox_ = nullptr;   // legend placement, incl. inside corners
@@ -220,6 +220,7 @@ private:
     void setStatus(const QString& s);
     // Every checked case, the active one first-hand, others opened lazily.
     std::vector<std::pair<QString, Opm::EclIO::ESmry*>> checkedCases();
+    void setLayoutGrid(int rows, int cols);   // what the picker chose
     void ensureCharts(int n);        // grow the pool to n charts
     void applyChartLayout(int rows, int cols);   // the visible grid
     void setFocusChart(int i);      // focus subplot i, mirror its keys in the tree

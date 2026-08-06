@@ -61,12 +61,14 @@
 #include <QTreeWidgetItem>
 #include <QTreeWidgetItemIterator>
 #include <QVBoxLayout>
+#include <QWidgetAction>
 #include <QValueAxis>
 
 #include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <exception>
+#include <functional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -80,18 +82,76 @@ namespace {
 // Subplot layouts offered, rows x columns. 4x4 is the end of the ladder:
 // beyond that a subplot is smaller than its own axis labels on any screen
 // anyone actually has, and the grid stops being plots and becomes sparklines.
-struct Layout { int rows, cols; };
-const Layout kLayouts[] = {
-    {1, 1}, {2, 1}, {1, 2}, {2, 2}, {2, 3}, {3, 2}, {3, 3}, {3, 4},
-    {4, 4}, {4, 6}, {5, 5}, {6, 6},
-};
-// Where the ladder stops rather than where it should be used: 4x4 is already
+// The subplot grid is picked as a SHAPE, not from a list of presets: what a
+// wide screen wants is 2x5 or 3x6, and a list long enough to hold those is a
+// list nobody reads. More columns than rows on offer for the same reason.
+//
+// Where the grid stops rather than where it should be used: 4x4 is already
 // past the point where a date axis fits on a 1920 screen (the tick count
-// thins to suit, see plotChart), and 6x6 is for a wall of screen or a
+// thins to suit, see plotChart), and the far end is for a wall of screen or a
 // deliberately small-multiples look. It is not our business to say no.
 constexpr int kMaxRows = 6;
-constexpr int kMaxCols = 6;
+constexpr int kMaxCols = 8;
 constexpr int kMaxCharts = kMaxRows * kMaxCols;
+
+// Hover a cell to choose that many rows and columns, the way office suites
+// pick a table size - the shape is the point, so show it rather than name it.
+class LayoutPicker : public QWidget
+{
+public:
+    using Chosen = std::function<void(int rows, int cols)>;
+
+    LayoutPicker(int rows, int cols, Chosen chosen, QWidget* parent = nullptr)
+        : QWidget(parent), rows_(rows), cols_(cols), chosen_(std::move(chosen))
+    {
+        setMouseTracking(true);
+        setFixedSize(kMargin * 2 + cols_ * kCell, kMargin * 2 + rows_ * kCell + kText);
+    }
+
+protected:
+    void paintEvent(QPaintEvent*) override
+    {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing, false);
+        for (int r = 0; r < rows_; ++r) {
+            for (int c = 0; c < cols_; ++c) {
+                const QRect cell(kMargin + c * kCell, kMargin + r * kCell,
+                                 kCell - 2, kCell - 2);
+                const bool on = r <= hoverRow_ && c <= hoverCol_;
+                p.fillRect(cell, on ? QColor(0x2f, 0x6f, 0xd0) : QColor(0xff, 0xff, 0xff));
+                p.setPen(QColor(on ? 0x1a : 0xb0, on ? 0x50 : 0xb6, on ? 0xa0 : 0xbc));
+                p.drawRect(cell);
+            }
+        }
+        p.setPen(QColor(0x22, 0x26, 0x2b));
+        const QRect text(0, kMargin + rows_ * kCell, width(), kText);
+        const int n = (hoverRow_ + 1) * (hoverCol_ + 1);
+        p.drawText(text, Qt::AlignCenter,
+                   hoverRow_ < 0 ? QStringLiteral("pick a grid")
+                   : n == 1      ? QStringLiteral("1 chart")
+                                 : QStringLiteral("%1 x %2  (%3 charts)")
+                                       .arg(hoverRow_ + 1).arg(hoverCol_ + 1).arg(n));
+    }
+    void mouseMoveEvent(QMouseEvent* ev) override
+    {
+        const int c = (ev->position().x() - kMargin) / kCell;
+        const int r = (ev->position().y() - kMargin) / kCell;
+        hoverRow_ = std::clamp(r, 0, rows_ - 1);
+        hoverCol_ = std::clamp(c, 0, cols_ - 1);
+        update();
+    }
+    void mouseReleaseEvent(QMouseEvent*) override
+    {
+        if (hoverRow_ >= 0 && chosen_) chosen_(hoverRow_ + 1, hoverCol_ + 1);
+    }
+    void leaveEvent(QEvent*) override { hoverRow_ = hoverCol_ = -1; update(); }
+
+private:
+    static constexpr int kCell = 18, kMargin = 6, kText = 20;
+    int rows_, cols_;
+    int hoverRow_ = -1, hoverCol_ = -1;
+    Chosen chosen_;
+};
 
 // The legend's size before any scaling; plotChart() scales from here.
 constexpr double kLegendPointSize = 10.5;
@@ -584,18 +644,23 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
         auto* bpng  = new QPushButton(QStringLiteral("Save figure..."));
         auto* bcsv  = new QPushButton(QStringLiteral("Save CSV..."));
         bcsv->setToolTip(QStringLiteral("export the plotted vectors of every checked case"));
-        layoutBox_ = new QComboBox;
-        // rows x columns. The ladder stops at 4x4: on a 4K screen that is
-        // still a ~900x500 px plot each, while on a 1920 screen it is about
-        // as small as a date axis stays readable at.
-        for (const auto& l : kLayouts)
-            layoutBox_->addItem(l.rows * l.cols == 1
-                                    ? QStringLiteral("1 chart")
-                                    : QStringLiteral("%1x%2").arg(l.rows).arg(l.cols),
-                                QPoint(l.rows, l.cols));
-        layoutBox_->setToolTip(QStringLiteral(
-            "subplot layout, rows x columns - click a subplot to focus it, then "
-            "the vector tree selects what that subplot shows"));
+        layoutBtn_ = new QToolButton;
+        layoutBtn_->setPopupMode(QToolButton::InstantPopup);
+        layoutBtn_->setToolTip(QStringLiteral(
+            "the subplot grid - hover the cells to pick rows x columns; click a "
+            "subplot to focus it, and the vector tree then selects what that "
+            "subplot shows"));
+        {
+            auto* menu = new QMenu(layoutBtn_);
+            auto* act = new QWidgetAction(menu);
+            act->setDefaultWidget(new LayoutPicker(
+                kMaxRows, kMaxCols, [this, menu](int r, int c) {
+                    menu->hide();
+                    setLayoutGrid(r, c);
+                }, menu));
+            menu->addAction(act);
+            layoutBtn_->setMenu(menu);
+        }
         row->addWidget(bbrowse);
         row->addWidget(brefresh);
         row->addWidget(autoRef_);
@@ -632,13 +697,12 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
             for (auto* c : std::as_const(charts_)) placeLegend(c);
         });
         row->addWidget(new QLabel(QStringLiteral("Layout:")));
-        row->addWidget(layoutBox_);
+        row->addWidget(layoutBtn_);
         row->addWidget(bzoom);
         row->addWidget(bpng);
         row->addWidget(bcsv);
         top->addLayout(row);
-        connect(layoutBox_, &QComboBox::currentIndexChanged, this,
-                [this](int) { replot(); });
+
 
         connect(bbrowse,  &QPushButton::clicked, this, [this] { browseCase(); });
         connect(brefresh, &QPushButton::clicked, this, [this] { reload(true); });
@@ -825,6 +889,8 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
             replot();
         });
     }
+
+    setLayoutGrid(1, 1);        // labels the button, lays the single chart out
 
     status_ = new QLabel;
     top->addWidget(status_);
@@ -1248,19 +1314,17 @@ void SummaryPlotWidget::restoreUiState(const QJsonObject& state)
     // Layout BEFORE the per-subplot selections: shrinking the layout shuffles
     // them (it keeps the focused subplot), which would scramble what is being
     // restored here.
-    if (layoutBox_) {
+    {
         // A state from before the grid was rows x columns has only the count.
-        QPoint want(val("layoutRows").toInt(0), val("layoutCols").toInt(0));
-        if (want.x() < 1 || want.y() < 1) {
+        int rows = val("layoutRows").toInt(0), cols = val("layoutCols").toInt(0);
+        if (rows < 1 || cols < 1) {
             switch (val("layout").toInt(1)) {
-            case 2:  want = QPoint(2, 1); break;
-            case 4:  want = QPoint(2, 2); break;
-            default: want = QPoint(1, 1); break;
+            case 2:  rows = 2; cols = 1; break;
+            case 4:  rows = 2; cols = 2; break;
+            default: rows = 1; cols = 1; break;
             }
         }
-        int i = layoutBox_->findData(want);
-        if (i < 0) i = layoutBox_->findData(QPoint(1, 1));
-        if (i >= 0) layoutBox_->setCurrentIndex(i);
+        setLayoutGrid(rows, cols);
     }
     if (has("selections")) {
         const QJsonArray sel = val("selections").toArray();
@@ -1695,6 +1759,19 @@ std::vector<std::pair<QString, Opm::EclIO::ESmry*>> SummaryPlotWidget::checkedCa
     return plotCases;
 }
 
+// Show this many rows and columns of subplots, and say so on the button.
+void SummaryPlotWidget::setLayoutGrid(int rows, int cols)
+{
+    rows = std::clamp(rows, 1, kMaxRows);
+    cols = std::clamp(cols, 1, kMaxCols);
+    applyChartLayout(rows, cols);
+    if (layoutBtn_)
+        layoutBtn_->setText(rows * cols == 1
+                                ? QStringLiteral("Layout: 1 chart")
+                                : QStringLiteral("Layout: %1 x %2").arg(rows).arg(cols));
+    replot();
+}
+
 // Build charts up to `n` of them. Called for whatever layout is asked for,
 // so a session that never leaves one chart never pays for sixteen - and a
 // grid nobody expected is a matter of adding more, not of a limit.
@@ -2024,8 +2101,7 @@ bool SummaryPlotWidget::eventFilter(QObject* obj, QEvent* ev)
 
 void SummaryPlotWidget::replot()
 {
-    const QPoint want = layoutBox_ ? layoutBox_->currentData().toPoint() : QPoint(1, 1);
-    applyChartLayout(std::max(1, want.x()), std::max(1, want.y()));
+    applyChartLayout(layoutRows_, layoutCols_);
 
     for (int i = 0; i < charts_.size(); ++i) {
         QChart* c = charts_[i];
