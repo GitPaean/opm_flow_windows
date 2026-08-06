@@ -138,6 +138,41 @@ License and source code
   OPM Flow is free software under the GNU GPL v3+ (see LICENSE.txt).
 "@ | Set-Content -Encoding utf8 (Join-Path $Stage 'README.txt')
 
+# --- exact source revisions this package was built from ---------------------
+# GPLv3 requires the *corresponding* source, so naming a branch is not enough:
+# a branch moves, and then the statement below points at code these binaries
+# were never built from. Record the commit each module was actually built at,
+# and a tag if one points there. Branch names are given only for orientation.
+function Source-Revision {
+    param([string]$Module)
+    $dir = Join-Path $Root "src\$Module"
+    if (-not (Test-Path (Join-Path $dir '.git'))) { return "(source tree not present at package time)" }
+    $prev = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    $sha    = (& git -C $dir rev-parse HEAD 2>$null)
+    $branch = (& git -C $dir rev-parse --abbrev-ref HEAD 2>$null)
+    $tag    = (& git -C $dir describe --tags --exact-match HEAD 2>$null)
+    $dirty  = (& git -C $dir status --porcelain 2>$null)
+    $ErrorActionPreference = $prev
+    if (-not $sha) { return "(revision could not be determined)" }
+    $out = "commit $sha"
+    if ($tag)    { $out += " (tag $tag)" }
+    elseif ($branch -and $branch -ne 'HEAD') { $out += " (on branch $branch at build time)" }
+    if ($dirty)  { $out += " + UNCOMMITTED LOCAL CHANGES" }
+    return $out
+}
+$revCommon     = Source-Revision 'opm-common'
+$revGrid       = Source-Revision 'opm-grid'
+$revSimulators = Source-Revision 'opm-simulators'
+$prevEA = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+$revHarness = (& git -C $Root rev-parse HEAD 2>$null)
+$ErrorActionPreference = $prevEA
+if (-not $revHarness) { $revHarness = '(revision could not be determined)' } else { $revHarness = "commit $revHarness" }
+foreach ($r in $revCommon, $revGrid, $revSimulators) {
+    if ($r -match 'UNCOMMITTED') {
+        Write-Warning "Source tree has uncommitted changes - the LICENSE.txt source statement cannot be satisfied by any published commit. Commit and push before releasing."
+    }
+}
+
 @"
 OPM Flow is developed by the Open Porous Media (OPM) initiative
   https://opm-project.org        https://github.com/OPM
@@ -156,11 +191,20 @@ Source code
   These Windows binaries additionally contain a small set of
   Windows/MSVC-specific patches that are pending upstream merge. The
   complete corresponding source for exactly these binaries (upstream
-  code + those patches + the build harness and GUI) is available at:
+  code + those patches + the build harness and GUI) is the following
+  revisions. These are commit ids, not branch names: branches move on,
+  and a moved branch would no longer be the source of these binaries.
     https://github.com/GitPaean/opm_flow_windows
-    https://github.com/GitPaean/opm-common      (branch: windows)
-    https://github.com/GitPaean/opm-grid        (branch: windows)
-    https://github.com/GitPaean/opm-simulators  (branch: windows)
+      $revHarness
+    https://github.com/GitPaean/opm-common
+      $revCommon
+    https://github.com/GitPaean/opm-grid
+      $revGrid
+    https://github.com/GitPaean/opm-simulators
+      $revSimulators
+  Fetch one with, for example:
+    git clone https://github.com/GitPaean/opm-common && cd opm-common
+    git checkout <commit id above>
   Once the patches are merged upstream, the OPM repositories alone are
   the source.
 
