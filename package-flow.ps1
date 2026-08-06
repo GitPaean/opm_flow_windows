@@ -24,11 +24,12 @@
 param(
     [string]  $Version    = '2026.10-pre',
     [string[]]$Simulators = @('flow'),
-    # Package the Intel MPI build (build-impi\) instead of the MS-MPI one, and
-    # carry the Intel MPI runtime inside bin\ rather than an installer in
-    # redist\. Intel's Simplified Software License permits redistributing the
-    # runtime in binary form as long as its terms travel with it, so the package
-    # becomes self-contained: no MPI prerequisite, and mpiexec ships with it.
+    # Package the Intel MPI build (build-impi\) instead of the MS-MPI one.
+    # The Intel MPI runtime is NOT redistributed here: flow.exe is GPLv3, and
+    # shipping a proprietary MPI inside the same package raises a licensing
+    # question this project is not in a position to settle. The user installs
+    # it themselves - which needs no administrator rights, unlike MS-MPI, and
+    # is the whole point of this variant.
     [switch]  $IntelMpi,
     [switch]  $Zip
 )
@@ -73,28 +74,69 @@ Get-ChildItem "$SimBin\*.dll" |
     Where-Object Name -NotLike 'boost_unit_test*' |    # test-only dependency
     Copy-Item -Destination $Bin
 
-# --- Intel MPI runtime, app-local ------------------------------------------
-# Verified to run serial and under mpiexec with only the Windows system
-# directories on PATH: no oneAPI install, no hydra_service registration, no
-# admin. hydra_service.exe is deliberately NOT shipped - it is only needed to
-# launch ranks on *remote* nodes, which a desktop package does not do.
-# The tuning tables must sit beside impi.dll: without them the library still
-# runs but reports "Unable to read tuning file" and falls back to untuned
-# collectives, which would give away part of why we picked Intel MPI.
+# --- Intel MPI: launcher, not runtime ---------------------------------------
+# The runtime itself is deliberately not copied in - see the -IntelMpi comment
+# above. What ships instead is a launcher that finds a pip-installed Intel MPI
+# and puts it on PATH for the command it runs, because pip installs to
+# %APPDATA%\Python\Library\bin, which Windows does not search. Without that a
+# user who has done everything right still gets "the code execution cannot
+# proceed because impi.dll was not found", which names the symptom and not the
+# cause.
 if ($IntelMpi) {
-    if (-not (Test-Path "$ImpiRoot\bin\impi.dll")) {
-        throw "Intel MPI runtime not found at $ImpiRoot (python -m pip install --user impi-rt)"
-    }
-    Step "Intel MPI runtime -> bin\ (app-local)"
-    foreach ($f in 'impi.dll','libfabric.dll','mpiexec.exe',
-                   'hydra_bstrap_proxy.exe','hydra_pmi_proxy.exe') {
-        Copy-Item (Join-Path "$ImpiRoot\bin" $f) $Bin
-    }
-    Copy-Item "$ImpiRoot\etc\*.dat"         $Bin
-    Copy-Item "$ImpiRoot\opt\mpi\etc\*.dat" $Bin
-    $impiMB = [math]::Round(((Get-ChildItem $Bin -Include impi.dll,libfabric.dll,mpiexec.exe,hydra_*.exe,tuning_*.dat -Recurse |
-                              Measure-Object Length -Sum).Sum/1MB),1)
-    Write-Host "  impi.dll + libfabric + mpiexec/hydra + $((Get-ChildItem $Bin -Filter 'tuning_*.dat').Count) tuning tables = $impiMB MB"
+    Step "Intel MPI launcher -> bin\flow-impi.cmd"
+    @'
+@echo off
+rem Run flow with a pip-installed Intel MPI runtime.
+rem
+rem   python -m pip install --user impi-rt      (no administrator rights needed)
+rem
+rem pip puts impi.dll in %APPDATA%\Python\Library\bin, which is not on PATH, so
+rem put it there for this command only - nothing is installed or changed.
+rem
+rem   flow-impi.cmd DECK.DATA --output-dir=out
+rem   flow-impi.cmd -n 4 DECK.DATA --output-dir=out --threads-per-process=2
+rem
+rem The -n form runs under mpiexec; without it the simulator runs serially.
+setlocal
+set "IMPI=%APPDATA%\Python\Library"
+if not exist "%IMPI%\bin\impi.dll" (
+    echo.
+    echo The Intel MPI runtime was not found at:
+    echo     %IMPI%\bin
+    echo.
+    echo Install it once, no administrator rights needed:
+    echo     python -m pip install --user impi-rt
+    echo.
+    exit /b 1
+)
+set "PATH=%IMPI%\bin;%PATH%"
+set "HERE=%~dp0"
+
+if /i not "%~1"=="-n" goto serial
+
+rem Parallel: split off "-n <ranks>" and pass everything after it through
+rem untouched.
+rem
+rem Not with shift and %1: batch treats '=' as an argument delimiter, so
+rem --output-dir=C:\out arrives as two arguments and any attempt to rejoin
+rem them loses the '='. flow then reports "OutputDir is missing a value".
+rem for /f does not split on '=', and "tokens=1,2*" hands the whole remainder
+rem back as one piece, quoting and all. %* is used rather than shift because
+rem shift does not affect it.
+for /f "tokens=1,2*" %%a in ("%*") do set "RANKS=%%b" & set "REST=%%c"
+if not defined REST (
+    echo No deck given. Usage: flow-impi.cmd -n RANKS DECK.DATA [options]
+    exit /b 1
+)
+call "%IMPI%\bin\mpiexec.exe" -n %RANKS% "%HERE%flow.exe" %REST%
+goto done
+
+:serial
+call "%HERE%flow.exe" %*
+
+:done
+endlocal
+'@ | Set-Content -Encoding ascii (Join-Path $Bin 'flow-impi.cmd')
 }
 
 # --- MSVC CRT + OpenMP runtime (app-local; see PACKAGING.md on licensing) ---
@@ -120,8 +162,9 @@ $dl = @(
     @{ Name = 'vc_redist.x64.exe'
        Url  = 'https://aka.ms/vs/17/release/vc_redist.x64.exe' }
 )
-# The MS-MPI package needs its runtime installed once; the Intel MPI one
-# carries its runtime in bin\ and has no MPI prerequisite at all.
+# MS-MPI ships its installer here because installing it needs administrator
+# rights; the Intel MPI variant has no installer to bundle, since pip puts that
+# runtime in the user's own profile.
 if (-not $IntelMpi) {
     $dl += @{ Name = 'msmpisetup.exe'
               Url  = 'https://download.microsoft.com/download/7/2/7/72731ebb-b63c-4170-ade7-836966263a8f/msmpisetup.exe' }
@@ -138,15 +181,29 @@ foreach ($d in $dl) {
 
 # --- README + LICENSE ------------------------------------------------------------
 $mpiSection = if ($IntelMpi) { @"
-MPI: nothing to install
-  This build uses the Intel(R) MPI Library, whose runtime ships inside bin\
-  (impi.dll, libfabric.dll) together with its launcher (mpiexec.exe and the
-  hydra proxies). There is no MPI prerequisite, no service to register and no
-  administrator step: unzip and run, in serial or in parallel.
-  Intel MPI is redistributed here under the Intel Simplified Software License;
-  its terms are reproduced in LICENSE.txt.
-  The Visual C++ and OpenMP runtimes are also inside bin\, so no VC++ install
-  is needed; redist\vc_redist.x64.exe is included only as a fallback.
+Prerequisite: Intel(R) MPI - installs without administrator rights
+  This build uses the Intel MPI Library. Install its runtime once, as
+  yourself - no administrator, no service, no system-wide change:
+
+      python -m pip install --user impi-rt
+
+  (Python from python.org or the Microsoft Store also installs per-user.)
+  Then run the simulator through the launcher in bin\, which finds that
+  runtime and puts it on PATH for the command:
+
+      bin\flow-impi.cmd DECK.DATA --output-dir=out
+      bin\flow-impi.cmd -n 4 DECK.DATA --output-dir=out --threads-per-process=2
+
+  flow-gui finds it the same way, so the GUI needs no extra setup.
+  Running bin\flow.exe directly will fail with a missing impi.dll unless you
+  put %APPDATA%\Python\Library\bin on PATH yourself.
+
+  Why not bundled: OPM Flow is GPLv3 and the Intel MPI runtime is proprietary,
+  so shipping them together is a licensing question this package does not try
+  to answer. Installing it yourself avoids it entirely.
+
+  The Visual C++ and OpenMP runtimes ARE inside bin\, so no VC++ install is
+  needed; redist\vc_redist.x64.exe is included only as a fallback.
 "@ } else { @"
 Prerequisite: Microsoft MPI
   The simulator links msmpi.dll (needed even for serial runs). It is a Windows
@@ -164,14 +221,15 @@ Contents
   bin\flow.exe            reservoir simulator (all model variants,
                           including black-oil)
   bin\flow-gui.exe     graphical front end (job queue, live log)
-  redist\                 $(if ($IntelMpi) { 'Visual C++ runtime installer (fallback only)' }
+$(if ($IntelMpi) { "  bin\flow-impi.cmd       runs flow with a pip-installed Intel MPI`n" })  redist\                 $(if ($IntelMpi) { 'Visual C++ runtime installer (fallback only)' }
                             else            { 'Microsoft runtime installers (see prerequisite below)' })
-$(if ($IntelMpi) { "  licenses\               license terms of the bundled Intel MPI runtime`n" })
+
 $mpiSection
 
 Running
   GUI:       double-click bin\flow-gui.exe, add a *.DATA deck, Run.
-  Terminal:  bin\flow.exe  DECK.DATA  --output-dir=RESULTS
+  Terminal:  $(if ($IntelMpi) { 'bin\flow-impi.cmd DECK.DATA --output-dir=RESULTS' }
+               else            { 'bin\flow.exe  DECK.DATA  --output-dir=RESULTS' })
   Parallel:  mpiexec -n 4 bin\flow.exe DECK.DATA --threads-per-process=2 ...
 
 Windows Firewall may prompt on the first parallel run - allow access
@@ -264,24 +322,12 @@ dynamically linked - relink is possible by replacing the Qt DLLs);
 OpenBLAS, SuiteSparse, Boost and fmt under their respective licenses.
 $(if ($IntelMpi) { @"
 
-Intel(R) MPI Library
-  bin\impi.dll, bin\libfabric.dll, bin\mpiexec.exe, bin\hydra_*.exe and
-  bin\tuning_*.dat are the Intel(R) MPI Library runtime, redistributed in
-  unmodified binary form under the Intel Simplified Software License. Its
-  full terms are in licenses\intel-mpi-license.txt in this package, and
-  apply to those files only. Intel is not the author of, and does not
-  endorse, this package.
+No MPI library is redistributed in this package. This build links the
+Intel(R) MPI Library, which you install yourself (see README.txt); it is
+Intel's software under Intel's own terms and is no part of this
+distribution.
 "@ })
 "@ | Set-Content -Encoding utf8 (Join-Path $Stage 'LICENSE.txt')
-
-# The Intel license requires its terms to travel with any redistribution.
-if ($IntelMpi) {
-    $lic = Join-Path $Stage 'licenses'
-    New-Item -ItemType Directory -Force -Path $lic | Out-Null
-    $src = Join-Path $env:APPDATA 'Python\share\doc\mpi\licensing\license.txt'
-    if (Test-Path $src) { Copy-Item $src (Join-Path $lic 'intel-mpi-license.txt') }
-    else { Write-Warning "Intel MPI license text not found at $src - it MUST ship with the runtime" }
-}
 
 Step "staged package summary"
 $exes = (Get-ChildItem "$Bin\*.exe").Count

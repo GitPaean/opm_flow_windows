@@ -57,3 +57,36 @@ QString flowgui::ensureWorkingDirectory()
     if (!QDir::setCurrent(home)) return QString();
     return home;
 }
+
+QString flowgui::intelMpiRuntimeDir()
+{
+#ifdef Q_OS_WIN
+    // Where the impi-rt wheel lands. Deliberately a per-user location: that is
+    // what makes `pip install --user impi-rt` possible without administrator
+    // rights, which is the whole reason this path exists.
+    const QString appData = qEnvironmentVariable("APPDATA");
+    if (appData.isEmpty()) return QString();
+    const QString dir = QDir::cleanPath(appData + QStringLiteral("/Python/Library/bin"));
+    // Test for the library itself, not the directory: a stale or half-removed
+    // install would otherwise be put on PATH and change nothing but the error.
+    if (!QFileInfo::exists(dir + QStringLiteral("/impi.dll"))) return QString();
+    return QDir::toNativeSeparators(dir);
+#else
+    return QString();
+#endif
+}
+
+QProcessEnvironment flowgui::simulatorEnvironment()
+{
+    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    const QString impi = intelMpiRuntimeDir();
+    if (impi.isEmpty()) return env;
+
+    // Prepend rather than append: if some other MPI is also on PATH, the one
+    // this binary was linked against has to win. mpiexec and the hydra proxies
+    // live in the same directory, so this covers the parallel launch too.
+    const QString sep  = QDir::listSeparator();
+    const QString path = env.value(QStringLiteral("PATH"));
+    env.insert(QStringLiteral("PATH"), path.isEmpty() ? impi : impi + sep + path);
+    return env;
+}

@@ -504,6 +504,14 @@ FlowGuiWindow::FlowGuiWindow()
                       .arg(QDir::toNativeSeparators(exePath_),
                            currentSimulator().isEmpty()
                                ? QString() : QStringLiteral("  (override)")));
+
+    // Say so when a pip-installed Intel MPI is being picked up. It is the one
+    // piece of setup this build asks of the user, and the failure mode without
+    // it is a missing-DLL box that names impi.dll and nothing else - so the
+    // log should show plainly whether it was found.
+    const QString impi = flowgui::intelMpiRuntimeDir();
+    if (!impi.isEmpty())
+        appendLog(QStringLiteral("Intel MPI runtime: %1\n").arg(impi));
 }
 
 // ---------------------------------------------------------------------------
@@ -988,6 +996,10 @@ void FlowGuiWindow::startNextJob()
 
     proc_ = new QProcess(this);
     proc_->setProcessChannelMode(QProcess::MergedChannels);
+    // An Intel MPI build needs impi.dll, which pip installs into the user's
+    // profile rather than anywhere Windows searches; this puts it on PATH for
+    // the child only. A no-op for an MS-MPI build.
+    proc_->setProcessEnvironment(flowgui::simulatorEnvironment());
     proc_->setWorkingDirectory(deckInfo.absolutePath());
 #if !defined(Q_OS_WIN)
     proc_->setChildProcessModifier([] { ::setpgid(0, 0); });
@@ -1091,6 +1103,7 @@ void FlowGuiWindow::validateSelectedDeck()
                   .arg(QFileInfo(deck).fileName()));
     vproc_ = new QProcess(this);
     vproc_->setProcessChannelMode(QProcess::MergedChannels);
+    vproc_->setProcessEnvironment(flowgui::simulatorEnvironment());
     vproc_->setWorkingDirectory(QFileInfo(deck).absolutePath());
     connect(vproc_, &QProcess::readyRead, this, [this] {
         appendLog(QString::fromLocal8Bit(vproc_->readAll()));
