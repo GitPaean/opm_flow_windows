@@ -22,7 +22,13 @@ name: windows-weekly
 
 on:
   schedule:
-    - cron: '0 3 * * 1'          # Mondays, 03:00 UTC
+    # Friday afternoon, so a break is heard about while the week is still open
+    # and nothing lands on Monday morning. Cron is always UTC and does not
+    # follow DST: 13:17 UTC is 15:17 in Norway on summer time, 14:17 on winter
+    # time - afternoon either way. The odd minute is deliberate; scheduled runs
+    # queue behind everyone else's when set to the top of the hour.
+    # For Saturday early morning instead, use '17 3 * * 6' (05:17 / 04:17 local).
+    - cron: '17 13 * * 5'
   workflow_dispatch:
     inputs:
       sim_target:
