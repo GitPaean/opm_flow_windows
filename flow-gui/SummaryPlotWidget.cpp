@@ -1838,6 +1838,34 @@ void SummaryPlotWidget::applyChartLayout(int rows, int cols)
     setFocusChart(focusChart_);   // re-mirror the tree, refresh the frames
 }
 
+// Which visible subplot is under this point on screen, or -1.
+int SummaryPlotWidget::chartAt(const QPoint& globalPos) const
+{
+    for (int i = 0; i < visibleCharts_ && i < chartViews_.size(); ++i) {
+        QWidget* v = chartViews_[i];
+        if (v->isVisible() && v->rect().contains(v->mapFromGlobal(globalPos))) return i;
+    }
+    return -1;
+}
+
+// Exchange what two subplots show. Everything that belongs to a subplot moves
+// with it - its vectors, the zoom it was left at and where its legend was
+// dragged - so the swap is of the plots, not just of the curves.
+void SummaryPlotWidget::swapCharts(int a, int b)
+{
+    if (a < 0 || b < 0 || a == b || a >= chartSel_.size() || b >= chartSel_.size()) {
+        if (a >= 0) setStatus(QStringLiteral("subplot %1 stayed where it was").arg(a + 1));
+        return;
+    }
+    std::swap(chartSel_[a], chartSel_[b]);
+    std::swap(zoomSnap_[a], zoomSnap_[b]);
+    std::swap(legendPos_[a], legendPos_[b]);
+    focusChart_ = b;                       // the tree follows what was dragged
+    replot();
+    setFocusChart(b);
+    setStatus(QStringLiteral("subplots %1 and %2 swapped").arg(a + 1).arg(b + 1));
+}
+
 void SummaryPlotWidget::setFocusChart(int i)
 {
     if (i < 0 || i >= chartSel_.size()) return;
@@ -1909,6 +1937,17 @@ bool SummaryPlotWidget::eventFilter(QObject* obj, QEvent* ev)
         switch (ev->type()) {
         case QEvent::MouseButtonPress:
             if (visibleCharts_ > 1 && idx != focusChart_) setFocusChart(idx);
+            // Ctrl+drag picks a subplot up to swap it with another - the order
+            // of a figure is a presentation decision, and rebuilding two
+            // selections by hand to reorder them is not one. Consumed, so the
+            // rubber band does not start underneath the drag.
+            if (visibleCharts_ > 1 && me->button() == Qt::LeftButton
+                && (me->modifiers() & Qt::ControlModifier)) {
+                swapDrag_ = idx;
+                chartViews_[idx]->viewport()->setCursor(Qt::ClosedHandCursor);
+                setStatus(QStringLiteral("drop on another subplot to swap them"));
+                return true;
+            }
             // Grab a floating legend: consume the press so the rubber-band
             // zoom does not start underneath the drag.
             if (floating && me->button() == Qt::LeftButton) {
@@ -1922,6 +1961,7 @@ bool SummaryPlotWidget::eventFilter(QObject* obj, QEvent* ev)
             }
             break;
         case QEvent::MouseMove:
+            if (swapDrag_ >= 0) return true;
             if (legendDrag_ == idx) {
                 const QRectF r = charts_[idx]->rect();
                 const QSizeF sz = lg->geometry().size();
@@ -1940,6 +1980,13 @@ bool SummaryPlotWidget::eventFilter(QObject* obj, QEvent* ev)
                         ? Qt::OpenHandCursor : Qt::ArrowCursor);
             break;
         case QEvent::MouseButtonRelease:
+            if (swapDrag_ >= 0) {
+                const int from = swapDrag_;
+                swapDrag_ = -1;
+                chartViews_[from]->viewport()->setCursor(Qt::ArrowCursor);
+                swapCharts(from, chartAt(me->globalPosition().toPoint()));
+                return true;
+            }
             if (legendDrag_ == idx) {
                 legendDrag_ = -1;
                 chartViews_[idx]->viewport()->setCursor(Qt::OpenHandCursor);

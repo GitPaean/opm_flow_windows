@@ -151,6 +151,7 @@ private:
     // the placement box asks for.
     QVector<QPointF> legendPos_;
     int      legendDrag_ = -1;    // chart whose legend is being dragged
+    int      swapDrag_   = -1;    // subplot picked up with Ctrl+drag
     QPointF  legendGrab_;         // cursor offset inside the legend
     // Chart-local position of a viewport event, or a null point if unmapped.
     QPointF chartPos(int idx, const QPoint& viewportPos) const;
@@ -222,6 +223,8 @@ private:
     void ensureCharts(int n);        // grow the pool to n charts
     void applyChartLayout(int rows, int cols);   // the visible grid
     void setFocusChart(int i);      // focus subplot i, mirror its keys in the tree
+    int  chartAt(const QPoint& globalPos) const;   // subplot under the cursor
+    void swapCharts(int a, int b);  // exchange what two subplots show
     void updateChartFrames();       // border highlight on the focused subplot
     // Build one chart from the given vecs_ indices; returns the number of
     // vectors skipped because the chart already carries two units.

@@ -59,13 +59,15 @@ results, animate them in 3D, and edit decks — all in one window.
   each subplot keeps its own selection: click one to focus it — the focused
   one gets a blue frame — and the vector tree then shows and edits that
   subplot's curves; subplots are equally sized, and shrinking the layout
-  keeps the focused one. Charts are built as a layout asks for them, so a
-  session that stays on one chart pays for one.
+  keeps the focused one. **Ctrl+drag a subplot onto another to swap them**,
+  which moves the vectors, the zoom and the legend position together — the
+  order of a figure is a presentation decision. Charts are built as a
+  layout asks for them, so a session that stays on one chart pays for one.
   How dense a grid is *useful* is a matter of screen: 2×2 is comfortable
   anywhere, 3×3 wants about 1920 px across, and 4×4 and beyond want a 4K
   panel or a deliberately small-multiples look — the axes thin their tick
   count to whatever the subplot can label rather than shrinking the labels
-  or eliding them, so a dense grid stays readable as far as it can.
+  or eliding them, so a dense grid stays readable as far as it can. Drag to
   zoom — a zoomed view survives refreshes until *Reset zoom* — and
   refreshes also keep the tree's expansion and scroll position. Calendar
   dates on the X axis by default (untick *date axis* for days).
