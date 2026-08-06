@@ -43,8 +43,8 @@ param(
     [int]$Jobs = 4,
     [string]$DuneVersion = 'v2.10.0',
     # GitHub org and branch to clone opm-common/opm-grid/opm-simulators from.
-    # Until the Windows/MSVC fixes are merged upstream, point these at the fork
-    # and branch that contain them, e.g. -OpmOrg myuser -OpmBranch windows-msvc.
+    # The Windows/MSVC fixes live on the 'windows' branch of the forks below,
+    # so point these at them, e.g. -OpmOrg GitPaean -OpmBranch windows.
     [string]$OpmOrg = 'OPM',
     [string]$OpmBranch = ''
 )

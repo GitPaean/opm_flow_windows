@@ -189,7 +189,7 @@ Source code
     https://github.com/OPM/opm-grid
     https://github.com/OPM/opm-simulators
   These Windows binaries additionally contain a small set of
-  Windows/MSVC-specific patches that are pending upstream merge. The
+  Windows/MSVC-specific patches, maintained in the forks below. The
   complete corresponding source for exactly these binaries (upstream
   code + those patches + the build harness and GUI) is the following
   revisions. These are commit ids, not branch names: branches move on,
@@ -205,8 +205,6 @@ Source code
   Fetch one with, for example:
     git clone https://github.com/GitPaean/opm-common && cd opm-common
     git checkout <commit id above>
-  Once the patches are merged upstream, the OPM repositories alone are
-  the source.
 
 Third-party redistributables in this package: Microsoft Visual C++
 runtime and Microsoft MPI (their own licenses apply); Qt 6 (LGPLv3,

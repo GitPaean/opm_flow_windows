@@ -167,7 +167,7 @@ are spawned by the smpd service, so they always count as background.
   throttle this process". Process *priority* is deliberately left untouched.
   Recovers the background penalty (579 -> ~357 s); the remaining gap to
   297 s is a foreground-only boost the OS grants the focused window.
-  Candidate for upstreaming. See BUILD_WINDOWS.md §9 for the measurements.
+  See BUILD_WINDOWS.md §9 for the measurements.
 
 ## MPI support — MS-MPI on Windows  (RESOLVED — see "Zoltan for Windows" + "MPI RESULT" below)
 MS-MPI installed; DUNE (all 4) + opm-common build with MPI. opm-grid couples MPI

@@ -71,7 +71,7 @@ thing in a brand-new directory from the bundle, with no manual patching:
   1. install toolchain + MS-MPI (one-time),
   2. unzip the bundle,
   3. `.\build-all.ps1 -Mpi -OpmOrg gitPaean -OpmBranch windows`.
-(Drop -OpmOrg/-OpmBranch once the fixes are merged into OPM/*.)
+(-OpmOrg/-OpmBranch point at the forks carrying the Windows fixes.)
 
 ---
 
@@ -99,3 +99,58 @@ opm-simulators target set (GPU off), serial and parallel, clean from the fork wi
 zero manual steps.** Parallel jobs default to 4 (RAM); pass `-Jobs N` to
 `build-all.ps1`/`build-module.ps1` to raise it (a ≥ 32 GB machine handles 6–8).
 compositional+MPI compiles cleanly.
+
+---
+
+## Re-verifying the patch series after a rebase
+
+The Windows patches are maintained on the `windows` branch of each fork and are
+rebased onto upstream master as it moves. Every rebase is a chance to lose a
+hunk — it happened once in this work, where a stash dance silently dropped a
+string-literal split from both opm-common branches and the next build failed on
+it. So after rebasing, check the result against the tree that was actually built
+and tested:
+
+```bash
+git diff --stat <reference> windows
+```
+
+Empty output means the rebase reconstructed the tested tree byte for byte.
+Anything else needs explaining before pushing.
+
+To re-verify on Windows, build each module with testing on:
+
+```bash
+./build-module.ps1 <module> -Mpi -OpenMP -Target all -Extra '-DBUILD_TESTING=ON','-DBUILD_EXAMPLES=ON'
+```
+
+`BUILD_EXAMPLES=ON` is required alongside `BUILD_TESTING=ON`: opm-simulators'
+`modelTests.cmake` registers tests against `obstacle_immiscible` and
+`obstacle_pvs`, which are built from `EXAMPLE_SOURCE_FILES`. That is an upstream
+constraint, not something these patches introduce.
+
+Neither module reaches a green ctest on Windows, and that is expected:
+
+  * **opm-common: 226/229.** `ParserIncludeTests` needs git symlinks;
+    `rst_deck_test` and `rst_deck_test2` are driven by a shell script.
+
+  * **opm-simulators: 73/139.** All 66 failures are `BAD_COMMAND` — ctest could
+    not launch the process at all — and the failing set is *exactly* the set of
+    tests whose ctest command is a `.sh` script (`run-vtu-test.sh`,
+    `run-parallel-unitTest.sh`). Windows cannot execute those directly. Every
+    test that does start passes.
+
+That last point is worth reproducing rather than taking on trust, because it
+makes the result independent of any recorded baseline. Compare the failing names
+against the shell-driven ones:
+
+```bash
+ctest --show-only=json-v1 | jq -r '.tests[] | select((.command|join(" "))|test("\.sh")) | .name' | sort > sh.txt
+```
+
+If the two sets match exactly, no test regressed. If a name appears in the
+failures that is not in `sh.txt`, that is a real failure and needs investigating.
+
+Beware of truncating ctest's output when checking this. `| Select-Object -Last N`
+drops the `"N tests failed out of M"` summary line and leaves only the tail of
+the failure list, which reads as a much smaller failure count than the real one.

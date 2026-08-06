@@ -61,15 +61,15 @@ Builds Zoltan (from a Trilinos clone) + the MPI modules into separate
 `build-mpi\` / `install-mpi\` trees (the serial build is untouched). See
 [BUILD_WINDOWS.md](BUILD_WINDOWS.md) §13.
 
-## Until the OPM fixes are merged upstream
+## Where the OPM Windows fixes live
 The Windows/MSVC fixes to opm-common/opm-grid/opm-simulators (and opm-upscaling,
-with `-Upscaling`) must be present in the sources. Until they land in `OPM/*`,
-point the build at the fork/branch that has them (the DUNE patches in `patches/`
-are applied automatically regardless):
+with `-Upscaling`) must be present in the sources. They are maintained on the
+`windows` branch of each fork below, rebased onto upstream master as it moves,
+so point the build there (the DUNE patches in `patches/` are applied
+automatically regardless):
 ```powershell
 .\build-all.ps1 -Mpi -OpmOrg GitPaean -OpmBranch windows
 ```
-Once merged, drop `-OpmOrg/-OpmBranch`.
 
 ## Options
 ```powershell

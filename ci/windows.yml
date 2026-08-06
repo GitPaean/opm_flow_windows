@@ -1,5 +1,5 @@
 # Copyright (C) 2026 SINTEF Digital, Mathematics & Cybernetics; GPL-3.0-or-later (see LICENSE).
-# Native Windows (MSVC) build of OPM flow_blackoil.
+# Native Windows (MSVC) build of OPM flow.
 #
 # Reference GitHub Actions workflow. Intended to live at
 #   opm-simulators/.github/workflows/windows.yml
@@ -48,9 +48,9 @@ jobs:
         with:
           path: opm/src/opm-simulators
 
-      # Until the Windows/MSVC fixes are merged into OPM/*, check out the fork
-      # that carries them (matches BUILD_WINDOWS.md / README). Once merged,
-      # change repository: back to OPM/... and drop the ref:.
+      # The Windows/MSVC fixes live on the 'windows' branch of these forks
+      # (matches BUILD_WINDOWS.md / README). That branch is rebased onto
+      # upstream master as it moves, so a run pins whatever it points at now.
       - name: Checkout opm-common
         uses: actions/checkout@v4
         with:
@@ -98,23 +98,27 @@ jobs:
         with:
           arch: x64
 
-      - name: Build flow_blackoil
+      - name: Build flow
         run: |
           $root = "${{ github.workspace }}/opm"
           # Clone + DUNE checkout already done above; deps via build-all (cached
           # by vcpkg's x-gha binary cache).
-          & "$root/build-all.ps1" -SkipClone
+          # -SimTarget flow: the single binary carrying every model variant,
+          # which is what the release ships. It is the memory-hungry link, so
+          # it is also the step most likely to fail on Windows - building the
+          # cheaper flow_blackoil would leave exactly that risk unguarded.
+          & "$root/build-all.ps1" -SkipClone -SimTarget flow
 
       # ---- artifact / smoke test ------------------------------------------
       - name: Smoke test (--help)
         run: |
-          $exe = "${{ github.workspace }}/opm/build/opm-simulators/bin/flow_blackoil.exe"
+          $exe = "${{ github.workspace }}/opm/build/opm-simulators/bin/flow.exe"
           & $exe --help | Select-Object -First 3
 
-      - name: Upload flow_blackoil.exe
+      - name: Upload flow.exe
         uses: actions/upload-artifact@v4
         with:
-          name: flow_blackoil-windows-x64
+          name: flow-windows-x64
           path: |
-            ${{ github.workspace }}/opm/build/opm-simulators/bin/flow_blackoil.exe
+            ${{ github.workspace }}/opm/build/opm-simulators/bin/flow.exe
             ${{ github.workspace }}/opm/build/opm-simulators/bin/*.dll
