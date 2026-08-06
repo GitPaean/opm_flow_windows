@@ -165,7 +165,13 @@ results, animate them in 3D, and edit decks — all in one window.
   wrote — and **hovering a marker** shows its case, date and value with
   unit. With markers on, the **legend shows them too**: each entry's sample
   is the case's shape riding on its line, so an entry looks like the curve
-  it stands for. **Line** and **Marker** spin boxes set the curve width and marker
+  it stands for. Everything drawn on a chart — line width, marker size and
+  the legend — **follows that chart's own size** by default, so a 2×2 layout
+  is four readable plots rather than four heavy ones; *scale with plot* turns
+  that off when a figure needs exactly the sizes set. The **Legend** box
+  scales the legend on top of that (`x1.0` is the normal size), for a figure
+  that wants it a size up or out of the way.
+  **Line** and **Marker** spin boxes set the curve width and marker
   size, and *every n* thins the markers on a dense curve (1 = all, the
   default); thinning steps by whole data points, so a drawn marker is
   always a real `(time, value)` sample. A different **shape** per case and

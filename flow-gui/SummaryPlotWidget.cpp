@@ -74,6 +74,9 @@ using Type = Opm::EclIO::SummaryNode::Type;
 
 namespace {
 
+// The legend's size before any scaling; plotChart() scales from here.
+constexpr double kLegendPointSize = 10.5;
+
 const int RoleVecIndex = Qt::UserRole + 1;   // leaf item -> index into vecs_
 const int RoleCaseLabel = Qt::UserRole + 2;  // case item -> its current name
 const int RoleCaseBase  = Qt::UserRole + 3;  // ... -> its name before tagging
@@ -523,6 +526,26 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
         markerEverySpin_->setToolTip(QStringLiteral(
             "mark every n-th data point; 1 (the default) marks them all, so "
             "the markers are exactly the samples in the summary file"));
+        // The legend is the one part that does not have to follow the curves:
+        // a figure for a paper often wants it a size up (or out of the way).
+        legendScaleSpin_ = new QDoubleSpinBox;
+        legendScaleSpin_->setRange(0.4, 3.0);
+        legendScaleSpin_->setSingleStep(0.1);
+        legendScaleSpin_->setValue(1.0);
+        legendScaleSpin_->setDecimals(1);
+        legendScaleSpin_->setPrefix(QStringLiteral("x"));
+        legendScaleSpin_->setToolTip(QStringLiteral(
+            "legend size, as a factor of the normal one"));
+        // Curves drawn for a full-window chart are far too heavy once the same
+        // widths land in a quarter-sized subplot, and a legend sized for one
+        // chart swallows four. Everything that is drawn ON the plot follows
+        // the plot's own size unless this is turned off.
+        autoScale_ = new QCheckBox(QStringLiteral("scale with plot"));
+        autoScale_->setChecked(true);
+        autoScale_->setToolTip(QStringLiteral(
+            "line width, marker size and legend size follow the size of the "
+            "chart they are drawn in, so a 2x2 layout is not four heavy plots; "
+            "off pins them to exactly the values set here"));
         auto* bzoom = new QPushButton(QStringLiteral("Reset zoom"));
         auto* bpng  = new QPushButton(QStringLiteral("Save figure..."));
         auto* bcsv  = new QPushButton(QStringLiteral("Save CSV..."));
@@ -544,6 +567,9 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
         row->addWidget(new QLabel(QStringLiteral("Marker:")));
         row->addWidget(markerSizeSpin_);
         row->addWidget(markerEverySpin_);
+        row->addWidget(new QLabel(QStringLiteral("Legend:")));
+        row->addWidget(legendScaleSpin_);
+        row->addWidget(autoScale_);
         row->addStretch(1);
         // Legend placement: docked to an edge, or floating in a corner of the
         // plot area (the usual choice for a figure in a paper).
@@ -582,6 +608,8 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
         connect(lineWidthSpin_, &QDoubleSpinBox::valueChanged, this, [this](double) { replot(); });
         connect(markerSizeSpin_, &QDoubleSpinBox::valueChanged, this, [this](double) { replot(); });
         connect(markerEverySpin_, &QSpinBox::valueChanged, this, [this](int) { replot(); });
+        connect(legendScaleSpin_, &QDoubleSpinBox::valueChanged, this, [this](double) { replot(); });
+        connect(autoScale_, &QCheckBox::toggled, this, [this](bool) { replot(); });
         connect(bzoom, &QPushButton::clicked, this, [this] {
             for (int i = 0; i < visibleCharts_; ++i) {
                 charts_[i]->zoomReset();
@@ -684,7 +712,13 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
         // first 1, 2 (stacked) or 4 (2x2) of them. Each keeps its own vector
         // selection (chartSel_); a click focuses a subplot and the tree then
         // edits that one.
+        resizeTimer_ = new QTimer(this);
+        resizeTimer_->setSingleShot(true);
+        resizeTimer_->setInterval(180);
+        connect(resizeTimer_, &QTimer::timeout, this, [this] { replot(); });
+
         chartArea_ = new QWidget;
+        chartArea_->installEventFilter(this);
         chartGrid_ = new QGridLayout(chartArea_);
         chartGrid_->setContentsMargins(0, 0, 0, 0);
         chartGrid_->setSpacing(2);
@@ -1058,6 +1092,8 @@ QJsonObject SummaryPlotWidget::uiState() const
     o[QStringLiteral("dateAxis")]    = dateAxis_ && dateAxis_->isChecked();
     o[QStringLiteral("markers")]     = markers_  && markers_->isChecked();
     o[QStringLiteral("autoRefresh")] = autoRef_  && autoRef_->isChecked();
+    if (autoScale_)       o[QStringLiteral("autoScale")]   = autoScale_->isChecked();
+    if (legendScaleSpin_) o[QStringLiteral("legendScale")] = legendScaleSpin_->value();
     if (lineWidthSpin_)   o[QStringLiteral("lineWidth")]   = lineWidthSpin_->value();
     if (markerSizeSpin_)  o[QStringLiteral("markerSize")]  = markerSizeSpin_->value();
     if (markerEverySpin_) o[QStringLiteral("markerEvery")] = markerEverySpin_->value();
@@ -1082,6 +1118,8 @@ void SummaryPlotWidget::restoreUiState(const QJsonObject& state)
     // then plotted with them already in force instead of being replotted.
     if (dateAxis_ && has("dateAxis")) dateAxis_->setChecked(val("dateAxis").toBool(true));
     if (markers_  && has("markers"))  markers_->setChecked(val("markers").toBool(false));
+    if (autoScale_       && has("autoScale"))   autoScale_->setChecked(val("autoScale").toBool(true));
+    if (legendScaleSpin_ && has("legendScale")) legendScaleSpin_->setValue(val("legendScale").toDouble(1.0));
     if (lineWidthSpin_   && has("lineWidth"))   lineWidthSpin_->setValue(val("lineWidth").toDouble(2.0));
     if (markerSizeSpin_  && has("markerSize"))  markerSizeSpin_->setValue(val("markerSize").toDouble(7.5));
     if (markerEverySpin_ && has("markerEvery")) markerEverySpin_->setValue(val("markerEvery").toInt(1));
@@ -1560,6 +1598,24 @@ std::vector<std::pair<QString, Opm::EclIO::ESmry*>> SummaryPlotWidget::checkedCa
     return plotCases;
 }
 
+double SummaryPlotWidget::plotScale(QChart* chart) const
+{
+    if (!autoScale_ || !autoScale_->isChecked()) return 1.0;
+    QSize s;
+    const int idx = charts_.indexOf(chart);
+    if (idx >= 0 && idx < chartViews_.size()) s = chartViews_[idx]->size();
+    if (s.isEmpty() && chartArea_) s = chartArea_->size();
+    if (s.isEmpty()) return 1.0;
+    // 1.0 at about the size of one chart in a normal window. Area, not width,
+    // so a 2x2 layout (a quarter of the area) lands near half - which is what
+    // a line width or a font size has to do to look the same.
+    constexpr double refArea = 1100.0 * 700.0;
+    const double f = std::sqrt(double(s.width()) * double(s.height()) / refArea);
+    // Bounded at both ends: a maximised window should not draw fat curves,
+    // and a tiny one still has to be readable.
+    return std::clamp(f, 0.55, 1.25);
+}
+
 void SummaryPlotWidget::applyChartLayout(int n)
 {
     if (n == visibleCharts_) return;
@@ -1638,6 +1694,12 @@ QPointF SummaryPlotWidget::chartPos(int idx, const QPoint& viewportPos) const
 
 bool SummaryPlotWidget::eventFilter(QObject* obj, QEvent* ev)
 {
+    // The charts were resized, so what is drawn on them has a new size to
+    // follow. Coalesced: a drag of the window edge is a stream of these.
+    if (chartArea_ && obj == chartArea_ && ev->type() == QEvent::Resize) {
+        if (autoScale_ && autoScale_->isChecked() && resizeTimer_) resizeTimer_->start();
+        return QWidget::eventFilter(obj, ev);
+    }
     // which subplot the event belongs to
     int idx = -1;
     for (int i = 0; i < chartViews_.size() && i < visibleCharts_; ++i)
@@ -1825,7 +1887,7 @@ void SummaryPlotWidget::styleChart(QChart* chart)
     // set a size above the axis labels and bold, not as fine print. The line
     // sample scales with this font too (Qt draws it 0.75 font heights long).
     QFont lf = chart->legend()->font();
-    lf.setPointSizeF(10.5);
+    lf.setPointSizeF(kLegendPointSize);
     lf.setBold(true);
     chart->legend()->setFont(lf);
     chart->legend()->setLabelColor(QColor(0x22, 0x26, 0x2b));
@@ -1930,6 +1992,16 @@ int SummaryPlotWidget::plotChart(QChart* chart, const QList<int>& sel,
     const QString& title,
     const std::vector<std::pair<QString, Opm::EclIO::ESmry*>>& plotCases)
 {
+    // The legend follows the chart too, times whatever the legend box asks
+    // for; styleChart() set the unscaled size when the chart was built.
+    {
+        const double legendScale =
+            (legendScaleSpin_ ? legendScaleSpin_->value() : 1.0) * plotScale(chart);
+        QFont lf = chart->legend()->font();
+        lf.setPointSizeF(std::clamp(kLegendPointSize * legendScale, 4.0, 30.0));
+        lf.setBold(true);
+        chart->legend()->setFont(lf);
+    }
     if (sel.isEmpty() || plotCases.empty()) {
         chart->setTitle(!title.isEmpty() ? title : activeLabel());
         return 0;
@@ -1962,12 +2034,16 @@ int SummaryPlotWidget::plotChart(QChart* chart, const QList<int>& sel,
 
     const bool useDates = dateAxis_ && dateAxis_->isChecked();
     const bool showPts  = markers_ && markers_->isChecked();
-    const double lineW  = lineWidthSpin_  ? lineWidthSpin_->value()  : 2.0;
+    // Everything drawn on the chart is sized for THIS chart: the same figure
+    // in a 2x2 layout gets thinner curves, smaller markers and a smaller
+    // legend, in the same proportions.
+    const double scale  = plotScale(chart);
+    const double lineW  = (lineWidthSpin_  ? lineWidthSpin_->value()  : 2.0) * scale;
     // Width of the legend's line sample: heavier than the curve, since it is
     // read at a couple of font heights rather than across the plot - but
     // never thinner than the curve it stands for.
     const double legendW = std::max(lineW, std::clamp(lineW * 1.8, 3.0, 6.0));
-    const double markerS = markerSizeSpin_ ? markerSizeSpin_->value() : 7.5;
+    const double markerS = (markerSizeSpin_ ? markerSizeSpin_->value() : 7.5) * scale;
     // 1 = mark every data point (the default: markers are the data)
     const int markerEvery = std::max(1, markerEverySpin_ ? markerEverySpin_->value() : 1);
 

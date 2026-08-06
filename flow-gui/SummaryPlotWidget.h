@@ -124,6 +124,8 @@ private:
     // the FOCUSED subplot's list; clicking a subplot moves the focus.
     QVector<QStringList> chartSel_;
     int          focusChart_ = 0;
+    int          caseSeq_ = 0;      // hands out RoleCaseSeq
+    QTimer*      resizeTimer_ = nullptr;   // coalesces resize -> replot
     bool         syncingTree_ = false;   // guard: programmatic tree reselect
 
     // A subplot's zoomed-in axis ranges, kept across refreshes so live
@@ -150,6 +152,8 @@ private:
     QCheckBox*   autoRef_   = nullptr;
     QCheckBox*   dateAxis_  = nullptr;
     QCheckBox*   markers_   = nullptr;   // show data points on the curves
+    QCheckBox*   autoScale_ = nullptr;   // sizes follow the chart's own size
+    QDoubleSpinBox* legendScaleSpin_ = nullptr;   // legend size, as a factor
     QDoubleSpinBox* lineWidthSpin_   = nullptr;   // curve pen width, points
     QDoubleSpinBox* markerSizeSpin_  = nullptr;   // data-point marker size, px
     QSpinBox*       markerEverySpin_ = nullptr;   // mark every n-th point (1 = all)
@@ -186,6 +190,10 @@ private:
     void populateSubItemBox();
     void rebuildTree(const QStringList& reselect);
     void replot();
+    // How much to scale what is drawn on this chart: 1.0 at about the size of
+    // a single chart in a normal window, less in a subplot layout or a small
+    // window. 1.0 throughout when "scale with plot" is off.
+    double plotScale(QChart* chart) const;
     void savePng();
     void saveCsv();
     // Put the legend where legendBox_ asks: docked to an edge, floating in a
