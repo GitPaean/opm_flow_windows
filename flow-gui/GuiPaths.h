@@ -43,6 +43,27 @@ QString intelMpiRuntimeDir();
 // directory above prepended to PATH when there is one. Handing this to
 // QProcess means a user who has run that one pip command needs no further
 // setup - no PATH edit, no shell, nothing to get wrong.
+//
+// Note that this does NOT settle which mpiexec gets launched: QProcess
+// resolves a bare program name against the PATH of the process doing the
+// launching, not the one set here. Use intelMpiExec() for that.
 QProcessEnvironment simulatorEnvironment();
+
+// Does this simulator link Intel MPI (rather than MS-MPI)? Read from the
+// binary's own import table, so it is right for a build tree, an unpacked
+// release, or a single exe someone copied somewhere.
+//
+// It matters because a parallel run must be started by the launcher belonging
+// to the MPI the binary links, and the two are both called `mpiexec`. MS-MPI's
+// hands its child a named-pipe GUID where Intel's runtime expects host:port,
+// so an Intel-MPI flow started by MS-MPI's mpiexec dies in MPI_Init with
+// "unable to decode hostport from <guid>" - before reading a line of the deck.
+bool linksIntelMpi(const QString& simulatorExe);
+
+// Absolute path of the Intel MPI launcher from a pip-installed runtime, or an
+// empty string when there is none. Empty for a binary that needs it is worth
+// reporting: launching the mpiexec on PATH instead just produces the MPI_Init
+// abort above.
+QString intelMpiExec();
 
 } // namespace flowgui

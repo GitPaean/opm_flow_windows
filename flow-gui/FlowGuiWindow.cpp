@@ -963,7 +963,26 @@ void FlowGuiWindow::startNextJob()
     QString     program;
     QStringList args;
     if (ranks > 1) {
+        // Not a bare "mpiexec": that resolves against PATH, where MS-MPI's
+        // installer puts its own, and launching an Intel-MPI flow with it
+        // aborts in MPI_Init before the deck is opened. The launcher has to
+        // match the MPI the simulator links.
         program = QStringLiteral("mpiexec");
+        if (flowgui::linksIntelMpi(exePath_)) {
+            const QString impiexec = flowgui::intelMpiExec();
+            if (impiexec.isEmpty()) {
+                appendLog(QStringLiteral(
+                    "FAILED: %1 is built against Intel MPI, but the Intel MPI "
+                    "launcher (mpiexec) was not found.\nInstall the runtime "
+                    "once - no administrator rights needed:\n"
+                    "    python -m pip install --user impi-rt\n").arg(exePath_));
+                j.state = Job::Failed;
+                refreshRow(current_);
+                startNextJob();
+                return;
+            }
+            program = impiexec;
+        }
         args << QStringLiteral("-n") << QString::number(ranks) << exePath_;
     } else {
         program = exePath_;

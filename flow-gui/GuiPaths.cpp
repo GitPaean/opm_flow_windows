@@ -7,8 +7,12 @@
 #include "GuiPaths.h"
 
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
 #include <QSettings>
+#include <QtEndian>
+
+#include <algorithm>
 
 namespace {
 
@@ -23,6 +27,104 @@ QString folderOf(const QString& path)
     const QFileInfo fi(p);
     return fi.isDir() ? fi.absoluteFilePath() : fi.absolutePath();
 }
+
+#ifdef Q_OS_WIN
+// --- just enough PE to read a binary's import table --------------------------
+//
+// Which mpiexec is allowed to launch a binary is decided by the MPI library
+// that binary links, and the only place that is recorded is its import table.
+// Reading it costs a few hundred bytes of seeks. The alternatives - a marker
+// file beside the exe, or guessing from the build directory's name - are state
+// that survives a copy of the exe on its own, or gets out of step with it.
+
+bool readAt(QFile& f, qint64 off, void* dst, int n)
+{
+    return f.seek(off) && f.read(static_cast<char*>(dst), n) == n;
+}
+
+template <typename T>
+bool readLE(QFile& f, qint64 off, T& out)
+{
+    T raw{};
+    if (!readAt(f, off, &raw, sizeof(T))) return false;
+    out = qFromLittleEndian(raw);
+    return true;
+}
+
+// Case-insensitive match of `wanted` against the DLLs `exePath` imports.
+// False for anything unreadable or malformed, so a file this cannot parse
+// leaves the caller on its previous behaviour rather than failing the run.
+bool importsAnyOf(const QString& exePath, const QStringList& wanted)
+{
+    QFile f(exePath);
+    if (!f.open(QIODevice::ReadOnly)) return false;
+
+    quint16 mz = 0;
+    if (!readLE(f, 0, mz) || mz != 0x5A4D) return false;              // "MZ"
+    quint32 peOff = 0;
+    if (!readLE(f, 0x3C, peOff)) return false;
+    quint32 sig = 0;
+    if (!readLE(f, peOff, sig) || sig != 0x00004550) return false;    // "PE\0\0"
+
+    const qint64 coff = peOff + 4;                                    // file header
+    quint16 nSections = 0, optSize = 0, optMagic = 0;
+    if (!readLE(f, coff + 2,  nSections)) return false;
+    if (!readLE(f, coff + 16, optSize))   return false;
+    const qint64 optOff = coff + 20;                                  // optional header
+    if (!readLE(f, optOff, optMagic))     return false;
+
+    // The data directories sit at the end of the optional header; PE32 and
+    // PE32+ differ only in the fields before them.
+    qint64 dirs = 0;
+    if      (optMagic == 0x20B) dirs = optOff + 112;                  // PE32+
+    else if (optMagic == 0x10B) dirs = optOff + 96;                   // PE32
+    else return false;
+
+    quint32 importRva = 0;                                            // directory 1
+    if (!readLE(f, dirs + 8, importRva) || importRva == 0) return false;
+
+    // Section table, so an RVA can be turned into a file offset.
+    struct Section { quint32 va = 0, vsize = 0, rawSize = 0, rawPtr = 0; };
+    QList<Section> sections;
+    const qint64 secOff = optOff + optSize;
+    for (quint16 i = 0; i < nSections; ++i) {
+        const qint64 s = secOff + qint64(i) * 40;
+        Section sec;
+        if (!readLE(f, s +  8, sec.vsize))   return false;
+        if (!readLE(f, s + 12, sec.va))      return false;
+        if (!readLE(f, s + 16, sec.rawSize)) return false;
+        if (!readLE(f, s + 20, sec.rawPtr))  return false;
+        sections.append(sec);
+    }
+    const auto toOffset = [&sections](quint32 rva) -> qint64 {
+        for (const Section& s : sections) {
+            const quint32 span = std::max(s.vsize, s.rawSize);
+            if (rva >= s.va && rva < s.va + span)
+                return qint64(s.rawPtr) + (rva - s.va);
+        }
+        return -1;
+    };
+
+    const qint64 impOff = toOffset(importRva);
+    if (impOff < 0) return false;
+    // A zeroed descriptor ends the array. The iteration bound only guards a
+    // corrupt table; nothing imports anywhere near this many DLLs.
+    for (int i = 0; i < 4096; ++i) {
+        quint32 nameRva = 0;
+        if (!readLE(f, impOff + qint64(i) * 20 + 12, nameRva)) return false;
+        if (nameRva == 0) break;
+        const qint64 nameOff = toOffset(nameRva);
+        if (nameOff < 0) continue;
+        char buf[64] = {};
+        if (!f.seek(nameOff)) continue;
+        if (f.read(buf, sizeof(buf) - 1) <= 0) continue;
+        const QString dll = QString::fromLatin1(buf);   // stops at the NUL
+        for (const QString& w : wanted)
+            if (dll.compare(w, Qt::CaseInsensitive) == 0) return true;
+    }
+    return false;
+}
+#endif // Q_OS_WIN
 
 } // namespace
 
@@ -74,6 +176,25 @@ QString flowgui::intelMpiRuntimeDir()
 #else
     return QString();
 #endif
+}
+
+bool flowgui::linksIntelMpi(const QString& simulatorExe)
+{
+#ifdef Q_OS_WIN
+    return importsAnyOf(simulatorExe, {QStringLiteral("impi.dll")});
+#else
+    Q_UNUSED(simulatorExe);
+    return false;
+#endif
+}
+
+QString flowgui::intelMpiExec()
+{
+    const QString dir = intelMpiRuntimeDir();
+    if (dir.isEmpty()) return QString();
+    const QString exe = QDir(dir).filePath(QStringLiteral("mpiexec.exe"));
+    if (!QFileInfo::exists(exe)) return QString();
+    return QDir::toNativeSeparators(exe);
 }
 
 QProcessEnvironment flowgui::simulatorEnvironment()
