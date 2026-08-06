@@ -22,13 +22,14 @@ name: windows-weekly
 
 on:
   schedule:
-    # Friday afternoon, so a break is heard about while the week is still open
-    # and nothing lands on Monday morning. Cron is always UTC and does not
-    # follow DST: 13:17 UTC is 15:17 in Norway on summer time, 14:17 on winter
-    # time - afternoon either way. The odd minute is deliberate; scheduled runs
-    # queue behind everyone else's when set to the top of the hour.
+    # Friday, end of the working day: a break is heard about while the week is
+    # still open, and nothing lands on Monday morning. Cron is always UTC and
+    # does not follow DST, so a fixed time drifts an hour across the year:
+    # 15:17 UTC is 17:17 in Norway on summer time and 16:17 on winter time -
+    # late afternoon either way. The odd minute is deliberate; runs scheduled
+    # on the hour queue behind everyone else's.
     # For Saturday early morning instead, use '17 3 * * 6' (05:17 / 04:17 local).
-    - cron: '17 13 * * 5'
+    - cron: '17 15 * * 5'
   workflow_dispatch:
     inputs:
       sim_target:
