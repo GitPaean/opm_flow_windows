@@ -1,4 +1,4 @@
-# Copyright (C) 2026 SINTEF Digital; GPL-3.0-or-later (see LICENSE).
+# Copyright (C) 2026 SINTEF Digital, Mathematics & Cybernetics; GPL-3.0-or-later (see LICENSE).
 <#
   allow-firewall.ps1 - pre-authorize the built OPM executables in Windows
   Defender Firewall so MPI runs do not trigger per-exe popups (or silent

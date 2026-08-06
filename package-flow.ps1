@@ -1,4 +1,4 @@
-# Copyright (C) 2026 SINTEF Digital; GPL-3.0-or-later (see LICENSE).
+# Copyright (C) 2026 SINTEF Digital, Mathematics & Cybernetics; GPL-3.0-or-later (see LICENSE).
 <#
   package-flow.ps1 - stage a redistributable Windows package of OPM Flow
   (simulator + flow-gui) from this harness' build trees.
@@ -181,7 +181,7 @@ GNU General Public License, version 3 or later
 (https://www.gnu.org/licenses/gpl-3.0.html).
 
 The Windows build harness and the flow-gui application in this package
-are Copyright (C) 2026 SINTEF Digital, under the same GPL v3+ license.
+are Copyright (C) 2026 SINTEF Digital, Mathematics & Cybernetics, under the same GPL v3+ license.
 
 Source code
   The project's home is the upstream OPM repositories:

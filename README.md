@@ -127,7 +127,7 @@ Code-signing the installer with an OV/EV certificate removes the warnings
 altogether (see [PACKAGING.md](PACKAGING.md)).
 
 ## License
-Copyright (C) 2026 SINTEF Digital.
+Copyright (C) 2026 SINTEF Digital, Mathematics & Cybernetics.
 
 This repository (build scripts, documentation, compatibility shims, and the
 `flow-gui` application) is licensed under the

@@ -1,4 +1,4 @@
-# Copyright (C) 2026 SINTEF Digital; GPL-3.0-or-later (see LICENSE).
+# Copyright (C) 2026 SINTEF Digital, Mathematics & Cybernetics; GPL-3.0-or-later (see LICENSE).
 <#
   build-msix.ps1 - build an MSIX package of OPM Flow (GUI + simulators) from
   the tree staged by package-flow.ps1.

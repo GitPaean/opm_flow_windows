@@ -7,7 +7,7 @@
   Rendering is a self-contained QOpenGLWidget (no external engine), which
   keeps the build dependency-free on both Windows and Linux.
 
-  Copyright (C) 2026 SINTEF Digital
+  Copyright (C) 2026 SINTEF Digital, Mathematics & Cybernetics
 
   Part of the opm_flow_windows harness; GPL v3+ (see repository LICENSE).
 */

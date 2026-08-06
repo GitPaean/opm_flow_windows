@@ -10,7 +10,7 @@
   end up in the list twice - and since the tags are derived from the folder,
   the two entries read alike and only a "(2)" counter told them apart.
 
-  Copyright (C) 2026 SINTEF Digital
+  Copyright (C) 2026 SINTEF Digital, Mathematics & Cybernetics
 
   Part of the opm_flow_windows harness; GPL v3+ (see repository LICENSE).
 */

@@ -1,4 +1,4 @@
-# Copyright (C) 2026 SINTEF Digital; GPL-3.0-or-later (see LICENSE).
+# Copyright (C) 2026 SINTEF Digital, Mathematics & Cybernetics; GPL-3.0-or-later (see LICENSE).
 # Native Windows (MSVC) build of OPM flow_blackoil.
 #
 # Reference GitHub Actions workflow. Intended to live at

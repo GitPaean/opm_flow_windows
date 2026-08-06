@@ -1,4 +1,4 @@
-/* Copyright (C) 2026 SINTEF Digital; GPL-3.0-or-later (see repository LICENSE). */
+/* Copyright (C) 2026 SINTEF Digital, Mathematics & Cybernetics; GPL-3.0-or-later (see repository LICENSE). */
 /* Fortran C-interface name-mangling for the OpenBLAS/LAPACK ABI on Windows
    (gfortran convention: lowercase + trailing underscore). Normally generated
    by CMake's FortranCInterface, which needs a Fortran compiler. */

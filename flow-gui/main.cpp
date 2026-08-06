@@ -4,7 +4,7 @@
   MPI/OpenMP run options, streamed simulator log, and (when built with
   summary support) plots of summary vectors via opm-common's ESmry.
 
-  Copyright (C) 2026 SINTEF Digital
+  Copyright (C) 2026 SINTEF Digital, Mathematics & Cybernetics
 
   This file is part of the opm_flow_windows build harness and is licensed
   under the GNU General Public License v3+ like the OPM project itself.

@@ -1,4 +1,4 @@
-# Copyright (C) 2026 SINTEF Digital; GPL-3.0-or-later (see LICENSE).
+# Copyright (C) 2026 SINTEF Digital, Mathematics & Cybernetics; GPL-3.0-or-later (see LICENSE).
 <#
   update-opm-masters.ps1 - sync each OPM fork's master with upstream/master.
 

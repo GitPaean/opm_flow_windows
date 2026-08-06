@@ -2,7 +2,7 @@
   GuiPaths - where a file dialog should start, and keeping the process'
   working directory usable.
 
-  Copyright (C) 2026 SINTEF Digital
+  Copyright (C) 2026 SINTEF Digital, Mathematics & Cybernetics
 
   Part of the opm_flow_windows harness; GPL v3+ (see repository LICENSE).
 */

@@ -1,4 +1,4 @@
-/* Copyright (C) 2026 SINTEF Digital; GPL-3.0-or-later (see repository LICENSE). */
+/* Copyright (C) 2026 SINTEF Digital, Mathematics & Cybernetics; GPL-3.0-or-later (see repository LICENSE). */
 /* Minimal <sys/ioctl.h> shim for MSVC. Intentionally does NOT define TIOCGWINSZ,
    so OPM falls back to its default terminal width. */
 #ifndef OPM_COMPAT_SYS_IOCTL_H

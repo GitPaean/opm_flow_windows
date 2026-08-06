@@ -1,4 +1,4 @@
-# Copyright (C) 2026 SINTEF Digital; GPL-3.0-or-later (see LICENSE).
+# Copyright (C) 2026 SINTEF Digital, Mathematics & Cybernetics; GPL-3.0-or-later (see LICENSE).
 # build-module.ps1 <module-name> [extra cmake -D args...]
 # Configures, builds, and installs one module (DUNE or OPM) into the shared
 # install prefix using the MSVC conformance flags OPM/DUNE need.

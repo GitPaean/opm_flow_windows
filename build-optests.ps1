@@ -1,4 +1,4 @@
-# Copyright (C) 2026 SINTEF Digital; GPL-3.0-or-later (see LICENSE).
+# Copyright (C) 2026 SINTEF Digital, Mathematics & Cybernetics; GPL-3.0-or-later (see LICENSE).
 <#
   build-optests.ps1 - reconfigure + build the four OPM modules with tests AND
   examples enabled (BUILD_TESTING=ON, BUILD_EXAMPLES=ON), building the 'all'
