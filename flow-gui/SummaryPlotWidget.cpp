@@ -38,9 +38,11 @@
 #include <QLineSeries>
 #include <QListWidget>
 #include <QListWidgetItem>
+#include <QMenu>
 #include <QPen>
 #include <QPolygonF>
 #include <QScatterSeries>
+#include <QShortcut>
 #include <QPageSize>
 #include <QPainter>
 #include <QPdfWriter>
@@ -52,6 +54,7 @@
 #include <QSpinBox>
 #include <QSplitter>
 #include <QTimer>
+#include <QToolButton>
 #include <QCursor>
 #include <QToolTip>
 #include <QTreeWidget>
@@ -81,6 +84,7 @@ const int RoleVecIndex = Qt::UserRole + 1;   // leaf item -> index into vecs_
 const int RoleCaseLabel = Qt::UserRole + 2;  // case item -> its current name
 const int RoleCaseBase  = Qt::UserRole + 3;  // ... -> its name before tagging
 const int RoleCaseCustom = Qt::UserRole + 4; // ... -> the user typed the name
+const int RoleCaseSeq   = Qt::UserRole + 5;  // ... -> when it was loaded
 
 // legend placement (values stored in legendBox_)
 enum LegendPos { LegendBottom, LegendTop, LegendLeft, LegendRight,
@@ -662,7 +666,7 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
     }
 
     // --- cases + tree + chart ------------------------------------------------
-    auto* split = new QSplitter;
+    auto* split = mainSplit_ = new QSplitter;
     {
         auto* left = new QWidget;
         auto* ll = new QVBoxLayout(left);
@@ -672,6 +676,33 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
         // ACTIVE case whose vectors fill the tree below.
         auto* crow = new QHBoxLayout;
         crow->addWidget(new QLabel(QStringLiteral("Cases  (checked = plotted):")), 1);
+        // The list order is the plot order - of the curves, their colours and
+        // dashes, the legend and the CSV columns - so it is worth being able
+        // to set it: sort it, or move one case at a time.
+        auto* bsort = new QToolButton;
+        bsort->setText(QStringLiteral("Sort"));
+        bsort->setPopupMode(QToolButton::InstantPopup);
+        bsort->setToolTip(QStringLiteral("order the case list - which is the "
+                                         "order the curves are drawn in"));
+        auto* sortMenu = new QMenu(bsort);
+        sortMenu->addAction(QStringLiteral("By name (A-Z)"), this,
+                            [this] { sortCases(SortNameAsc); });
+        sortMenu->addAction(QStringLiteral("By name (Z-A)"), this,
+                            [this] { sortCases(SortNameDesc); });
+        sortMenu->addAction(QStringLiteral("Checked first"), this,
+                            [this] { sortCases(SortCheckedFirst); });
+        sortMenu->addAction(QStringLiteral("Order loaded"), this,
+                            [this] { sortCases(SortLoadOrder); });
+        bsort->setMenu(sortMenu);
+        crow->addWidget(bsort);
+        auto* bup = new QToolButton;
+        bup->setArrowType(Qt::UpArrow);
+        bup->setToolTip(QStringLiteral("move the highlighted case up (Ctrl+Up)"));
+        crow->addWidget(bup);
+        auto* bdown = new QToolButton;
+        bdown->setArrowType(Qt::DownArrow);
+        bdown->setToolTip(QStringLiteral("move the highlighted case down (Ctrl+Down)"));
+        crow->addWidget(bdown);
         auto* brename = new QPushButton(QStringLiteral("Rename"));
         brename->setToolTip(QStringLiteral(
             "rename the highlighted case - the new name is what the plot "
@@ -683,19 +714,41 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
         ll->addLayout(crow);
 
         caseList_ = new QListWidget;
-        caseList_->setMaximumHeight(110);
+        caseList_->setMinimumHeight(64);
         caseList_->setSelectionMode(QAbstractItemView::SingleSelection);
+        // Drag a case to where you want it in the plot; the buttons above do
+        // the same for anyone who would rather click.
+        caseList_->setDragDropMode(QAbstractItemView::InternalMove);
+        caseList_->setDefaultDropAction(Qt::MoveAction);
+        caseList_->viewport()->installEventFilter(this);   // to catch the drop
         // double-click / F2 edits the name in place
         caseList_->setEditTriggers(QAbstractItemView::DoubleClicked
                                    | QAbstractItemView::EditKeyPressed);
-        ll->addWidget(caseList_);
 
         tree_ = new QTreeWidget;
         tree_->setHeaderHidden(true);
         tree_->setSelectionMode(QAbstractItemView::ExtendedSelection);
         tree_->setUniformRowHeights(true);
-        ll->addWidget(tree_, 1);
+
+        // The case list used to be pinned to 110 px however many cases were
+        // loaded; on a splitter it can be dragged open to show them all.
+        caseSplit_ = new QSplitter(Qt::Vertical);
+        caseSplit_->addWidget(caseList_);
+        caseSplit_->addWidget(tree_);
+        caseSplit_->setStretchFactor(0, 0);
+        caseSplit_->setStretchFactor(1, 1);
+        caseSplit_->setSizes({ 110, 500 });
+        ll->addWidget(caseSplit_, 1);
         split->addWidget(left);
+
+        connect(bup,   &QToolButton::clicked, this, [this] { moveCase(-1); });
+        connect(bdown, &QToolButton::clicked, this, [this] { moveCase(1); });
+        auto* upKey = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_Up), caseList_);
+        upKey->setContext(Qt::WidgetShortcut);
+        connect(upKey, &QShortcut::activated, this, [this] { moveCase(-1); });
+        auto* downKey = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_Down), caseList_);
+        downKey->setContext(Qt::WidgetShortcut);
+        connect(downKey, &QShortcut::activated, this, [this] { moveCase(1); });
 
         connect(bremove, &QPushButton::clicked, this, [this] { removeCurrentCase(); });
         connect(brename, &QPushButton::clicked, this, [this] {
@@ -866,6 +919,7 @@ void SummaryPlotWidget::addCase(const QString& label, const QString& rawPath,
 
     auto* it = new QListWidgetItem(label);
     it->setData(Qt::UserRole, smspecPath);
+    it->setData(RoleCaseSeq, caseSeq_++);   // to sort back into load order
     it->setData(RoleCaseBase, label);    // the case's own name, before tagging
     it->setData(RoleCaseLabel, label);   // to tell a rename from a check toggle
     it->setToolTip(smspecPath);
@@ -1105,6 +1159,16 @@ QJsonObject SummaryPlotWidget::uiState() const
     if (itemBox_)    o[QStringLiteral("item")]     = itemBox_->currentText();
     if (subItemBox_) o[QStringLiteral("subItem")]  = subItemBox_->currentText();
     if (filter_)     o[QStringLiteral("filter")]   = filter_->text();
+
+    // How the panel is split - the case list can be dragged open to show more
+    // cases, and that is worth keeping. Qt's own splitter state rather than a
+    // list of pixel heights: it holds the PROPORTIONS, so a session restored
+    // into a window of another size still looks like the one that was saved.
+    auto stateOf = [](QSplitter* sp) {
+        return sp ? QString::fromLatin1(sp->saveState().toBase64()) : QString();
+    };
+    o[QStringLiteral("caseSplit")] = stateOf(caseSplit_);
+    o[QStringLiteral("mainSplit")] = stateOf(mainSplit_);
     return o;
 }
 
@@ -1189,6 +1253,13 @@ void SummaryPlotWidget::restoreUiState(const QJsonObject& state)
                                            : QPointF();
         }
     }
+    auto restoreSplit = [](QSplitter* sp, const QString& state) {
+        if (sp && !state.isEmpty())
+            sp->restoreState(QByteArray::fromBase64(state.toLatin1()));
+    };
+    restoreSplit(caseSplit_, val("caseSplit").toString());
+    restoreSplit(mainSplit_, val("mainSplit").toString());
+
     setFocusChart(std::clamp(val("focus").toInt(0), 0, visibleCharts_ - 1));
     replot();
 
@@ -1616,6 +1687,74 @@ double SummaryPlotWidget::plotScale(QChart* chart) const
     return std::clamp(f, 0.55, 1.25);
 }
 
+// -- the order of the list is the order of the curves -----------------------
+void SummaryPlotWidget::caseOrderChanged()
+{
+    QStringList paths;
+    for (int i = 0; i < caseList_->count(); ++i)
+        paths << caseList_->item(i)->data(Qt::UserRole).toString();
+    emit caseOrder(paths);
+    replot();
+}
+
+void SummaryPlotWidget::moveCase(int delta)
+{
+    const int row = caseList_->currentRow();
+    const int to = row + delta;
+    if (row < 0 || to < 0 || to >= caseList_->count()) return;
+    // takeItem/insertItem move the item itself, so its path, tag and check
+    // state travel with it.
+    const QSignalBlocker block(caseList_);      // not a case switch
+    QListWidgetItem* it = caseList_->takeItem(row);
+    caseList_->insertItem(to, it);
+    caseList_->setCurrentItem(it);
+    caseOrderChanged();
+}
+
+void SummaryPlotWidget::sortCases(int mode)
+{
+    const int n = caseList_->count();
+    if (n < 2) return;
+    QListWidgetItem* current = caseList_->currentItem();
+
+    std::vector<QListWidgetItem*> items;
+    items.reserve(n);
+    {
+        const QSignalBlocker block(caseList_);
+        while (caseList_->count()) items.push_back(caseList_->takeItem(0));
+    }
+    auto seq = [](QListWidgetItem* it) { return it->data(RoleCaseSeq).toInt(); };
+    switch (mode) {
+    case SortNameDesc:
+        std::stable_sort(items.begin(), items.end(), [](auto* a, auto* b) {
+            return a->text().compare(b->text(), Qt::CaseInsensitive) > 0; });
+        break;
+    case SortCheckedFirst:
+        // What is plotted first, in name order within each group - the rest
+        // stays in the list, just out of the way.
+        std::stable_sort(items.begin(), items.end(), [](auto* a, auto* b) {
+            const bool ca = a->checkState() == Qt::Checked;
+            const bool cb = b->checkState() == Qt::Checked;
+            if (ca != cb) return ca;
+            return a->text().compare(b->text(), Qt::CaseInsensitive) < 0; });
+        break;
+    case SortLoadOrder:
+        std::stable_sort(items.begin(), items.end(),
+                         [&seq](auto* a, auto* b) { return seq(a) < seq(b); });
+        break;
+    default:
+        std::stable_sort(items.begin(), items.end(), [](auto* a, auto* b) {
+            return a->text().compare(b->text(), Qt::CaseInsensitive) < 0; });
+        break;
+    }
+    {
+        const QSignalBlocker block(caseList_);
+        for (auto* it : items) caseList_->addItem(it);
+        if (current) caseList_->setCurrentItem(current);   // same ACTIVE case
+    }
+    caseOrderChanged();
+}
+
 void SummaryPlotWidget::applyChartLayout(int n)
 {
     if (n == visibleCharts_) return;
@@ -1694,6 +1833,12 @@ QPointF SummaryPlotWidget::chartPos(int idx, const QPoint& viewportPos) const
 
 bool SummaryPlotWidget::eventFilter(QObject* obj, QEvent* ev)
 {
+    // A case was dragged to a new place in the list: Qt moves the item, and
+    // the plot follows once it has finished doing so.
+    if (caseList_ && obj == caseList_->viewport() && ev->type() == QEvent::Drop) {
+        QTimer::singleShot(0, this, [this] { caseOrderChanged(); });
+        return QWidget::eventFilter(obj, ev);
+    }
     // The charts were resized, so what is drawn on them has a new size to
     // follow. Coalesced: a drag of the window edge is a stream of these.
     if (chartArea_ && obj == chartArea_ && ev->type() == QEvent::Resize) {

@@ -457,6 +457,8 @@ FlowGuiWindow::FlowGuiWindow()
                 });
         connect(summary_, &SummaryPlotWidget::caseRemoved, viewer3D_,
                 [this](const QString& path) { viewer3D_->removeCase(path); });
+        connect(summary_, &SummaryPlotWidget::caseOrder, viewer3D_,
+                [this](const QStringList& paths) { viewer3D_->reorderCases(paths); });
     }
 #endif
 #endif

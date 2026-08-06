@@ -131,6 +131,12 @@ public:
     // or the Remove button here. The files on disk are left alone.
     void removeCase(const QString& smspecPath);
 
+    // Follow the order the Summary Plots tab's list was put in, so the two
+    // lists read the same way round. Cases this tab does not have are simply
+    // not there; ones it has that the list does not mention keep their place
+    // at the end.
+    void reorderCases(const QStringList& smspecPaths);
+
     // Session state: which case is shown, with which property, and how. The
     // case itself is only opened once the tab is looked at, so a restored
     // choice waits in pending* below until then.

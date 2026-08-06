@@ -29,6 +29,8 @@ class QComboBox;
 class QDoubleSpinBox;
 class QGridLayout;
 class QJsonObject;
+class QSplitter;
+class QToolButton;
 class QLabel;
 class QLineEdit;
 class QListWidget;
@@ -82,6 +84,8 @@ signals:
     void caseAdded(const QString& label, const QString& smspecPath);
     // A case was renamed, so mirrors of the list (the 3D tab) can follow.
     void caseRenamed(const QString& smspecPath, const QString& label);
+    // The list was reordered: the same cases, in this order.
+    void caseOrder(const QStringList& smspecPaths);
     // A case was dropped from the list; mirrors drop it too rather than keep
     // growing with cases this tab no longer knows about.
     void caseRemoved(const QString& smspecPath);
@@ -114,6 +118,8 @@ private:
     QLineEdit*   filter_    = nullptr;
     QTreeWidget* tree_      = nullptr;
     QComboBox*   layoutBox_ = nullptr;   // subplot layout: 1 / 2x1 / 2x2
+    QSplitter*   caseSplit_ = nullptr;   // case list over vector tree
+    QSplitter*   mainSplit_ = nullptr;   // that panel next to the charts
     QComboBox*   legendBox_ = nullptr;   // legend placement, incl. inside corners
     QWidget*     chartArea_ = nullptr;   // grid container holding the subplots
     QGridLayout* chartGrid_ = nullptr;
@@ -194,6 +200,13 @@ private:
     // a single chart in a normal window, less in a subplot layout or a small
     // window. 1.0 throughout when "scale with plot" is off.
     double plotScale(QChart* chart) const;
+    // Order of the case list, which is the order of the curves. Sorting and
+    // moving both end in caseOrderChanged(), which replots and tells the
+    // other tabs.
+    enum SortMode { SortNameAsc, SortNameDesc, SortCheckedFirst, SortLoadOrder };
+    void sortCases(int mode);
+    void moveCase(int delta);          // -1 up, +1 down
+    void caseOrderChanged();
     void savePng();
     void saveCsv();
     // Put the legend where legendBox_ asks: docked to an edge, floating in a

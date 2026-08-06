@@ -160,6 +160,13 @@ results, animate them in 3D, and edit decks — all in one window.
   tags are worked out over the whole list on every add, remove and rename,
   so removing a case lets the survivor go back to reading plainly, and a
   name you typed yourself is never tagged.
+  The **order of the list is the order of the plot** — of the curves, their
+  colours and dashes, the legend and the CSV columns — so it can be set:
+  *Sort* by name (either way), plotted-first or back to the order loaded;
+  the arrow buttons (or Ctrl+Up / Ctrl+Down) move one case at a time; or
+  drag a case where you want it. The 3D tab's list follows. The list sits on
+  a **splitter** above the vector tree, so it can be dragged open when there
+  are more cases than fit, and that size is remembered.
   The *markers* toggle marks **every data point** in the summary
   — no sampling by default, so the markers are exactly the samples the run
   wrote — and **hovering a marker** shows its case, date and value with

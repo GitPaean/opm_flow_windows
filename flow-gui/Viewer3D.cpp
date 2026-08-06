@@ -671,6 +671,44 @@ void Viewer3DWidget::removeCase(const QString& smspecPath)
         if (flowgui::sameCasePath(cases_[i].egrid, egrid)) { removeCaseAt(i); return; }
 }
 
+void Viewer3DWidget::reorderCases(const QStringList& smspecPaths)
+{
+    if (cases_.isEmpty()) return;
+    const QString shown = caseBox_->currentIndex() >= 0
+                              ? cases_[caseBox_->currentIndex()].egrid : QString();
+
+    QVector<CaseFiles> sorted;
+    sorted.reserve(cases_.size());
+    QVector<bool> taken(cases_.size(), false);
+    for (const QString& p : smspecPaths) {
+        const QString egrid = caseBaseOf(p) + QStringLiteral(".EGRID");
+        for (int i = 0; i < cases_.size(); ++i)
+            if (!taken[i] && flowgui::sameCasePath(cases_[i].egrid, egrid)) {
+                sorted.append(cases_[i]);
+                taken[i] = true;
+                break;
+            }
+    }
+    for (int i = 0; i < cases_.size(); ++i)      // anything not mentioned
+        if (!taken[i]) sorted.append(cases_[i]);
+    bool changed = false;                        // CaseFiles has no operator==
+    for (int i = 0; i < sorted.size() && !changed; ++i)
+        changed = sorted[i].egrid != cases_[i].egrid;
+    if (!changed) return;
+    cases_ = sorted;
+
+    // Rebuild the box without reopening anything: the case on screen stays on
+    // screen, at its new place in the list.
+    const QSignalBlocker block(caseBox_);
+    caseBox_->clear();
+    int current = -1;
+    for (int i = 0; i < cases_.size(); ++i) {
+        caseBox_->addItem(cases_[i].label, cases_[i].egrid);
+        if (!shown.isEmpty() && flowgui::sameCasePath(cases_[i].egrid, shown)) current = i;
+    }
+    caseBox_->setCurrentIndex(current);
+}
+
 // The list is what grows over a session - every job that runs adds to it - so
 // dropping an entry only forgets it here; nothing on disk is touched.
 void Viewer3DWidget::removeCaseAt(int idx)
