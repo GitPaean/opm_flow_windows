@@ -25,6 +25,8 @@
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QFontMetrics>
+#include <QMargins>
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QHash>
@@ -156,6 +158,22 @@ private:
 // The legend's size before any scaling; plotChart() scales from here.
 constexpr double kLegendPointSize = 10.5;
 
+// Pick a tick-label format from the magnitude the axis actually spans. Fixed
+// notation reads best while the digits stay few; outside that band it fails at
+// both ends. Large, it runs away with the margin. Small, it collapses into a
+// row of zeros - a rate around 6e-8 labels as "0.00000060", where every tick
+// looks alike and the exponent, the one thing worth reading, is left for the
+// reader to count. Scientific is the honest form there.
+void applyTickFormat(QValueAxis* a)
+{
+    if (!a) return;
+    const double m = std::max(std::fabs(a->min()), std::fabs(a->max()));
+    if      (m == 0.0)  a->setLabelFormat(QStringLiteral("%.0f"));
+    else if (m >= 1e7)  a->setLabelFormat(QStringLiteral("%.3g"));
+    else if (m >= 1000) a->setLabelFormat(QStringLiteral("%.0f"));
+    else if (m < 1e-3)  a->setLabelFormat(QStringLiteral("%.1e"));
+}
+
 const int RoleVecIndex = Qt::UserRole + 1;   // leaf item -> index into vecs_
 const int RoleCaseLabel = Qt::UserRole + 2;  // case item -> its current name
 const int RoleCaseBase  = Qt::UserRole + 3;  // ... -> its name before tagging
@@ -184,6 +202,24 @@ constexpr int kCaseDashCount = int(sizeof(kCaseDashes) / sizeof(kCaseDashes[0]))
 // Object name of the empty stand-in series that carries a curve's legend
 // entry (see plotChart); its marker is the one the legend actually shows.
 const QString kLegendSample = QStringLiteral("flow-gui.legend-sample");
+
+// Side of the box the legend sample's marker is drawn in. Qt lays a legend row
+// out at max(marker, font) plus its own padding, so this - not the font alone -
+// is what sets the row height whenever markers are on. plotChart() draws the
+// sample with it and placeLegend() sizes the plate from it; they have to agree,
+// or the plate comes out shorter than the rows and Qt reflows the entries into
+// a second column that the plate then clips.
+//
+// The legend's own scale factor applies here as well as to the font. Without
+// it the 20px floor below is absolute, and since it exceeds the font height
+// at any legend scale worth using, it - not the text - is what the row height
+// comes out of: turning the scale down then shrank the text inside rows that
+// would not move, which is the whole complaint the scale spin is meant to
+// answer. Scaled, the sample shrinks with the text it stands beside.
+qreal legendMarkerBox(double markerSize, double legendScale)
+{
+    return std::clamp(2.6 * markerSize, 20.0, 30.0) * legendScale;
+}
 
 // The pen a legend sample is drawn with: the curve's colour and case dash,
 // but heavier - Qt draws the sample with the SERIES' pen, so at curve width
@@ -868,7 +904,7 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
         chartArea_->installEventFilter(this);
         chartGrid_ = new QGridLayout(chartArea_);
         chartGrid_->setContentsMargins(0, 0, 0, 0);
-        chartGrid_->setSpacing(2);
+        chartGrid_->setSpacing(1);
         ensureCharts(1);
         chartGrid_->addWidget(chartViews_[0], 0, 0);
         split->addWidget(chartArea_);
@@ -1920,6 +1956,15 @@ void SummaryPlotWidget::applyChartLayout(int rows, int cols)
     visibleCharts_ = n;
     layoutRows_ = rows;
     layoutCols_ = cols;
+    // Give the grid its new geometry NOW. Everything drawn on a chart is sized
+    // from the view it sits in, and the caller replots as soon as this returns
+    // - but Qt would not lay the views out until control went back to the event
+    // loop, so that replot would read the sizes the OLD grid had. Going 2x2 to
+    // 3x3 then left the curves, markers and legend scaled for the larger plot
+    // until something else forced a second replot, which is why nudging the
+    // legend scale appeared to fix it. The resize filter does not cover this:
+    // it watches chartArea_, whose own size does not change when the grid does.
+    chartGrid_->activate();
     setFocusChart(focusChart_);   // re-mirror the tree, refresh the frames
 }
 
@@ -2216,8 +2261,14 @@ void SummaryPlotWidget::styleChart(QChart* chart)
     chart->setDropShadowEnabled(false);
     chart->setBackgroundBrush(QBrush(Qt::white));
     chart->setPlotAreaBackgroundVisible(false);
-    // NB: do not shrink QChart::margins here - the axis labels and titles are
-    // laid out inside those margins, and squeezing them drops the axes.
+    // Qt's default 20px all round is padding OUTSIDE the axis labels and
+    // titles, so in a grid every gap between two subplots costs two of them -
+    // 40px of white before the 1px the layout adds. Half that: it reads as a
+    // gap rather than a gutter, and the space goes back to the plots.
+    // NB: this is a floor, not a target. The labels and titles are laid out
+    // inside these margins, so taking them much below this drops the axes
+    // entirely rather than merely crowding them.
+    chart->setMargins(QMargins(10, 10, 10, 10));
     QFont tf = chart->titleFont();
     tf.setPointSizeF(10.5);
     tf.setBold(true);
@@ -2237,14 +2288,19 @@ void SummaryPlotWidget::styleChart(QChart* chart)
 void SummaryPlotWidget::styleAxis(QAbstractAxis* axis)
 {
     if (!axis) return;
+    // Tick numbers carry the quantitative content of the figure, so they are
+    // sized to be read rather than to stay out of the way: a step up from the
+    // old 9pt, and demi-bold, which is what makes a digit hold up against the
+    // grid lines behind it without going as heavy as the axis title.
     QFont f = axis->labelsFont();
-    f.setPointSizeF(9.0);
+    f.setPointSizeF(10.0);
+    f.setWeight(QFont::DemiBold);
     axis->setLabelsFont(f);
     QFont t = axis->titleFont();
-    t.setPointSizeF(9.5);
+    t.setPointSizeF(10.0);
     t.setBold(true);
     axis->setTitleFont(t);
-    axis->setLabelsColor(QColor(0x33, 0x38, 0x3d));
+    axis->setLabelsColor(QColor(0x22, 0x26, 0x2b));
     axis->setTitleBrush(QBrush(QColor(0x22, 0x26, 0x2b)));
     axis->setLinePenColor(QColor(0x55, 0x5b, 0x61));
     axis->setGridLineColor(QColor(0xdc, 0xe0, 0xe4));   // light, unobtrusive
@@ -2290,6 +2346,11 @@ void SummaryPlotWidget::placeLegend(QChart* chart)
     int rows = 0;
     qreal textW = 0;
     const QFontMetricsF fm(lg->font());
+    // Measure the labels the way Qt will: it lays text out with the integer
+    // metrics, which round up per glyph, and elides on the slightest overrun.
+    // Measured with the float ones the plate comes out a few pixels short and
+    // the longest entry loses its tail to an ellipsis.
+    const QFontMetrics fmi(lg->font());
     const auto markers = lg->markers();
     for (auto* mk : markers) {
         // Count the stand-in series carrying the entries, by their NAME - not
@@ -2298,16 +2359,41 @@ void SummaryPlotWidget::placeLegend(QChart* chart)
         // for good.
         if (mk->series()->objectName() != kLegendSample) continue;
         ++rows;
-        textW = std::max(textW, fm.horizontalAdvance(mk->label()));
+        textW = std::max(textW, qreal(fmi.horizontalAdvance(mk->label())));
     }
     if (rows == 0) { lg->setVisible(false); return; }
-    // Qt lays a legend row out at roughly the font height plus the marker
-    // padding (~20px); too tight a plate makes it spill into a second column
-    // that the plate then clips. Erring tall only costs a little whitespace.
-    const qreal rowH = fm.height() + 20.0;
-    const qreal swatch = 34.0;                      // colour/dash sample + gap
-    QSizeF sz(std::min(textW + swatch + 24.0, maxW),
-              std::min(rows * rowH + 14.0,    maxH));
+    // What a row of this legend costs, measured off Qt rather than guessed at.
+    // Rendering entries across 4-12pt, with and without a sample marker, and
+    // reading back the smallest plate that neither reflows them into a second
+    // column nor elides a label:
+    //
+    //     height  max(marker, font) + 13.5
+    //     width   label + max(26 + font, marker + 31)
+    //
+    // Qt's own size hint is no substitute - it reports a row shorter than the
+    // one it then lays out, which is what the plate has to clear.
+    //
+    // The marker is the term that matters and the one the old +20 a row was
+    // standing in for. It stopped covering it once the scale spin took the
+    // legend below about x0.8 - hence entries clipped in a small subplot - and
+    // being constant it was also why the box stopped shrinking: the sample was
+    // pinned at 20px whatever the scale, so the rows were too. Scaled with the
+    // legend and sized from the numbers above, the plate tracks the scale down
+    // and carries no slack at the top of the range either.
+    const qreal fh  = fm.height();
+    const qreal box = (markers_ && markers_->isChecked())
+        ? legendMarkerBox((markerSizeSpin_ ? markerSizeSpin_->value() : 7.5)
+                              * plotScale(chart),
+                          legendScaleSpin_ ? legendScaleSpin_->value() : 1.0)
+        : 0.0;
+    const qreal rowH = std::max(fh, box) + 14.0;
+    const qreal entW = textW + std::max(26.0 + fh, box + 31.0);
+    const qreal pad  = 4.0;
+    // Trim Qt's padding inside the plate too, so the space the box does take
+    // is spent on the entries rather than on a border around them.
+    lg->setContentsMargins(0, 0, 0, 0);
+    QSizeF sz(std::min(entW + pad,        maxW),
+              std::min(rows * rowH + pad, maxH));
     if (sz.width() <= 0 || sz.height() <= 0) return;
     const bool left = (mode == LegendInTL || mode == LegendInBL);
     const bool top  = (mode == LegendInTL || mode == LegendInTR);
@@ -2334,9 +2420,9 @@ int SummaryPlotWidget::plotChart(QChart* chart, const QList<int>& sel,
 {
     // The legend follows the chart too, times whatever the legend box asks
     // for; styleChart() set the unscaled size when the chart was built.
+    const double legendSpin = legendScaleSpin_ ? legendScaleSpin_->value() : 1.0;
     {
-        const double legendScale =
-            (legendScaleSpin_ ? legendScaleSpin_->value() : 1.0) * plotScale(chart);
+        const double legendScale = legendSpin * plotScale(chart);
         QFont lf = chart->legend()->font();
         lf.setPointSizeF(std::clamp(kLegendPointSize * legendScale, 4.0, 30.0));
         lf.setBold(true);
@@ -2524,7 +2610,7 @@ int SummaryPlotWidget::plotChart(QChart* chart, const QList<int>& sel,
                 // case's shape riding on the sample line. Qt sizes a sample
                 // carrying a marker from the series' marker size, which also
                 // buys the line a little more length to show its dash in.
-                const qreal box  = std::clamp(2.6 * markerS, 20.0, 30.0);
+                const qreal box  = legendMarkerBox(markerS, legendSpin);
                 const qreal size = std::min(markerS, box - 3.0);
                 sample->setMarkerSize(box);
                 sample->setLightMarker(
@@ -2593,7 +2679,9 @@ int SummaryPlotWidget::plotChart(QChart* chart, const QList<int>& sel,
                 QDateTime::fromMSecsSinceEpoch(qint64(xmin), QTimeZone::utc()),
                 QDateTime::fromMSecsSinceEpoch(qint64(xmax), QTimeZone::utc()));
         } else {
-            static_cast<QValueAxis*>(ax)->setRange(xmin, xmax);
+            auto* xa = static_cast<QValueAxis*>(ax);
+            xa->setRange(xmin, xmax);
+            applyTickFormat(xa);      // a days axis runs small on a short case
         }
     }
 
@@ -2604,11 +2692,7 @@ int SummaryPlotWidget::plotChart(QChart* chart, const QList<int>& sel,
         if (hi > lo) a->setRange(lo - 0.05 * (hi - lo), hi + 0.05 * (hi - lo));
         else         a->setRange(lo - 1.0, hi + 1.0);
         a->applyNiceNumbers();
-        // Drop the pointless ".0" the default format leaves on round ticks,
-        // and go scientific once the digits would run away with the margin.
-        const double m = std::max(std::fabs(a->min()), std::fabs(a->max()));
-        if      (m >= 1e7)  a->setLabelFormat(QStringLiteral("%.3g"));
-        else if (m >= 1000) a->setLabelFormat(QStringLiteral("%.0f"));
+        applyTickFormat(a);
     };
     if (lset) pad(ayL, lmin, lmax);
     if (ayR && rset) pad(ayR, rmin, rmax);
