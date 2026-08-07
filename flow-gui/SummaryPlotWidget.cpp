@@ -2025,7 +2025,15 @@ void SummaryPlotWidget::applyChartLayout(int rows, int cols)
     cols = std::clamp(cols, 1, kMaxCols);
     const int n = std::min(rows * cols, kMaxCharts);
     ensureCharts(n);
-    if (n == visibleCharts_ && rows == layoutRows_) return;
+    // No early return for "the layout is already this". The state below is not
+    // only a rearrangement - it is what SHOWS the views at all, ensureCharts()
+    // building them hidden - and asking for the layout that is already set is
+    // exactly what happens on the way up with a single chart saved: the
+    // constructor asks for 1x1, which is what the members already say, and so
+    // did restoring the session. Skipping the work left chart 0 hidden, the
+    // grid holding nothing visible, and the whole plot area collapsed to
+    // nothing. Every step here is idempotent, and none of it is hot - this
+    // runs when the layout button is used, not on a replot.
 
     // Shrinking below the focused subplot: the focused one survives, in the
     // last still-visible slot (its curves and kept zoom move with it).
