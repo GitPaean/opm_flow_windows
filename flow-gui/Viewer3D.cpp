@@ -852,13 +852,6 @@ void Viewer3DWidget::caseFinished(const QString& smspecPath)
         openCase(idx);
 }
 
-bool Viewer3DWidget::restartIsBusy(const CaseFiles& cf) const
-{
-    return !runningEgrid_.isEmpty()
-        && flowgui::sameCasePath(cf.egrid, runningEgrid_)
-        && flowgui::isSyncedOrNetworkPath(cf.unrst);
-}
-
 void Viewer3DWidget::setRunningCase(const QString& smspecPath)
 {
     const QString egrid = smspecPath.isEmpty()
@@ -998,39 +991,26 @@ void Viewer3DWidget::openCase(int idx)
     // What the status line says about the restart file, when there is anything
     // worth saying: it is either being written, or it could not be read.
     QString rstNote;
-    if (restartIsBusy(cf)) {
-        // A simulation is writing this case, onto storage where a reader can
-        // disturb the writer - see flowgui::isSyncedOrNetworkPath(). Leave the
-        // restart file alone until the run ends: a half-written one is worth
-        // little to look at, and it is the simulation that would pay for the
-        // collision. On a local disk this branch is not taken, and the view
-        // keeps following the run as it did.
+    try {
+        if (QFileInfo::exists(cf.unrst)) {
+            rst_ = std::make_unique<Opm::EclIO::ERst>(cf.unrst.toStdString());
+            steps_ = rst_->listOfReportStepNumbers();
+        }
+    } catch (const std::exception& e) {
+        // Do not swallow this: dropping every dynamic property with no
+        // reason given looks like the case simply has none.
         rst_.reset();
         steps_.clear();
-        rstNote = QStringLiteral(" - restart file not read while the run is in "
-                                 "progress (output is on a network or synced folder)");
-    } else {
-        try {
-            if (QFileInfo::exists(cf.unrst)) {
-                rst_ = std::make_unique<Opm::EclIO::ERst>(cf.unrst.toStdString());
-                steps_ = rst_->listOfReportStepNumbers();
-            }
-        } catch (const std::exception& e) {
-            // Do not swallow this: dropping every dynamic property with no
-            // reason given looks like the case simply has none.
-            rst_.reset();
-            steps_.clear();
-            rstNote = QStringLiteral(" - restart file unreadable (%1)")
-                          .arg(QString::fromLocal8Bit(e.what()));
-            // A restart file that was being written usually becomes readable a
-            // moment later, so try once - and only once per case, so a file
-            // that stays bad does not spin.
-            if (rstRetryIdx_ != idx) {
-                rstRetryIdx_ = idx;
-                QTimer::singleShot(1500, this, [this, idx] {
-                    if (caseBox_->currentIndex() == idx && !rst_) openCase(idx);
-                });
-            }
+        rstNote = QStringLiteral(" - restart file unreadable (%1)")
+                      .arg(QString::fromLocal8Bit(e.what()));
+        // A restart file that was being written usually becomes readable a
+        // moment later, so try once - and only once per case, so a file
+        // that stays bad does not spin.
+        if (rstRetryIdx_ != idx) {
+            rstRetryIdx_ = idx;
+            QTimer::singleShot(1500, this, [this, idx] {
+                if (caseBox_->currentIndex() == idx && !rst_) openCase(idx);
+            });
         }
     }
 
@@ -1177,7 +1157,6 @@ void Viewer3DWidget::followRunningCase()
     // Only the case being written, and only while it is being written.
     if (runningEgrid_.isEmpty() || !flowgui::sameCasePath(cf.egrid, runningEgrid_))
         return;
-    if (restartIsBusy(cf)) return;      // storage where we deliberately do not read
     if (!isVisible()) return;           // nothing to show for the work
 
     // The grid only exists once flow has written it. Until then there is

@@ -66,19 +66,4 @@ bool linksIntelMpi(const QString& simulatorExe);
 // abort above.
 QString intelMpiExec();
 
-// Does this path live somewhere that a second reader can disturb a writer -
-// a network share, or a folder a sync client (OneDrive, Dropbox, ...) watches?
-//
-// On a local disk it does not: a reader opened by the C++ runtime denies
-// nothing (measured on Windows: MSVC opens with _SH_DENYNO, and a writer opens
-// and writes while a reader holds the file), so reading a simulator's output
-// while it runs is safe. Over SMB an oplock break, and under a sync client a
-// scan of a file that just changed, can each turn that read into a real
-// sharing violation - for the WRITER, i.e. the simulation, not the reader.
-// So this is the question worth asking before reading a running case's files.
-//
-// A false answer is the safe one to guess wrong: it only means reading a file
-// that was going to be readable anyway.
-bool isSyncedOrNetworkPath(const QString& path);
-
 } // namespace flowgui
