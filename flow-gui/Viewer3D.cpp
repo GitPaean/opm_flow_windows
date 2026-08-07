@@ -624,6 +624,14 @@ Viewer3DWidget::Viewer3DWidget(QWidget* parent)
         row->addWidget(stepLabel_);
         top->addLayout(row);
 
+        // Picks up report steps while a run writes them. 5 s rather than
+        // anything brisker because each tick re-indexes the restart file, and a
+        // run producing steps faster than that is not one anybody is watching
+        // step by step.
+        followTimer_ = new QTimer(this);
+        followTimer_->setInterval(5000);
+        connect(followTimer_, &QTimer::timeout, this, [this] { followRunningCase(); });
+
         playTimer_ = new QTimer(this);
         playTimer_->setInterval(600);
         connect(playTimer_, &QTimer::timeout, this, [this] {
@@ -837,16 +845,27 @@ void Viewer3DWidget::setRunningCase(const QString& smspecPath)
     runningEgrid_ = egrid;
     rstRetryIdx_ = -1;
 
-    // A run just started on the case being shown, on storage where we now stop
-    // reading: reopen it so the restart reader is dropped straight away rather
-    // than at whatever moment the user next moves the step slider. When the
-    // output is local nothing changes, so nothing is reopened. Clearing does
-    // not reopen either - the caller follows a finished job with
-    // caseFinished(), and doing it in both places would rebuild the mesh twice.
-    if (egrid.isEmpty()) return;
+    // Follow the run only while one is going on. Clearing does not reopen the
+    // case here - the caller follows a finished job with caseFinished(), and
+    // doing it in both places would rebuild the mesh twice.
+    if (egrid.isEmpty()) { if (followTimer_) followTimer_->stop(); return; }
+    // Tick for as long as the run lasts, whichever case is on screen: the user
+    // may switch to the running one at any point, and followRunningCase() is
+    // the thing that decides whether there is anything to do.
+    if (followTimer_) followTimer_->start();
+
     const int idx = caseBox_ ? caseBox_->currentIndex() : -1;
-    if (idx >= 0 && idx < cases_.size() && restartIsBusy(cases_[idx]))
-        openCase(idx);
+    if (idx < 0 || idx >= cases_.size()) return;
+    if (!flowgui::sameCasePath(cases_[idx].egrid, egrid)) return;
+
+    // A run has started on the case being shown, and it is about to overwrite
+    // the files this tab has open. Reopen it now, unconditionally: whatever is
+    // on screen belongs to the PREVIOUS run, and leaving it up while a new one
+    // writes is worse than showing nothing - it looks like the new results.
+    // openCase() drops every reader and reloads whatever exists so far, which
+    // early in a run may be nothing at all.
+    openCase(idx);
+    if (followTimer_) followTimer_->start();
 }
 
 void Viewer3DWidget::showEvent(QShowEvent* ev)
@@ -915,6 +934,7 @@ void Viewer3DWidget::openCase(int idx)
 {
     grid_.reset(); init_.reset(); rst_.reset();
     rstBytes_ = 0;                      // the old reader's cache went with it
+    lastUnrstSize_ = -1;                // ... and what it had been indexed at
     steps_.clear(); cellGlob_.clear();
     staticBox_->clear(); dynBox_->clear();
     stepSlider_->setEnabled(false);
@@ -1082,26 +1102,96 @@ void Viewer3DWidget::populateProperties()
         const int poro = staticBox_->findText(QStringLiteral("PORO"));
         if (poro >= 0) staticBox_->setCurrentIndex(poro);
     }
-    if (rst_ && grid_ && !steps_.empty()) {
-        for (const auto& [name, typ, size] : rst_->listOfRstArrays(steps_.back()))
-            if (typ == Opm::EclIO::REAL && size == grid_->activeCells())
-                dynBox_->addItem(QString::fromStdString(name));
-        // SOIL is usually not stored in the restart; offer it synthesized
-        // from the stored saturations (SOIL = 1 - SWAT - SGAS), inserted
-        // next to its sibling saturations rather than at the end.
-        if (dynBox_->findText(QStringLiteral("SOIL")) < 0 &&
-            (rst_->hasArray("SWAT", steps_.back()) ||
-             rst_->hasArray("SGAS", steps_.back()))) {
-            int at = dynBox_->findText(QStringLiteral("SWAT"));
-            if (at < 0) at = dynBox_->findText(QStringLiteral("SGAS"));
-            if (at < 0) dynBox_->addItem(QStringLiteral("SOIL"));
-            else        dynBox_->insertItem(at + 1, QStringLiteral("SOIL"));
-        }
-        const int p = dynBox_->findText(QStringLiteral("PRESSURE"));
-        if (p >= 0) dynBox_->setCurrentIndex(p);
-    }
+    populateDynamicProperties();
     staticBox_->blockSignals(false);
     dynBox_->blockSignals(false);
+}
+
+// The dynamic list on its own, so a run that has just written its first report
+// step can fill it without disturbing the static list or the mesh.
+void Viewer3DWidget::populateDynamicProperties()
+{
+    const QSignalBlocker block(dynBox_);
+    const QString had = dynBox_->currentText();
+    dynBox_->clear();
+    if (!rst_ || !grid_ || steps_.empty()) return;
+
+    for (const auto& [name, typ, size] : rst_->listOfRstArrays(steps_.back()))
+        if (typ == Opm::EclIO::REAL && size == grid_->activeCells())
+            dynBox_->addItem(QString::fromStdString(name));
+    // SOIL is usually not stored in the restart; offer it synthesized
+    // from the stored saturations (SOIL = 1 - SWAT - SGAS), inserted
+    // next to its sibling saturations rather than at the end.
+    if (dynBox_->findText(QStringLiteral("SOIL")) < 0 &&
+        (rst_->hasArray("SWAT", steps_.back()) ||
+         rst_->hasArray("SGAS", steps_.back()))) {
+        int at = dynBox_->findText(QStringLiteral("SWAT"));
+        if (at < 0) at = dynBox_->findText(QStringLiteral("SGAS"));
+        if (at < 0) dynBox_->addItem(QStringLiteral("SOIL"));
+        else        dynBox_->insertItem(at + 1, QStringLiteral("SOIL"));
+    }
+    // Keep what the user was looking at when this is a refresh mid-run;
+    // otherwise start at PRESSURE.
+    int keep = had.isEmpty() ? -1 : dynBox_->findText(had);
+    if (keep < 0) keep = dynBox_->findText(QStringLiteral("PRESSURE"));
+    if (keep >= 0) dynBox_->setCurrentIndex(keep);
+}
+
+// Re-read the restart file of a case a run is writing, so report steps appear
+// as they are produced instead of only when the run ends. Deliberately cheap:
+// the grid and the mesh do not change during a run, so only the restart reader
+// and the things that depend on it are touched.
+void Viewer3DWidget::followRunningCase()
+{
+    const int idx = caseBox_ ? caseBox_->currentIndex() : -1;
+    if (idx < 0 || idx >= cases_.size()) return;
+    const CaseFiles& cf = cases_[idx];
+    // Only the case being written, and only while it is being written.
+    if (runningEgrid_.isEmpty() || !flowgui::sameCasePath(cf.egrid, runningEgrid_))
+        return;
+    if (restartIsBusy(cf)) return;      // storage where we deliberately do not read
+    if (!isVisible()) return;           // nothing to show for the work
+
+    // The grid only exists once flow has written it. Until then there is
+    // nothing to draw, and openCase() is the way in - it also builds the mesh.
+    if (!grid_) {
+        if (QFileInfo::exists(cf.egrid)) openCase(idx);
+        return;
+    }
+    // Re-indexing a restart file means walking its array headers, and Norne's
+    // runs to hundreds of megabytes - too much to repeat on the UI thread for
+    // nothing. Its size only changes when flow has written more, so the ticks
+    // between report steps cost a stat and no more.
+    const QFileInfo ui(cf.unrst);
+    if (!ui.exists()) return;
+    const qint64 size = ui.size();
+    if (size == lastUnrstSize_) return;
+    lastUnrstSize_ = size;
+
+    const std::size_t had = steps_.size();
+    // Following the run means staying at the newest step; a user who has
+    // parked on an earlier one is left there.
+    const bool atEnd = !stepSlider_->isEnabled() ||
+                       stepSlider_->value() == stepSlider_->maximum();
+    try {
+        auto rst   = std::make_unique<Opm::EclIO::ERst>(cf.unrst.toStdString());
+        auto steps = rst->listOfReportStepNumbers();
+        if (steps.size() <= had) return;          // nothing new yet
+        rst_   = std::move(rst);
+        steps_ = std::move(steps);
+        rstBytes_ = 0;                            // the old reader's cache went with it
+    } catch (...) {
+        // A restart file caught mid-write; the next tick will find it whole.
+        return;
+    }
+
+    if (dynBox_->count() == 0) populateDynamicProperties();
+    stepSlider_->setEnabled(!steps_.empty());
+    stepSlider_->setRange(0, int(steps_.size()) - 1);
+    if (atEnd) stepSlider_->setValue(int(steps_.size()) - 1);   // draws the new step
+    else       showProperty();
+    setStatus(QStringLiteral("%1: running, %2 report steps so far")
+                  .arg(cf.label).arg(steps_.size()));
 }
 
 void Viewer3DWidget::showProperty()

@@ -168,6 +168,14 @@ private:
     // run is writing it AND it sits where a reader can disturb that writer.
     bool restartIsBusy(const CaseFiles& cf) const;
 
+    // Re-read the restart file of the case a run is writing, so its report
+    // steps appear while it runs rather than only when it finishes. Driven by
+    // followTimer_, and cheap: the grid and mesh are left as they are.
+    void followRunningCase();
+
+    // Fill the dynamic (restart) property list from the current reader.
+    void populateDynamicProperties();
+
     QComboBox*      caseBox_   = nullptr;
     QRadioButton*   staticSel_ = nullptr;
     QRadioButton*   dynSel_    = nullptr;
@@ -182,6 +190,7 @@ private:
     QLabel*         status_    = nullptr;
     GridGLWidget*   gl_        = nullptr;
     QTimer*         playTimer_ = nullptr;
+    QTimer*         followTimer_ = nullptr;  // ticks while a run writes the shown case
 
     QVector<CaseFiles> cases_;
     std::unique_ptr<Opm::EclIO::EGrid> grid_;
@@ -195,6 +204,9 @@ private:
     // The case index whose restart read has already been retried once, so a
     // file that stays unreadable does not spin. -1 = nothing retried yet.
     int                rstRetryIdx_ = -1;
+    // Size the restart file had when it was last indexed while following a
+    // run; a tick that finds it unchanged has nothing to do. -1 = not seen.
+    qint64             lastUnrstSize_ = -1;
     // Bytes the restart reader has been asked for since it last dropped its
     // cache; see kRstCacheBudget in the .cpp.
     qint64             rstBytes_ = 0;
