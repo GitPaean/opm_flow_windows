@@ -1190,8 +1190,11 @@ void Viewer3DWidget::followRunningCase()
     stepSlider_->setRange(0, int(steps_.size()) - 1);
     if (atEnd) stepSlider_->setValue(int(steps_.size()) - 1);   // draws the new step
     else       showProperty();
-    setStatus(QStringLiteral("%1: running, %2 report steps so far")
-                  .arg(cf.label).arg(steps_.size()));
+    // SEQNUM is the report step number the simulation is actually at; the count
+    // of steps in the file is not the same thing and says nothing about how far
+    // the run has got - a restarted run's first SEQNUM is wherever it resumed.
+    setStatus(QStringLiteral("%1: running - latest report step SEQNUM %2 (%3 in the file)")
+                  .arg(cf.label).arg(steps_.back()).arg(steps_.size()));
 }
 
 void Viewer3DWidget::showProperty()
