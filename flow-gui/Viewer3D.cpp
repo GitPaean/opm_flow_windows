@@ -541,14 +541,15 @@ Viewer3DWidget::Viewer3DWidget(QWidget* parent)
         // a view that quietly stops at the step it opened on is the more
         // surprising of the two; off for anyone who would rather spend the
         // machine on the simulation.
-        autoRef_ = new QCheckBox(QStringLiteral("auto-refresh (5 s)"));
+        autoRef_ = new QCheckBox(QStringLiteral("auto-refresh (10 s)"));
         autoRef_->setChecked(true);
         autoRef_->setToolTip(QStringLiteral(
             "while a run is writing this case, re-read its restart file so new "
-            "report steps appear as they are produced.\n\n"
+            "report steps appear as they are produced. Does nothing when no run "
+            "is going: the results are then already whole.\n\n"
             "Each refresh re-indexes the restart file, which on a large model "
             "takes a moment - turn this off to leave the machine to the run. "
-            "The view then updates when the run finishes."));
+            "The view is reloaded in full when the run finishes either way."));
         row->addWidget(autoRef_);
 
         row->addWidget(new QLabel(QStringLiteral("Z x")));
@@ -646,12 +647,13 @@ Viewer3DWidget::Viewer3DWidget(QWidget* parent)
         row->addWidget(stepLabel_);
         top->addLayout(row);
 
-        // Picks up report steps while a run writes them. 5 s rather than
-        // anything brisker because each tick re-indexes the restart file, and a
-        // run producing steps faster than that is not one anybody is watching
-        // step by step.
+        // Picks up report steps while a run writes them. 10 s, matching the
+        // summary tab: each tick re-indexes the restart file, so a longer
+        // interval both costs the run less and gives a half-written file more
+        // room to be finished before anyone looks at it. Nobody watches a
+        // reservoir simulation step by step.
         followTimer_ = new QTimer(this);
-        followTimer_->setInterval(5000);
+        followTimer_->setInterval(10000);
         connect(followTimer_, &QTimer::timeout, this, [this] { followRunningCase(); });
 
         playTimer_ = new QTimer(this);
@@ -1216,10 +1218,10 @@ void Viewer3DWidget::followRunningCase()
     stepSlider_->setRange(0, int(steps_.size()) - 1);
     if (atEnd) stepSlider_->setValue(int(steps_.size()) - 1);   // draws the new step
     else       showProperty();
-    // SEQNUM is the report step number the simulation is actually at; the count
-    // of steps in the file is not the same thing and says nothing about how far
-    // the run has got - a restarted run's first SEQNUM is wherever it resumed.
-    setStatus(QStringLiteral("%1: running - latest report step SEQNUM %2 (%3 in the file)")
+    // The report step reached, which is what says how far the run has got; the
+    // number of steps in the file does not, since a restarted run's first
+    // report step is wherever it resumed.
+    setStatus(QStringLiteral("%1: running - report step %2 (%3 steps written)")
                   .arg(cf.label).arg(steps_.back()).arg(steps_.size()));
 }
 
@@ -1300,10 +1302,14 @@ void Viewer3DWidget::stepChanged(int sliderPos)
                 .arg(ih[66], 4, 10, QLatin1Char('0'))
                 .arg(ih[65], 2, 10, QLatin1Char('0'))
                 .arg(ih[64], 2, 10, QLatin1Char('0'));
-        gl_->setStepText(QStringLiteral("report step %1/%2 (SEQNUM %3)%4")
+        // "step i/N" is the position in this file; "report step" is the
+        // simulation's own number for it (SEQNUM in the restart file, but that
+        // is the file format's word - the term of the trade is report step).
+        // The two only coincide for a run that started from the beginning.
+        gl_->setStepText(QStringLiteral("step %1/%2 (report step %3)%4")
             .arg(sliderPos + 1).arg(steps_.size()).arg(step).arg(when));
-        stepLabel_->setText(QStringLiteral("step %1/%2%3")
-            .arg(sliderPos + 1).arg(steps_.size()).arg(when));
+        stepLabel_->setText(QStringLiteral("step %1/%2 (report step %3)%4")
+            .arg(sliderPos + 1).arg(steps_.size()).arg(step).arg(when));
         showWells();
     } catch (const std::exception& e) {
         setStatus(QStringLiteral("restart read failed: %1")

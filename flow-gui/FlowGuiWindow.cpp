@@ -1084,26 +1084,25 @@ void FlowGuiWindow::startNextJob()
                 const QFileInfo di(jj.deck);
                 const QString smspec = jj.outdir + '/' + di.completeBaseName()
                                      + QStringLiteral(".SMSPEC");
+                // The run is over, so both tabs reload the case in full,
+                // whichever way it ended: whatever they were showing was at
+                // best a partial view of a file still being written, and a
+                // stopped or failed run still leaves the steps it did write,
+                // which are worth looking at.
 #ifdef FLOWGUI_HAVE_3D
-                // Nothing is writing this case any more, whichever way it
-                // ended, so release it before the reopen below - otherwise the
-                // reopen would still skip the restart file it is there to read.
                 if (viewer3D_) {
+                    // Release it first - a reopen that still thinks the case is
+                    // being written would skip the restart file it is there for.
                     viewer3D_->setRunningCase(QString());
-                    // A stopped or failed run leaves the steps it did write,
-                    // and they are worth looking at; the old code reopened only
-                    // after a clean exit.
                     viewer3D_->caseFinished(smspec);
                 }
 #endif
-                if (jj.state == Job::Done) {
-                    lastFinishedSmspec_ = smspec;
-                    // The case was registered at job start, before flow had
-                    // written anything - load the now-existing files.
 #ifdef FLOWGUI_HAVE_SUMMARY
-                    if (summary_) summary_->caseFinished(lastFinishedSmspec_);
+                if (summary_) summary_->caseFinished(smspec);
 #endif
-                }
+                // ... but only a clean exit counts as the run to offer on the
+                // next start; a failed one is not where anybody wants to resume.
+                if (jj.state == Job::Done) lastFinishedSmspec_ = smspec;
             }
             appendLog(QStringLiteral("\n---- job finished, exit code %1%2, %3 ----\n")
                           .arg(code)
