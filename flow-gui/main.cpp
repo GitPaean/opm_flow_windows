@@ -13,6 +13,7 @@
 #include "FlowGuiWindow.h"
 
 #include <QApplication>
+#include <QIcon>
 #include <QPalette>
 #include <QStyleHints>
 
@@ -32,6 +33,22 @@ int main(int argc, char** argv)
     QApplication app(argc, argv);
     QApplication::setOrganizationName(QStringLiteral("OPM"));
     QApplication::setApplicationName(QStringLiteral("flow-gui"));
+
+    // The window icon, from the compiled-in resource so it does not depend on
+    // anything being installed. Every size is added rather than one large PNG
+    // left to be scaled: Qt picks the nearest and downscaling 256 to 16 loses
+    // the curve to a smudge.
+    QIcon icon;
+    for (int s : { 16, 24, 32, 48, 64, 128, 256 })
+        icon.addFile(QStringLiteral(":/icons/flow-gui-%1.png").arg(s), QSize(s, s));
+    QApplication::setWindowIcon(icon);
+    // ... and the name of the desktop entry this application is launched from.
+    // setWindowIcon is enough for the title bar and for X11, but a Wayland
+    // compositor ignores it: there, the shell takes the icon from the .desktop
+    // file it can match the window's app id to, and this is what makes that
+    // match. It also gives GNOME the same handle on X11, so a running flow-gui
+    // shares its dock entry with the launcher instead of appearing beside it.
+    QGuiApplication::setDesktopFileName(QStringLiteral("flow-gui"));
 
     // Bright, platform-independent appearance: do not follow a dark system
     // color scheme; use the Fusion style with an explicit light palette.

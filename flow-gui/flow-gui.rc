@@ -1,0 +1,9 @@
+// Windows resources. The FIRST icon in the file is the one Explorer, the
+// taskbar and the Inno Setup shortcuts pick up, so the application icon has
+// to lead - hence the low ordinal rather than a name.
+//
+// This is the same artwork the Qt resource carries, as a multi-resolution
+// .ico: Windows chooses per surface (16px in the title bar, 32 in the task
+// switcher, 256 in the large-icon view) and, unlike QIcon, will happily
+// stretch a single size when the one it wants is absent.
+1 ICON "icons/flow-gui.ico"

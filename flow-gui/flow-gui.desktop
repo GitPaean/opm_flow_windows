@@ -1,0 +1,20 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=OPM Flow GUI
+GenericName=Reservoir Simulation Front End
+Comment=Run OPM Flow simulations and plot their summary vectors
+# Named, not a path: the launcher resolves it against the icon theme, so the
+# same entry works from /usr, from ~/.local and from a relocated prefix.
+Icon=flow-gui
+Exec=flow-gui %f
+Terminal=false
+Categories=Science;Engineering;Physics;
+Keywords=reservoir;simulation;eclipse;summary;OPM;flow;
+MimeType=application/x-eclipse-deck;
+# The window has to be matched back to this file, or the shell treats a running
+# flow-gui as an unknown window and shows the fallback icon beside a second,
+# inert launcher entry. Qt sets the X11 WM_CLASS (and the Wayland app id) from
+# QGuiApplication::setDesktopFileName(), which main.cpp points here.
+StartupWMClass=flow-gui
+StartupNotify=true

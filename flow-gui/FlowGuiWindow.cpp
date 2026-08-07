@@ -45,8 +45,6 @@
 #include <QMessageBox>
 #include <QMimeData>
 #include <QSaveFile>
-#include <QPainter>
-#include <QPixmap>
 #include <QPlainTextEdit>
 #include <QProcess>
 #include <QProgressBar>
@@ -1533,13 +1531,12 @@ void FlowGuiWindow::notifyQueueDone(int okCount, int failCount)
 {
     if (!QSystemTrayIcon::isSystemTrayAvailable()) { QApplication::beep(); return; }
     if (!tray_) {
-        QPixmap px(32, 32);
-        px.fill(QColor(0x0b, 0x3d, 0x63));
-        QPainter p(&px);
-        p.setPen(Qt::white);
-        p.drawText(px.rect(), Qt::AlignCenter, QStringLiteral("F"));
-        p.end();
-        tray_ = new QSystemTrayIcon(QIcon(px), this);
+        // The application's own icon, not a letter drawn on a blue square: a
+        // notification is the one place the program speaks up while the user
+        // is looking at something else, so it should be recognisably this
+        // program. windowIcon() is the compiled-in set, so it has a size to
+        // give whatever the tray asks for.
+        tray_ = new QSystemTrayIcon(QApplication::windowIcon(), this);
         // Clicking the notification brings the window up and opens the last
         // finished case in the Results tab.
         connect(tray_, &QSystemTrayIcon::messageClicked, this, [this] {

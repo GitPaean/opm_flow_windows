@@ -17,6 +17,15 @@ set(FLOWGUI_SOURCES main.cpp FlowGuiWindow.cpp FlowGuiWindow.h
                     DeckEditor.cpp DeckEditor.h CasePath.h
                     GuiPaths.cpp GuiPaths.h)
 
+# The Windows application icon. A .rc listed here is compiled and linked by
+# CMake's RC support, which MinGW has and MSVC has; nothing else is needed for
+# Explorer and the taskbar to pick the icon up. Guarded because the file names
+# a .ico, which only the Windows resource compiler understands.
+if(WIN32)
+    enable_language(RC)
+    list(APPEND FLOWGUI_SOURCES flow-gui.rc)
+endif()
+
 # --- optional summary plotting: Qt Charts + opm-common's EclIO::ESmry -------
 # Auto-detected from this harness' layout (../install-mpi + vcpkg); can be
 # pointed elsewhere with -DFLOWGUI_OPM_PREFIX=<opm install prefix> and
@@ -54,6 +63,28 @@ message(STATUS "flow-gui 3D viewer: ${FLOWGUI_HAVE_3D}")
 qt_add_executable(flow-gui WIN32 MACOSX_BUNDLE ${FLOWGUI_SOURCES})
 target_compile_definitions(flow-gui PRIVATE FLOWGUI_VERSION="${PROJECT_VERSION}")
 target_link_libraries(flow-gui PRIVATE Qt6::Widgets)
+
+# The application icon, compiled into the binary so it is there whether
+# flow-gui runs from a build tree, an unpacked release or an installed prefix.
+# Every size is drawn for the size it is used at rather than scaled down from
+# one large image, which is what keeps the 16px taskbar icon from turning to
+# mush; QIcon picks the nearest and Qt does the rest.
+#
+# qt_add_resources rather than a .qrc listed in the sources: AUTORCC is not one
+# of the things qt_standard_project_setup() turns on, so a .qrc there is passed
+# through as a source CMake has no rule for and silently never compiled. BASE
+# strips the directory, so the paths are :/icons/flow-gui-<n>.png.
+qt_add_resources(flow-gui "appicon"
+    PREFIX "/icons"
+    BASE   "icons"
+    FILES
+        icons/flow-gui-16.png
+        icons/flow-gui-24.png
+        icons/flow-gui-32.png
+        icons/flow-gui-48.png
+        icons/flow-gui-64.png
+        icons/flow-gui-128.png
+        icons/flow-gui-256.png)
 
 if(FLOWGUI_HAVE_3D)
     target_compile_definitions(flow-gui PRIVATE FLOWGUI_HAVE_3D)
@@ -122,3 +153,21 @@ endif()
 install(TARGETS flow-gui
         RUNTIME DESTINATION bin
         BUNDLE  DESTINATION .)
+
+# Desktop integration, on the platforms that have this notion of it. The icon
+# compiled into the binary covers the window itself; these two are what the
+# shell reads BEFORE the program runs - the launcher, the dock and the app
+# grid - and on Wayland they are the only thing it will read at all.
+#
+# The icons go in one per size under hicolor rather than as a single large
+# file: that is the directory the theme looks in for a given size, and it is
+# what lets a 22px panel and a 256px grid each get artwork drawn for them.
+if(UNIX AND NOT APPLE)
+    install(FILES flow-gui.desktop
+            DESTINATION share/applications)
+    foreach(_sz 16 24 32 48 64 128 256)
+        install(FILES "icons/flow-gui-${_sz}.png"
+                DESTINATION "share/icons/hicolor/${_sz}x${_sz}/apps"
+                RENAME flow-gui.png)
+    endforeach()
+endif()
