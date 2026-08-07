@@ -1,16 +1,26 @@
 # Copyright (C) 2026 SINTEF Digital; GPL-3.0-or-later (see LICENSE).
-# build-intelmpi.ps1 - EXPERIMENTAL: build the parallel flow stack against
-# Intel MPI (oneAPI) instead of MS-MPI, into separate build-impi\ /
-# install-impi\ trees. The MS-MPI build (build-mpi\) is left untouched.
+# build-intelmpi.ps1 - build the parallel flow stack against Intel MPI (oneAPI)
+# instead of MS-MPI, into separate build-impi\ / install-impi\ trees. The MS-MPI
+# build (build-mpi\) is left untouched.
 #
 # Prereq (no admin needed): python -m pip install --user impi-rt impi-devel
 # Sources must already be cloned/patched (run build-all.ps1 once first).
 #
-# Motivation: the Windows-vs-Linux Norne matrix (BUILD_WINDOWS.md §9) shows
-# the remaining parallel gap grows with MPI rank count (output gather,
-# pre/post collectives) — this tree tests whether Intel MPI closes it.
+# Why this tree ships: installing MS-MPI needs administrator rights, and the
+# simulator links an MPI library even for a serial run - so on a locked-down
+# machine the MS-MPI package cannot run at all. Intel MPI's runtime installs
+# from pip into the user's own profile, which needs no administrator, and that
+# is what the impi package released alongside the MS-MPI one is for. It also
+# lets the Windows-vs-Linux Norne parallel gap (BUILD_WINDOWS.md §9) be
+# measured against a second MPI.
 [CmdletBinding()]
-param([int]$Jobs = 8)
+param(
+    [int]$Jobs = 8,
+    # opm-simulators target. flow_blackoil is enough to measure the parallel
+    # gap this tree exists for; package-flow.ps1 -IntelMpi ships `flow`, which
+    # carries every model variant, so pass -SimTarget flow to build for it.
+    [string]$SimTarget = 'flow_blackoil'
+)
 
 $ErrorActionPreference = 'Stop'
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -59,6 +69,6 @@ foreach ($m in 'dune-common','dune-geometry','dune-istl','dune-grid') {
 Write-Host 'PHASE OK: opm-common'
 & $bm opm-grid -IntelMpi -OpenMP -Jobs $Jobs
 Write-Host 'PHASE OK: opm-grid'
-& $bm opm-simulators -IntelMpi -OpenMP -Target flow_blackoil -Jobs $Jobs
+& $bm opm-simulators -IntelMpi -OpenMP -Target $SimTarget -Jobs $Jobs
 Write-Host 'PHASE OK: opm-simulators'
 Write-Host 'INTELMPI BUILD DONE'
