@@ -221,6 +221,24 @@ qreal legendMarkerBox(double markerSize, double legendScale)
     return std::clamp(2.6 * markerSize, 20.0, 30.0) * legendScale;
 }
 
+// Width of the curve for case `i` of `n`, tapering from the full width down
+// to half it. Cases are drawn in order, so where two of them agree the later
+// one covers the earlier exactly and the plot cannot say whether the runs
+// match or whether one is missing - the reading that matters most when the
+// point of the figure is a comparison. Drawn a little thinner each time, the
+// earlier cases show as a ribbon around the later ones: agreement reads as a
+// band of every colour, and a divergence still separates cleanly.
+//
+// The taper is spread over however many cases there are rather than stepped
+// by a fixed amount, so two runs differ as clearly as six do and the last is
+// never thinned away to nothing.
+double caseLineWidth(double base, int i, int n)
+{
+    if (n < 2 || i <= 0) return base;
+    const double t = double(std::min(i, n - 1)) / double(n - 1);   // 0 .. 1
+    return std::max(base * (1.0 - 0.5 * t), 0.9);
+}
+
 // The pen a legend sample is drawn with: the curve's colour and case dash,
 // but heavier - Qt draws the sample with the SERIES' pen, so at curve width
 // the legend is left with a hairline beside the label. Qt also measures a
@@ -621,6 +639,22 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
         dateAxis_->setChecked(true);   // calendar dates by default
         markers_  = new QCheckBox(QStringLiteral("markers"));
         markers_->setToolTip(QStringLiteral("mark the data points on each curve"));
+        // Cases marked at the same points stack their markers exactly, so a
+        // stretch where the runs agree shows only the case drawn last. Starting
+        // each case at a different point spreads them out instead.
+        //
+        // Off by default, and deliberately so: it buys that legibility by
+        // marking a DIFFERENT subset of the samples per case, so a marker no
+        // longer means "every case has a sample here" and reading a value off
+        // one is reading that case only. When the question is what a curve did
+        // at a given date, the honest answer is every case marked alike.
+        stagger_ = new QCheckBox(QStringLiteral("stagger"));
+        stagger_->setToolTip(QStringLiteral(
+            "start each case's markers at a different data point, so curves "
+            "that agree do not hide each other's markers.\n\n"
+            "Needs 'every' above 1 - that is the room the offsets come out of. "
+            "Off, every case is marked at the same points, which is what you "
+            "want when reading a value at a date off the plot."));
         lineWidthSpin_ = new QDoubleSpinBox;
         lineWidthSpin_->setRange(0.5, 8.0);
         lineWidthSpin_->setSingleStep(0.5);
@@ -707,6 +741,7 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
         row->addWidget(new QLabel(QStringLiteral("Marker:")));
         row->addWidget(markerSizeSpin_);
         row->addWidget(markerEverySpin_);
+        row->addWidget(stagger_);
         row->addWidget(new QLabel(QStringLiteral("Legend:")));
         row->addWidget(legendScaleSpin_);
         row->addWidget(autoScale_);
@@ -743,10 +778,23 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
         connect(bbrowse,  &QPushButton::clicked, this, [this] { browseCase(); });
         connect(brefresh, &QPushButton::clicked, this, [this] { reload(true); });
         connect(dateAxis_, &QCheckBox::toggled, this, [this](bool) { replot(); });
-        connect(markers_,  &QCheckBox::toggled, this, [this](bool) { replot(); });
+        // Staggering needs markers to be on, and needs "every" to be above 1 -
+        // with every sample marked there is no gap for an offset to move into.
+        // Greyed out rather than silently doing nothing, so the box says which
+        // of the two is missing through its tooltip.
+        auto syncStagger = [this] {
+            if (!stagger_) return;
+            stagger_->setEnabled(markers_ && markers_->isChecked() &&
+                                 markerEverySpin_ && markerEverySpin_->value() > 1);
+        };
+        connect(markers_,  &QCheckBox::toggled, this,
+                [this, syncStagger](bool) { syncStagger(); replot(); });
+        connect(stagger_,  &QCheckBox::toggled, this, [this](bool) { replot(); });
         connect(lineWidthSpin_, &QDoubleSpinBox::valueChanged, this, [this](double) { replot(); });
         connect(markerSizeSpin_, &QDoubleSpinBox::valueChanged, this, [this](double) { replot(); });
-        connect(markerEverySpin_, &QSpinBox::valueChanged, this, [this](int) { replot(); });
+        connect(markerEverySpin_, &QSpinBox::valueChanged, this,
+                [this, syncStagger](int) { syncStagger(); replot(); });
+        syncStagger();
         connect(legendScaleSpin_, &QDoubleSpinBox::valueChanged, this, [this](double) { replot(); });
         connect(autoScale_, &QCheckBox::toggled, this, [this](bool) { replot(); });
         connect(bzoom, &QToolButton::clicked, this, [this] { resetZoom(false); });
@@ -1263,6 +1311,7 @@ QJsonObject SummaryPlotWidget::uiState() const
 
     o[QStringLiteral("dateAxis")]    = dateAxis_ && dateAxis_->isChecked();
     o[QStringLiteral("markers")]     = markers_  && markers_->isChecked();
+    o[QStringLiteral("markerStagger")] = stagger_ && stagger_->isChecked();
     o[QStringLiteral("autoRefresh")] = autoRef_  && autoRef_->isChecked();
     if (autoScale_)       o[QStringLiteral("autoScale")]   = autoScale_->isChecked();
     if (legendScaleSpin_) o[QStringLiteral("legendScale")] = legendScaleSpin_->value();
@@ -1300,6 +1349,8 @@ void SummaryPlotWidget::restoreUiState(const QJsonObject& state)
     // then plotted with them already in force instead of being replotted.
     if (dateAxis_ && has("dateAxis")) dateAxis_->setChecked(val("dateAxis").toBool(true));
     if (markers_  && has("markers"))  markers_->setChecked(val("markers").toBool(false));
+    if (stagger_  && has("markerStagger"))
+        stagger_->setChecked(val("markerStagger").toBool(false));
     if (autoScale_       && has("autoScale"))   autoScale_->setChecked(val("autoScale").toBool(true));
     if (legendScaleSpin_ && has("legendScale")) legendScaleSpin_->setValue(val("legendScale").toDouble(1.0));
     if (lineWidthSpin_   && has("lineWidth"))   lineWidthSpin_->setValue(val("lineWidth").toDouble(2.0));
@@ -2479,6 +2530,7 @@ int SummaryPlotWidget::plotChart(QChart* chart, const QList<int>& sel,
 
     const bool useDates = dateAxis_ && dateAxis_->isChecked();
     const bool showPts  = markers_ && markers_->isChecked();
+    const bool staggerPts = showPts && stagger_ && stagger_->isChecked();
     // Everything drawn on the chart is sized for THIS chart: the same figure
     // in a 2x2 layout gets thinner curves, smaller markers and a smaller
     // legend, in the same proportions.
@@ -2590,7 +2642,9 @@ int SummaryPlotWidget::plotChart(QChart* chart, const QList<int>& sel,
             // dash always keys the case (so a print in grey still separates
             // them); colour keys whichever dimension carries the information
             QPen pen(kCurveColors[(colourByCase ? ci : si) % kCurveColorCount]);
-            pen.setWidthF(lineW);
+            // Thinner for each case in turn, so the ones drawn earlier are not
+            // simply buried by the ones drawn over them where they agree.
+            pen.setWidthF(caseLineWidth(lineW, ci, int(plotCases.size())));
             pen.setStyle(kCaseDashes[ci % kCaseDashCount]);
             pen.setCosmetic(true);
             s->setPen(pen);
@@ -2651,10 +2705,21 @@ int SummaryPlotWidget::plotChart(QChart* chart, const QList<int>& sel,
                 // where the data actually is. "Every" thins that down on a
                 // dense curve, by whole data points, so the markers that are
                 // drawn are still exactly samples.
+                //
+                // Staggered, each case starts a little further along, dividing
+                // the gap between marked points among the cases. Curves that
+                // agree then alternate their markers rather than stacking them,
+                // where before only the case drawn last was visible. Every
+                // marker is still a real sample of the case it belongs to; what
+                // it stops meaning is that the OTHER cases have one there too,
+                // which is why this is asked for rather than assumed.
+                const int offset = staggerPts
+                    ? (ci * markerEvery / std::max(1, int(plotCases.size()))) % markerEvery
+                    : 0;
                 const QList<QPointF> pts = s->points();
                 QList<QPointF> marks;
                 marks.reserve(int(pts.size()) / markerEvery + 1);
-                for (int k = 0; k < pts.size(); k += markerEvery)
+                for (int k = offset; k < pts.size(); k += markerEvery)
                     marks.append(pts[k]);
 
                 auto* sc = new QScatterSeries;

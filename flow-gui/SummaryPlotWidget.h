@@ -160,6 +160,7 @@ private:
     QCheckBox*   autoRef_   = nullptr;
     QCheckBox*   dateAxis_  = nullptr;
     QCheckBox*   markers_   = nullptr;   // show data points on the curves
+    QCheckBox*   stagger_   = nullptr;   // offset each case's marked points
     QCheckBox*   autoScale_ = nullptr;   // sizes follow the chart's own size
     QDoubleSpinBox* legendScaleSpin_ = nullptr;   // legend size, as a factor
     QDoubleSpinBox* lineWidthSpin_   = nullptr;   // curve pen width, points
