@@ -327,20 +327,53 @@ if (-not $SkipClone) {
 }
 
 # --------------------------------------------------------------------------
-if (-not $SkipDeps) {
-    Step "3/4  Bootstrap vcpkg and install dependencies"
+# The vcpkg dependency set - one source of truth, used both to install the
+# packages and (under -SkipDeps) to check that none of them is missing.
+$VcpkgPackages = @(
+    'suitesparse-umfpack', 'fmt', 'lapack',
+    'boost-test', 'boost-date-time', 'boost-property-tree', 'boost-mpl',
+    'boost-range', 'boost-spirit', 'boost-filesystem', 'boost-system',
+    'boost-iostreams'
+)
+
+# Which of $VcpkgPackages are not installed for the triplet. vcpkg leaves a
+# share\<port>\ directory behind for every installed port, so this costs no
+# vcpkg.exe call and works even before bootstrap.
+function Get-MissingVcpkgPackages {
+    $share = Join-Path $Root 'vcpkg\installed\x64-windows\share'
+    if (-not (Test-Path $share)) { return $VcpkgPackages }
+    ,@($VcpkgPackages | Where-Object { -not (Test-Path (Join-Path $share $_)) })
+}
+
+function Install-VcpkgPackages {
+    param([string[]]$Packages)
     if (-not (Test-Path (Join-Path $Root 'vcpkg\vcpkg.exe'))) {
         Invoke-Native { & (Join-Path $Root 'vcpkg\bootstrap-vcpkg.bat') -disableMetrics }
     }
     Invoke-Native {
-        & (Join-Path $Root 'vcpkg\vcpkg.exe') install --triplet x64-windows `
-            suitesparse-umfpack fmt lapack `
-            boost-test boost-date-time boost-property-tree boost-mpl `
-            boost-range boost-spirit boost-filesystem boost-system `
-            boost-iostreams
+        & (Join-Path $Root 'vcpkg\vcpkg.exe') install --triplet x64-windows $Packages
     }
+}
+
+if (-not $SkipDeps) {
+    Step "3/4  Bootstrap vcpkg and install dependencies"
+    Install-VcpkgPackages $VcpkgPackages
 } else {
-    Step "3/4  Dependencies (skipped)"
+    # -SkipDeps must not mean "build without a dependency that was added to the
+    # list since this tree was last populated". That failure surfaces much later
+    # as a confusing compile error in whichever module needs it - a missing
+    # boost-iostreams, for instance, breaks opm-upscaling on
+    # boost/iostreams/copy.hpp after an hour of building everything else. So skip
+    # the install, but still install anything actually absent.
+    $missing = Get-MissingVcpkgPackages
+    if ($missing.Count -eq 0) {
+        Step "3/4  Dependencies (skipped; all $($VcpkgPackages.Count) packages present)"
+    } else {
+        Step "3/4  Dependencies (skipped, but $($missing.Count) missing - installing those)"
+        Write-Warning ("-SkipDeps was given, but these vcpkg packages are missing: " +
+                       ($missing -join ', ') + " - installing them now.")
+        Install-VcpkgPackages $missing
+    }
 }
 
 # --------------------------------------------------------------------------

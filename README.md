@@ -108,7 +108,7 @@ automatically regardless):
 .\build-all.ps1 -SimTarget all       # build every flow_* variant (full suite), not just flow_blackoil
 .\build-all.ps1 -Upscaling           # also clone + build opm-upscaling (upscale_* / cpchop tools)
 .\build-all.ps1 -SkipClone           # sources already cloned
-.\build-all.ps1 -SkipDeps            # vcpkg packages already installed
+.\build-all.ps1 -SkipDeps            # vcpkg packages already installed (still installs any that are missing)
 .\build-all.ps1 -Jobs 6              # parallel compile jobs per module (default 4; raise on a high-RAM machine)
 .\build-all.ps1 -DuneVersion v2.10.0
 .\build-all.ps1 -OpmOrg <user> -OpmBranch <branch>

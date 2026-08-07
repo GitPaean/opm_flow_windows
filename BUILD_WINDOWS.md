@@ -315,7 +315,7 @@ vcpkg, installs deps, checks out DUNE, and builds every module in order):
 .\build-all.ps1 -OpenMP         # SERIAL + OpenMP threading (see §11)
 .\build-all.ps1 -Mpi -OpenMP    # hybrid MPI + OpenMP (see §13)
 .\build-all.ps1 -SkipClone      # sources already present
-.\build-all.ps1 -SkipDeps       # vcpkg packages already installed
+.\build-all.ps1 -SkipDeps       # vcpkg packages already installed (see note below)
 .\build-all.ps1 -SimTarget all  # build every flow_* variant, not just flow_blackoil
 .\build-all.ps1 -Upscaling      # also clone + build opm-upscaling (upscale_*/cpchop tools)
 .\build-all.ps1 -Jobs 6         # parallel compile jobs per module (default 4; raise on a high-RAM machine)
@@ -331,6 +331,15 @@ build is `.\build-all.ps1 -Mpi -OpenMP -SimTarget all -Upscaling`.
 OPM's template-heavy TUs are RAM-hungry, so 4 suits a smaller machine; a
 ≥ 32 GB box handles `-Jobs 6`–`8` comfortably. `build-module.ps1` takes the same
 `-Jobs N` when building a single module by hand.
+
+`-SkipDeps` skips the vcpkg install step, but **still checks** that every package
+in the dependency list is present and installs any that are not (it reports
+either *"all N packages present"* or a warning naming the missing ones). This
+matters when the list grows: a tree populated before a package was added would
+otherwise build for an hour and then fail deep inside an unrelated module — a
+missing `boost-iostreams`, for example, breaks opm-upscaling on
+`boost/iostreams/copy.hpp`. The check is a directory test per package, so it
+costs nothing.
 
 ---
 
