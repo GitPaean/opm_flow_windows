@@ -6,6 +6,8 @@
 */
 #include "SummaryPlotWidget.h"
 
+#include "FlowLayout.h"
+
 #include "CasePath.h"
 #include "GuiPaths.h"
 
@@ -630,8 +632,13 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
     auto* top = new QVBoxLayout(this);
 
     // --- toolbar row ---------------------------------------------------------
+    // Wrapping, not one fixed line: this row holds enough controls that as a
+    // QHBoxLayout it set a minimum width no laptop panel could satisfy, which
+    // left the whole window unable to fit - or be maximised on - such a
+    // screen. Given the width it still comes out as a single row.
     {
-        auto* row = new QHBoxLayout;
+        FlowLayout* row = nullptr;
+        top->addWidget(FlowLayout::host(&row));
         auto* bbrowse  = new QPushButton(QStringLiteral("Open SMSPEC..."));
         auto* brefresh = new QPushButton(QStringLiteral("Refresh"));
         autoRef_ = new QCheckBox(QStringLiteral("auto-refresh (10 s)"));
@@ -765,7 +772,6 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
         row->addWidget(new QLabel(QStringLiteral("Legend:")));
         row->addWidget(legendScaleSpin_);
         row->addWidget(autoScale_);
-        row->addStretch(1);
         // Legend placement: docked to an edge, or floating in a corner of the
         // plot area (the usual choice for a figure in a paper).
         legendBox_ = new QComboBox;
@@ -787,12 +793,12 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
             legendPos_.fill(QPointF());     // a placement choice overrides a drag
             for (auto* c : std::as_const(charts_)) placeLegend(c);
         });
-        row->addWidget(new QLabel(QStringLiteral("Layout:")));
+        // no separate "Layout:" label - the button already reads
+        // "Layout: 2 x 2", and a lone label can wrap away from its control
         row->addWidget(layoutBtn_);
         row->addWidget(bzoom);
         row->addWidget(bpng);
         row->addWidget(bcsv);
-        top->addLayout(row);
 
 
         connect(bbrowse,  &QPushButton::clicked, this, [this] { browseCase(); });

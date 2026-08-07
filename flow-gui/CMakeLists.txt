@@ -15,7 +15,8 @@ qt_standard_project_setup()
 
 set(FLOWGUI_SOURCES main.cpp FlowGuiWindow.cpp FlowGuiWindow.h
                     DeckEditor.cpp DeckEditor.h CasePath.h
-                    GuiPaths.cpp GuiPaths.h)
+                    GuiPaths.cpp GuiPaths.h
+                    FlowLayout.cpp FlowLayout.h)
 
 # The Windows application icon. A .rc listed here is compiled and linked by
 # CMake's RC support, which MinGW has and MSVC has; nothing else is needed for

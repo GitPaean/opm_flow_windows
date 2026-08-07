@@ -6,6 +6,8 @@
 */
 #include "DeckEditor.h"
 
+#include "FlowLayout.h"
+
 #include "GuiPaths.h"
 
 #include <QAction>
@@ -260,7 +262,10 @@ DeckEditorWidget::DeckEditorWidget(QWidget* parent)
     auto* top = new QVBoxLayout(this);
 
     {
-        auto* row = new QHBoxLayout;
+        // Wrapping (see FlowLayout): as one fixed line this row set a minimum
+        // width larger than a laptop panel.
+        FlowLayout* row = nullptr;
+        top->addWidget(FlowLayout::host(&row));
         auto* bopen = new QPushButton(QStringLiteral("Open DATA..."));
         auto* bsave = new QPushButton(QStringLiteral("Save"));
         auto* ball  = new QPushButton(QStringLiteral("Save all"));
@@ -301,8 +306,7 @@ DeckEditorWidget::DeckEditorWidget(QWidget* parent)
         row->addWidget(undoBtn_); row->addWidget(redoBtn_);
         row->addWidget(backBtn_); row->addWidget(fwdBtn_);
         row->addWidget(bcom); row->addWidget(bfind);
-        row->addWidget(bscan); row->addStretch(1);
-        top->addLayout(row);
+        row->addWidget(bscan);
 
         connect(backBtn_, &QPushButton::clicked, this, [this] { goJump(-1); });
         connect(fwdBtn_,  &QPushButton::clicked, this, [this] { goJump(+1); });

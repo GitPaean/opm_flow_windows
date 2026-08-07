@@ -6,6 +6,8 @@
 */
 #include "Viewer3D.h"
 
+#include "FlowLayout.h"
+
 #include "GuiPaths.h"
 
 #include "CasePath.h"
@@ -495,19 +497,21 @@ Viewer3DWidget::Viewer3DWidget(QWidget* parent)
     auto* top = new QVBoxLayout(this);
 
     // --- case + property row ------------------------------------------------
+    // Wrapping (see FlowLayout): as one fixed line this row alone asked for
+    // more width than a laptop panel has.
     {
-        auto* row = new QHBoxLayout;
+        FlowLayout* row = nullptr;
+        top->addWidget(FlowLayout::host(&row));
         row->addWidget(new QLabel(QStringLiteral("Case:")));
         caseBox_ = new QComboBox;
         caseBox_->setMinimumWidth(240);
-        row->addWidget(caseBox_, 1);
+        row->addWidget(caseBox_);
         auto* bopen = new QPushButton(QStringLiteral("Open EGRID..."));
         row->addWidget(bopen);
         auto* bremove = new QPushButton(QStringLiteral("Remove"));
         bremove->setToolTip(QStringLiteral(
             "drop the selected case from the list - the run's files are left alone"));
         row->addWidget(bremove);
-        row->addSpacing(12);
 
         staticSel_ = new QRadioButton(QStringLiteral("static:"));
         staticBox_ = new QComboBox; staticBox_->setMinimumWidth(110);
@@ -583,7 +587,6 @@ Viewer3DWidget::Viewer3DWidget(QWidget* parent)
         bview->setToolTip(QStringLiteral("back to the framed default view (also resets zoom and pan)"));
         row->addWidget(bview);
         connect(bview, &QPushButton::clicked, this, [this] { gl_->resetCamera(); });
-        top->addLayout(row);
 
         connect(bopen, &QPushButton::clicked, this, [this] {
             const int cur = caseBox_->currentIndex();
