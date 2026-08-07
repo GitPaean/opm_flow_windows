@@ -2822,11 +2822,44 @@ int SummaryPlotWidget::plotChart(QChart* chart, const QList<int>& sel,
     };
     if (lset) pad(ayL, lmin, lmax);
     if (ayR && rset) pad(ayR, rmin, rmax);
-    // The title counts what is DRAWN, and says so when that is not every case
-    // that was asked for.
-    QString shown = plotCases.size() > 1
-        ? QStringLiteral("%1 cases").arg(plotCases.size())
-        : plotCases.front().first;
+    // The title carries whatever the legend does not.
+    //
+    // With several cases drawn the legend names every one of them, so a title
+    // of "3 cases" spends the most prominent text on the chart repeating, less
+    // precisely, what is already spelled out below it - and in a grid it puts
+    // the SAME words on every subplot, so the titles stop telling them apart
+    // at exactly the moment there is something to tell apart. What the legend
+    // does not lead with is the quantity, so that is the title: the friendly
+    // name and the well or region, "Bottom Hole Pressure - PROD02".
+    //
+    // With one case it is the other way round - the legend drops the case name
+    // from its entries, having nothing to distinguish - so the title keeps
+    // naming the case, which is then the only place it appears.
+    const QChar dot(0x00B7);   // middle dot, spelled out: not every source
+                               // encoding survives a literal one
+    QString shown;
+    if (plotCases.size() > 1) {
+        QStringList parts;
+        int named = 0;
+        for (int i : sel) {
+            if (i < 0 || i >= vecs_.size()) continue;
+            if (named == 2) break;
+            const Vec& v = vecs_[i];
+            const QString fn = friendlyName(v.keyword, v.cat);
+            QString one = fn.isEmpty() ? v.keyword : fn;
+            if (!v.item.isEmpty())
+                one += QStringLiteral(" ") + dot + QStringLiteral(" ") + v.item;
+            parts << one;
+            ++named;
+        }
+        shown = parts.join(QStringLiteral(",   "));
+        // Two named and the rest counted: a title is a label, not a list, and
+        // past two the legend is the place to read them off.
+        const int rest = int(sel.size()) - named;
+        if (rest > 0) shown += QStringLiteral("   +%1 more").arg(rest);
+    } else {
+        shown = plotCases.front().first;
+    }
     if (checkedCount_ > int(plotCases.size()))
         shown += QStringLiteral("  (%1 of %2 checked cases)")
                      .arg(plotCases.size()).arg(checkedCount_);
