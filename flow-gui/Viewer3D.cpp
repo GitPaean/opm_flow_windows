@@ -812,6 +812,31 @@ void Viewer3DWidget::caseFinished(const QString& smspecPath)
 {
     const QString egrid = caseBaseOf(smspecPath) + QStringLiteral(".EGRID");
     const int idx = caseBox_->currentIndex();
+    // The run is over, so a read that failed against a half-written file
+    // deserves a fresh attempt rather than being held to its one retry.
+    rstRetryIdx_ = -1;
+    if (idx >= 0 && idx < cases_.size() &&
+        flowgui::sameCasePath(cases_[idx].egrid, egrid))
+        openCase(idx);
+}
+
+void Viewer3DWidget::setRunningCase(const QString& smspecPath)
+{
+    const QString egrid = smspecPath.isEmpty()
+                              ? QString()
+                              : caseBaseOf(smspecPath) + QStringLiteral(".EGRID");
+    if (egrid == runningEgrid_) return;
+
+    runningEgrid_ = egrid;
+    rstRetryIdx_ = -1;
+
+    // A run just started on the case being shown: reopen it now so the restart
+    // reader is dropped straight away, rather than at whatever moment the user
+    // next moves the step slider. Clearing does not reopen here - the caller
+    // follows a finished job with caseFinished(), which reopens once; doing it
+    // in both places would rebuild the mesh twice.
+    if (egrid.isEmpty()) return;
+    const int idx = caseBox_ ? caseBox_->currentIndex() : -1;
     if (idx >= 0 && idx < cases_.size() &&
         flowgui::sameCasePath(cases_[idx].egrid, egrid))
         openCase(idx);
@@ -914,12 +939,46 @@ void Viewer3DWidget::openCase(int idx)
     }
     try { if (QFileInfo::exists(cf.init))  init_ = std::make_unique<Opm::EclIO::EInit>(cf.init.toStdString()); }
     catch (...) { init_.reset(); }
-    try {
-        if (QFileInfo::exists(cf.unrst)) {
-            rst_ = std::make_unique<Opm::EclIO::ERst>(cf.unrst.toStdString());
-            steps_ = rst_->listOfReportStepNumbers();
+
+    // What the status line says about the restart file, when there is anything
+    // worth saying: it is either being written, or it could not be read.
+    QString rstNote;
+    if (!runningEgrid_.isEmpty() && flowgui::sameCasePath(cf.egrid, runningEgrid_)) {
+        // A simulation is writing this case, so its restart file is left alone
+        // until the run ends. Not a workaround for a lock we hold: a reader and
+        // the simulator's writer do coexist on a local disk. But a restart file
+        // caught mid-write is worth little to look at, and on a network share or
+        // a synced folder (OneDrive, Dropbox) an oplock break or a sync scanner
+        // can turn someone else's read into a real sharing violation for the
+        // writer - which would fail the run, not the viewer. This is a policy,
+        // not a platform workaround, so it is not conditioned on the platform.
+        rst_.reset();
+        steps_.clear();
+        rstNote = QStringLiteral(" - restart file not read while the run is in progress");
+    } else {
+        try {
+            if (QFileInfo::exists(cf.unrst)) {
+                rst_ = std::make_unique<Opm::EclIO::ERst>(cf.unrst.toStdString());
+                steps_ = rst_->listOfReportStepNumbers();
+            }
+        } catch (const std::exception& e) {
+            // Do not swallow this: dropping every dynamic property with no
+            // reason given looks like the case simply has none.
+            rst_.reset();
+            steps_.clear();
+            rstNote = QStringLiteral(" - restart file unreadable (%1)")
+                          .arg(QString::fromLocal8Bit(e.what()));
+            // A restart file that was being written usually becomes readable a
+            // moment later, so try once - and only once per case, so a file
+            // that stays bad does not spin.
+            if (rstRetryIdx_ != idx) {
+                rstRetryIdx_ = idx;
+                QTimer::singleShot(1500, this, [this, idx] {
+                    if (caseBox_->currentIndex() == idx && !rst_) openCase(idx);
+                });
+            }
         }
-    } catch (...) { rst_.reset(); steps_.clear(); }
+    }
 
     populateProperties();
     if (!steps_.empty()) {
@@ -942,9 +1001,9 @@ void Viewer3DWidget::openCase(int idx)
             stepSlider_->setValue(pendingStep_);
     }
     const auto d = grid_->dimension();
-    setStatus(QStringLiteral("%1: %2x%3x%4, %5 active cells, %6 static, %7 dynamic, %8 report steps")
+    setStatus(QStringLiteral("%1: %2x%3x%4, %5 active cells, %6 static, %7 dynamic, %8 report steps%9")
         .arg(cf.label).arg(d[0]).arg(d[1]).arg(d[2]).arg(grid_->activeCells())
-        .arg(staticBox_->count()).arg(dynBox_->count()).arg(steps_.size()));
+        .arg(staticBox_->count()).arg(dynBox_->count()).arg(steps_.size()).arg(rstNote));
     showProperty();
     showWells();
 }

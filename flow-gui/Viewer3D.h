@@ -131,6 +131,11 @@ public:
     // EGRID existed, and the final restart steps only exist now.
     void caseFinished(const QString& smspecPath);
 
+    // The case a simulation is currently writing, as its SMSPEC path; empty
+    // when nothing is running. While a case is being written this tab leaves
+    // its restart file alone - see openCase() for why.
+    void setRunningCase(const QString& smspecPath);
+
     // Follow a rename made in the Summary Plots tab (same case identity).
     void renameCase(const QString& smspecPath, const QString& label);
 
@@ -179,6 +184,13 @@ private:
     std::unique_ptr<Opm::EclIO::EInit> init_;
     std::unique_ptr<Opm::EclIO::ERst>  rst_;
     std::vector<int>   steps_;          // restart report step numbers
+    // The .EGRID key of the case a simulation is writing right now, empty when
+    // none is. Kept in the same currency the case list uses so it can be
+    // compared with flowgui::sameCasePath().
+    QString            runningEgrid_;
+    // The case index whose restart read has already been retried once, so a
+    // file that stays unreadable does not spin. -1 = nothing retried yet.
+    int                rstRetryIdx_ = -1;
     // Bytes the restart reader has been asked for since it last dropped its
     // cache; see kRstCacheBudget in the .cpp.
     qint64             rstBytes_ = 0;

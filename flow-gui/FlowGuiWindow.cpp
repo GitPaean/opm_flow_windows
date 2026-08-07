@@ -1005,10 +1005,18 @@ void FlowGuiWindow::startNextJob()
     jobTimer_.start();
     refreshRow(current_);
 
+    const QString runSmspec = j.outdir + '/' + deckInfo.completeBaseName()
+                            + QStringLiteral(".SMSPEC");
 #ifdef FLOWGUI_HAVE_SUMMARY
     if (summary_)
-        summary_->addCase(deckInfo.completeBaseName(),
-                          j.outdir + '/' + deckInfo.completeBaseName() + ".SMSPEC");
+        summary_->addCase(deckInfo.completeBaseName(), runSmspec);
+#endif
+#ifdef FLOWGUI_HAVE_3D
+    // Tell the 3D tab this case's output is being written, so it leaves the
+    // restart file alone until the run ends. The summary tab is not told: it
+    // reads SMSPEC/UNSMRY, which flow appends to and which are what make a run
+    // watchable while it is in progress.
+    if (viewer3D_) viewer3D_->setRunningCase(runSmspec);
 #endif
 
     proc_ = new QProcess(this);
@@ -1037,18 +1045,30 @@ void FlowGuiWindow::startNextJob()
             jj.exitCode  = code;
             jj.state = (st == QProcess::CrashExit) ? Job::Stopped
                        : (code == 0) ? Job::Done : Job::Failed;
-            if (jj.state == Job::Done) {
+            {
                 const QFileInfo di(jj.deck);
-                lastFinishedSmspec_ = jj.outdir + '/' + di.completeBaseName()
-                                    + QStringLiteral(".SMSPEC");
-                // The case was registered at job start, before flow had
-                // written anything - load the now-existing files.
-#ifdef FLOWGUI_HAVE_SUMMARY
-                if (summary_) summary_->caseFinished(lastFinishedSmspec_);
-#endif
+                const QString smspec = jj.outdir + '/' + di.completeBaseName()
+                                     + QStringLiteral(".SMSPEC");
 #ifdef FLOWGUI_HAVE_3D
-                if (viewer3D_) viewer3D_->caseFinished(lastFinishedSmspec_);
+                // Nothing is writing this case any more, whichever way it
+                // ended, so release it before the reopen below - otherwise the
+                // reopen would still skip the restart file it is there to read.
+                if (viewer3D_) {
+                    viewer3D_->setRunningCase(QString());
+                    // A stopped or failed run leaves the steps it did write,
+                    // and they are worth looking at; the old code reopened only
+                    // after a clean exit.
+                    viewer3D_->caseFinished(smspec);
+                }
 #endif
+                if (jj.state == Job::Done) {
+                    lastFinishedSmspec_ = smspec;
+                    // The case was registered at job start, before flow had
+                    // written anything - load the now-existing files.
+#ifdef FLOWGUI_HAVE_SUMMARY
+                    if (summary_) summary_->caseFinished(lastFinishedSmspec_);
+#endif
+                }
             }
             appendLog(QStringLiteral("\n---- job finished, exit code %1%2, %3 ----\n")
                           .arg(code)
