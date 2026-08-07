@@ -1527,7 +1527,20 @@ void SummaryPlotWidget::reload(bool keepSelection)
     } catch (...) {}
 
     // Parse every summary node into a plottable Vec.
+    //
+    // One node per KEY, not per record. A deck that names a keyword twice in
+    // SUMMARY - WBHP once for every well, and again well by well - makes the
+    // simulator write a vector for each declaration, and the SMSPEC tells them
+    // apart only by a NUMS that the well category does not carry into its
+    // name. Both are the same quantity for the same well, so the tree showed
+    // PROD01 twice with nothing to choose between the two: selection stores
+    // the key, the plot looks the data up by the key, and the index QHash is
+    // keyed on it and keeps one of them anyway. The second row was unreachable
+    // - clicking either lit up both - so drop it here rather than leave it to
+    // puzzle over, and say how many went.
     vecs_.clear();
+    QSet<QString> seenKeys;
+    int duplicateNodes = 0;
     for (const auto& node : smry_->summaryNodeList()) {
         Vec v;
         v.node    = node;
@@ -1540,16 +1553,22 @@ void SummaryPlotWidget::reload(bool keepSelection)
         v.key     = v.item.isEmpty() ? v.keyword : (v.keyword + QLatin1Char(':') + v.item);
         try { v.unit = QString::fromStdString(smry_->get_unit(node)).trimmed(); }
         catch (...) { v.unit.clear(); }
+        if (seenKeys.contains(v.key)) { ++duplicateNodes; continue; }
+        seenKeys.insert(v.key);
         vecs_.push_back(v);
     }
 
     rebuildFilters();
     rebuildTree(reselect);
 
-    setStatus(QStringLiteral("%1: %2 vectors, %3 timesteps")
-                  .arg(QFileInfo(path).completeBaseName())
-                  .arg(vecs_.size())
-                  .arg(int(smry_->numberOfTimeSteps())));
+    QString loaded = QStringLiteral("%1: %2 vectors, %3 timesteps")
+                         .arg(QFileInfo(path).completeBaseName())
+                         .arg(vecs_.size())
+                         .arg(int(smry_->numberOfTimeSteps()));
+    if (duplicateNodes > 0)
+        loaded += QStringLiteral("  (%1 declared twice in SUMMARY, shown once)")
+                      .arg(duplicateNodes);
+    setStatus(loaded);
 }
 
 void SummaryPlotWidget::rebuildFilters()
