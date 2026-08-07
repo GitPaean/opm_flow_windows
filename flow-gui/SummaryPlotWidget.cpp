@@ -676,6 +676,24 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
         markerEverySpin_->setToolTip(QStringLiteral(
             "mark every n-th data point; 1 (the default) marks them all, so "
             "the markers are exactly the samples in the summary file"));
+        // Axis text has its own knob because it is the part a figure is read
+        // THROUGH: on a projector or in a printed column, a tick nobody can
+        // read costs the reader the value, not just the polish. It is left out
+        // of "scale with plot" for the same reason - see the tick-count
+        // comment in plotChart - so this is the only thing that moves it, and
+        // it goes well past what a screen needs.
+        axisScaleSpin_ = new QDoubleSpinBox;
+        axisScaleSpin_->setRange(0.5, 3.0);
+        axisScaleSpin_->setSingleStep(0.1);
+        axisScaleSpin_->setValue(1.0);
+        axisScaleSpin_->setDecimals(1);
+        axisScaleSpin_->setPrefix(QStringLiteral("x"));
+        axisScaleSpin_->setToolTip(QStringLiteral(
+            "size of the tick numbers and axis titles, as a factor of the "
+            "normal one.\n\n"
+            "Unlike the curves, axis text does NOT follow the size of its "
+            "subplot - a label is the last thing that should shrink - so turn "
+            "this up for a slide or a figure that will be printed small."));
         // The legend is the one part that does not have to follow the curves:
         // a figure for a paper often wants it a size up (or out of the way).
         legendScaleSpin_ = new QDoubleSpinBox;
@@ -742,6 +760,8 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
         row->addWidget(markerSizeSpin_);
         row->addWidget(markerEverySpin_);
         row->addWidget(stagger_);
+        row->addWidget(new QLabel(QStringLiteral("Axis:")));
+        row->addWidget(axisScaleSpin_);
         row->addWidget(new QLabel(QStringLiteral("Legend:")));
         row->addWidget(legendScaleSpin_);
         row->addWidget(autoScale_);
@@ -795,6 +815,7 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
         connect(markerEverySpin_, &QSpinBox::valueChanged, this,
                 [this, syncStagger](int) { syncStagger(); replot(); });
         syncStagger();
+        connect(axisScaleSpin_,   &QDoubleSpinBox::valueChanged, this, [this](double) { replot(); });
         connect(legendScaleSpin_, &QDoubleSpinBox::valueChanged, this, [this](double) { replot(); });
         connect(autoScale_, &QCheckBox::toggled, this, [this](bool) { replot(); });
         connect(bzoom, &QToolButton::clicked, this, [this] { resetZoom(false); });
@@ -1314,6 +1335,7 @@ QJsonObject SummaryPlotWidget::uiState() const
     o[QStringLiteral("markerStagger")] = stagger_ && stagger_->isChecked();
     o[QStringLiteral("autoRefresh")] = autoRef_  && autoRef_->isChecked();
     if (autoScale_)       o[QStringLiteral("autoScale")]   = autoScale_->isChecked();
+    if (axisScaleSpin_)   o[QStringLiteral("axisScale")]   = axisScaleSpin_->value();
     if (legendScaleSpin_) o[QStringLiteral("legendScale")] = legendScaleSpin_->value();
     if (lineWidthSpin_)   o[QStringLiteral("lineWidth")]   = lineWidthSpin_->value();
     if (markerSizeSpin_)  o[QStringLiteral("markerSize")]  = markerSizeSpin_->value();
@@ -1352,6 +1374,7 @@ void SummaryPlotWidget::restoreUiState(const QJsonObject& state)
     if (stagger_  && has("markerStagger"))
         stagger_->setChecked(val("markerStagger").toBool(false));
     if (autoScale_       && has("autoScale"))   autoScale_->setChecked(val("autoScale").toBool(true));
+    if (axisScaleSpin_   && has("axisScale"))   axisScaleSpin_->setValue(val("axisScale").toDouble(1.0));
     if (legendScaleSpin_ && has("legendScale")) legendScaleSpin_->setValue(val("legendScale").toDouble(1.0));
     if (lineWidthSpin_   && has("lineWidth"))   lineWidthSpin_->setValue(val("lineWidth").toDouble(2.0));
     if (markerSizeSpin_  && has("markerSize"))  markerSizeSpin_->setValue(val("markerSize").toDouble(7.5));
@@ -2355,19 +2378,25 @@ void SummaryPlotWidget::styleChart(QChart* chart)
     chart->legend()->setMarkerShape(QLegend::MarkerShapeFromSeries);   // show the dashes
 }
 
-void SummaryPlotWidget::styleAxis(QAbstractAxis* axis)
+void SummaryPlotWidget::styleAxis(QAbstractAxis* axis) const
 {
     if (!axis) return;
     // Tick numbers carry the quantitative content of the figure, so they are
     // sized to be read rather than to stay out of the way: a step up from the
     // old 9pt, and demi-bold, which is what makes a digit hold up against the
     // grid lines behind it without going as heavy as the axis title.
+    //
+    // Times whatever the Axis box asks for, which is how a figure headed for a
+    // slide gets text a room can read. Clamped at both ends: the spin cannot
+    // reach either bound on its own, but a session file can carry any number.
+    const double as = std::clamp(axisScaleSpin_ ? axisScaleSpin_->value() : 1.0,
+                                 0.4, 4.0);
     QFont f = axis->labelsFont();
-    f.setPointSizeF(10.0);
+    f.setPointSizeF(std::clamp(11.0 * as, 4.0, 48.0));
     f.setWeight(QFont::DemiBold);
     axis->setLabelsFont(f);
     QFont t = axis->titleFont();
-    t.setPointSizeF(10.0);
+    t.setPointSizeF(std::clamp(11.0 * as, 4.0, 48.0));
     t.setBold(true);
     axis->setTitleFont(t);
     axis->setLabelsColor(QColor(0x22, 0x26, 0x2b));
@@ -2556,11 +2585,16 @@ int SummaryPlotWidget::plotChart(QChart* chart, const QList<int>& sel,
     // turns into "2018-1..." unless there are fewer of them. The labels
     // themselves stay at full size - they are the last thing that should
     // shrink.
+    // Bigger text needs the same room per label, so the count has to come down
+    // as the Axis box goes up - otherwise turning it up to be legible is what
+    // makes the dates elide, which is the opposite of the point.
     const int vidx = charts_.indexOf(chart);
     const QSize vsz = (vidx >= 0 && vidx < chartViews_.size())
                           ? chartViews_[vidx]->size() : QSize(900, 600);
-    const int xTicks = std::clamp(vsz.width()  / (useDates ? 170 : 130), 2, 6);
-    const int yTicks = std::clamp(vsz.height() / 90, 2, 6);
+    const double axisS = std::clamp(axisScaleSpin_ ? axisScaleSpin_->value() : 1.0,
+                                    0.4, 4.0);
+    const int xTicks = std::clamp(int(vsz.width()  / ((useDates ? 170 : 130) * axisS)), 2, 6);
+    const int yTicks = std::clamp(int(vsz.height() / (90 * axisS)), 2, 6);
 
     QAbstractAxis* ax = nullptr;
     if (useDates) {

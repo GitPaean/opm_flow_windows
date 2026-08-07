@@ -162,6 +162,7 @@ private:
     QCheckBox*   markers_   = nullptr;   // show data points on the curves
     QCheckBox*   stagger_   = nullptr;   // offset each case's marked points
     QCheckBox*   autoScale_ = nullptr;   // sizes follow the chart's own size
+    QDoubleSpinBox* axisScaleSpin_   = nullptr;   // axis text size, as a factor
     QDoubleSpinBox* legendScaleSpin_ = nullptr;   // legend size, as a factor
     QDoubleSpinBox* lineWidthSpin_   = nullptr;   // curve pen width, points
     QDoubleSpinBox* markerSizeSpin_  = nullptr;   // data-point marker size, px
@@ -217,7 +218,8 @@ private:
     void placeLegend(QChart* chart);
     // Print-oriented chart/axis cosmetics shared by every subplot.
     static void styleChart(QChart* chart);
-    static void styleAxis(QAbstractAxis* axis);
+    // Not static: the axis text size follows axisScaleSpin_.
+    void styleAxis(QAbstractAxis* axis) const;
     void setStatus(const QString& s);
     // Every checked case, the active one first-hand, others opened lazily.
     std::vector<std::pair<QString, Opm::EclIO::ESmry*>> checkedCases();
