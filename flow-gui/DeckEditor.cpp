@@ -288,10 +288,30 @@ DeckEditorWidget::DeckEditorWidget(QWidget* parent)
         auto* bscan = new QPushButton(QStringLiteral("Rescan structure"));
         row->addWidget(bopen); row->addWidget(bsave); row->addWidget(ball);
         row->addWidget(bclose); row->addWidget(brel);
+        // Back and Forward through the places the caret has been. A deck is
+        // read by hopping - a keyword in the tree, down into an INCLUDE, back
+        // out - and the tab bar only remembers which file, never where in it.
+        backBtn_ = new QPushButton(QStringLiteral("< Back"));
+        fwdBtn_  = new QPushButton(QStringLiteral("Forward >"));
+        backBtn_->setToolTip(QStringLiteral(
+            "back to the last place you jumped from or were editing (Alt+Left)"));
+        fwdBtn_->setToolTip(QStringLiteral("forward again (Alt+Right)"));
+        backBtn_->setEnabled(false);
+        fwdBtn_->setEnabled(false);
         row->addWidget(undoBtn_); row->addWidget(redoBtn_);
+        row->addWidget(backBtn_); row->addWidget(fwdBtn_);
         row->addWidget(bcom); row->addWidget(bfind);
         row->addWidget(bscan); row->addStretch(1);
         top->addLayout(row);
+
+        connect(backBtn_, &QPushButton::clicked, this, [this] { goJump(-1); });
+        connect(fwdBtn_,  &QPushButton::clicked, this, [this] { goJump(+1); });
+        for (const auto& [seq, dir] : { std::pair{ QKeySequence(Qt::ALT | Qt::Key_Left),  -1 },
+                                        std::pair{ QKeySequence(Qt::ALT | Qt::Key_Right), +1 } }) {
+            auto* s = new QShortcut(seq, this);
+            s->setContext(Qt::WidgetWithChildrenShortcut);
+            connect(s, &QShortcut::activated, this, [this, dir] { goJump(dir); });
+        }
 
         connect(brel, &QPushButton::clicked, this,
                 [this] { reloadTab(tabs_->currentIndex(), false); });
@@ -397,6 +417,17 @@ DeckEditorWidget::DeckEditorWidget(QWidget* parent)
         caseChk_->setToolTip(QStringLiteral(
             "search and replace exactly as typed (on), or ignoring case (off)"));
         fl->addWidget(caseChk_);
+        // A deck is not one file, and the keyword you are hunting is as likely
+        // to be three INCLUDEs down as in front of you. On, the search runs off
+        // the end of this file into the next one the scan found, opening it as
+        // it goes, and Replace All spans the lot.
+        deckChk_ = new QCheckBox(QStringLiteral("whole deck"));
+        deckChk_->setToolTip(QStringLiteral(
+            "search every file of the scanned deck - the .DATA and each "
+            "INCLUDE - instead of only this tab.\n\n"
+            "Files are opened as they are reached, and Replace All leaves them "
+            "open and modified: nothing is written until you Save."));
+        fl->addWidget(deckChk_);
         // Visible way into replace - a shortcut alone is too easy to miss.
         replaceToggle_ = new QPushButton(QStringLiteral("Replace..."));
         replaceToggle_->setCheckable(true);
@@ -508,6 +539,59 @@ DeckEditorWidget::DeckEditorWidget(QWidget* parent)
 
 void DeckEditorWidget::setStatus(const QString& s) { status_->setText(s); }
 
+// -- where you have been ----------------------------------------------------
+
+void DeckEditorWidget::noteJump()
+{
+    auto* ed = editorAt(tabs_->currentIndex());
+    if (!ed) return;
+    pushJump(ed->property("filePath").toString(), ed->textCursor().blockNumber());
+}
+
+void DeckEditorWidget::pushJump(const QString& path, int line)
+{
+    if (navigating_ || path.isEmpty()) return;
+    // Near enough to where we already are is the same place. Without this the
+    // history fills with a stop per keystroke and Back walks a line at a time.
+    if (jumpAt_ >= 0 && jumpAt_ < jumps_.size()) {
+        const Jump& cur = jumps_[jumpAt_];
+        if (cur.path == path && std::abs(cur.line - line) <= 6) {
+            jumps_[jumpAt_].line = line;      // keep the freshest line
+            return;
+        }
+    }
+    // A new place forks the history: what lay ahead belonged to the branch we
+    // just left, which is what Back/Forward means everywhere else.
+    while (jumps_.size() > jumpAt_ + 1) jumps_.removeLast();
+    jumps_.append({ path, line });
+    // Old enough is forgotten; nobody navigates back a hundred stops.
+    constexpr int kMaxJumps = 100;
+    while (jumps_.size() > kMaxJumps) jumps_.removeFirst();
+    jumpAt_ = jumps_.size() - 1;
+    refreshNavButtons();
+}
+
+void DeckEditorWidget::goJump(int dir)
+{
+    const int to = jumpAt_ + dir;
+    if (to < 0 || to >= jumps_.size()) return;
+    jumpAt_ = to;
+    const Jump j = jumps_[to];
+    navigating_ = true;                 // replaying, not travelling
+    openFile(j.path, j.line + 1);       // openFile takes a 1-based line
+    navigating_ = false;
+    refreshNavButtons();
+    setStatus(QStringLiteral("%1:%2   (%3 of %4)")
+                  .arg(QFileInfo(j.path).fileName())
+                  .arg(j.line + 1).arg(jumpAt_ + 1).arg(jumps_.size()));
+}
+
+void DeckEditorWidget::refreshNavButtons()
+{
+    if (backBtn_) backBtn_->setEnabled(jumpAt_ > 0);
+    if (fwdBtn_)  fwdBtn_->setEnabled(jumpAt_ >= 0 && jumpAt_ + 1 < jumps_.size());
+}
+
 void DeckEditorWidget::refreshUndoButtons()
 {
     auto* ed = editorAt(tabs_->currentIndex());
@@ -563,8 +647,12 @@ void DeckEditorWidget::findNext(bool backward)
     const QString needle = findEdit_->text();
     if (needle.isEmpty()) return;
     const QTextDocument::FindFlags fl = findFlags(backward);
-    if (!ed->find(needle, fl)) {                             // wrap around once
-        QTextCursor c = ed->textCursor();
+    if (!ed->find(needle, fl)) {
+        // Off the end of this file. Across the deck that means carry on into
+        // the next one rather than wrapping here, or the search never leaves
+        // the tab it started in.
+        if (deckChk_ && deckChk_->isChecked() && findInDeck(backward)) return;
+        QTextCursor c = ed->textCursor();                    // wrap around once
         c.movePosition(backward ? QTextCursor::End : QTextCursor::Start);
         ed->setTextCursor(c);
         if (!ed->find(needle, fl)) {
@@ -573,6 +661,95 @@ void DeckEditorWidget::findNext(bool backward)
         }
     }
     ed->centerCursor();
+}
+
+// Replace across every file of the deck. Asked for first: this reaches files
+// the user may never have opened, and a wrong needle typed into a shared
+// INCLUDE is a mess to unpick by hand.
+//
+// Each file is opened and edited in its tab, one undo step apiece, and left
+// MODIFIED rather than written. Nothing reaches disk until Save or Save all,
+// so the whole run can be read over first - and abandoned with Reload.
+void DeckEditorWidget::replaceAllInDeck()
+{
+    const QString needle = findEdit_->text();
+    if (needle.isEmpty()) return;
+    const QString repl = replaceEdit_->text();
+    if (deckFiles_.isEmpty()) {
+        setStatus(QStringLiteral("no deck scanned - open a .DATA file first"));
+        return;
+    }
+    const auto a = QMessageBox::question(this, QStringLiteral("Deck editor"),
+        QStringLiteral("Replace \"%1\" with \"%2\" through all %3 file(s) of "
+                       "%4?\n\nFiles are opened and changed but NOT saved - "
+                       "review them, then Save all.")
+            .arg(needle, repl).arg(deckFiles_.size())
+            .arg(QFileInfo(rootDeck_).fileName()),
+        QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+    if (a != QMessageBox::Yes) return;
+
+    const QTextDocument::FindFlags fl = findFlags();
+    const int startTab = tabs_->currentIndex();
+    int total = 0, touched = 0;
+    for (const QString& path : deckFiles_) {
+        openFile(path);
+        auto* ed = editorAt(tabs_->currentIndex());
+        if (!ed || ed->property("filePath").toString() != path) continue;
+        QTextCursor block(ed->document());
+        block.beginEditBlock();                 // one undo step per file
+        int n = 0;
+        QTextCursor f = ed->document()->find(needle, 0, fl);
+        while (!f.isNull()) {
+            f.insertText(repl);
+            f = ed->document()->find(needle, f, fl);
+            ++n;
+        }
+        block.endEditBlock();
+        if (n) { total += n; ++touched; }
+    }
+    if (startTab >= 0 && startTab < tabs_->count()) tabs_->setCurrentIndex(startTab);
+    updateFindHighlights();
+    setStatus(total
+        ? QStringLiteral("replaced %1 occurrence(s) of \"%2\" in %3 file(s) - "
+                         "not saved yet").arg(total).arg(needle).arg(touched)
+        : QStringLiteral("\"%1\" not found anywhere in the deck").arg(needle));
+}
+
+// Continue the search through the deck's other files, in scan order from the
+// one in front, opening each as it is reached and stopping at the first match.
+// Wraps back to where it started, so every file is looked at exactly once.
+bool DeckEditorWidget::findInDeck(bool backward)
+{
+    if (deckFiles_.isEmpty()) return false;
+    const QString needle = findEdit_->text();
+    auto* here = editorAt(tabs_->currentIndex());
+    const QString from = here ? here->property("filePath").toString() : QString();
+    int start = deckFiles_.indexOf(from);
+    if (start < 0) start = 0;
+
+    const int n = deckFiles_.size();
+    for (int k = 1; k <= n; ++k) {
+        const int i = backward ? (start - k + n * n) % n : (start + k) % n;
+        const QString path = deckFiles_.at(i);
+        // Opening it is the only way to search it, and leaves it where the
+        // user can see what was found and edit it.
+        openFile(path);
+        auto* ed = editorAt(tabs_->currentIndex());
+        if (!ed || ed->property("filePath").toString() != path) continue;
+        QTextCursor c = ed->textCursor();
+        c.movePosition(backward ? QTextCursor::End : QTextCursor::Start);
+        ed->setTextCursor(c);
+        if (ed->find(needle, findFlags(backward))) {
+            ed->centerCursor();
+            updateFindHighlights();
+            pushJump(path, ed->textCursor().blockNumber());
+            findInfo_->setText(QStringLiteral("in %1").arg(QFileInfo(path).fileName()));
+            return true;
+        }
+        if (path == from) break;      // all the way round, back where we began
+    }
+    findInfo_->setText(QStringLiteral("not in this deck"));
+    return false;
 }
 
 void DeckEditorWidget::updateFindHighlights()
@@ -625,6 +802,7 @@ void DeckEditorWidget::replaceCurrent()
 
 void DeckEditorWidget::replaceAll()
 {
+    if (deckChk_ && deckChk_->isChecked()) { replaceAllInDeck(); return; }
     auto* ed = editorAt(tabs_->currentIndex());
     if (!ed) return;
     const QString needle = findEdit_->text();
@@ -861,6 +1039,15 @@ void DeckEditorWidget::openFile(const QString& path, int line)
                 [this, ed](bool) { if (ed == editorAt(tabs_->currentIndex())) refreshUndoButtons(); });
         connect(ed->document(), &QTextDocument::redoAvailable, this,
                 [this, ed](bool) { if (ed == editorAt(tabs_->currentIndex())) refreshUndoButtons(); });
+        // An edit is a place worth being able to come back to - "where was I
+        // working" being the commonest reason to want to go back at all.
+        // pushJump() folds anything within a few lines into the stop already
+        // there, so typing leaves one entry and not one per keystroke.
+        connect(ed->document(), &QTextDocument::contentsChanged, this, [this, ed] {
+            if (ed == editorAt(tabs_->currentIndex()))
+                pushJump(ed->property("filePath").toString(),
+                         ed->textCursor().blockNumber());
+        });
         ed->setContextMenuPolicy(Qt::CustomContextMenu);
         connect(ed, &QWidget::customContextMenuRequested, this,
                 [this, ed](const QPoint& p) {
@@ -879,6 +1066,10 @@ void DeckEditorWidget::openFile(const QString& path, int line)
             menu->exec(ed->viewport()->mapToGlobal(p));
         });
     }
+    // Leaving somewhere is worth recording as much as arriving: every jump
+    // goes through here - the tree, an INCLUDE, a search landing in another
+    // file - so both ends of it are caught in one place.
+    if (line > 0) noteJump();
     tabs_->setCurrentIndex(tab);
     if (line > 0) {
         auto* ed = editorAt(tab);
@@ -889,6 +1080,7 @@ void DeckEditorWidget::openFile(const QString& path, int line)
             ed->centerCursor();
         }
         ed->setFocus();
+        pushJump(ed->property("filePath").toString(), line - 1);
     }
 }
 
@@ -1083,6 +1275,7 @@ void DeckEditorWidget::scanDeck()
         else                  expandedSections_.remove(it->text(0));
     }
     tree_->clear();
+    deckFiles_.clear();
     if (rootDeck_.isEmpty()) return;
     QString section = QStringLiteral("(preamble)");
     int fileBudget = 128;                    // safety cap on include fan-out
@@ -1103,6 +1296,13 @@ void DeckEditorWidget::scanFile(const QString& path, QTreeWidgetItem*,
     if (!f.open(QIODevice::ReadOnly)) {
         if (fileParent) fileParent->setText(1, QStringLiteral("missing"));
         return;
+    }
+    // The deck as a list of files, for the searches that span it. Canonical
+    // and deduplicated: one include pulled in from two places is one file, and
+    // searching it twice would report every hit in it twice.
+    {
+        const QString canon = QFileInfo(path).canonicalFilePath();
+        if (!canon.isEmpty() && !deckFiles_.contains(canon)) deckFiles_ << canon;
     }
     const QString dir = QFileInfo(path).absolutePath();
     const QString fname = QFileInfo(path).fileName();

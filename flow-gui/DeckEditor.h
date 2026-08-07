@@ -93,8 +93,24 @@ private:
     QLineEdit*   replaceEdit_ = nullptr;
     QPushButton* replaceToggle_ = nullptr;   // shows/hides replaceRow_
     QCheckBox*   caseChk_ = nullptr;         // match case (on by default)
+    QCheckBox*   deckChk_ = nullptr;         // search every file, not this tab
     QPushButton* undoBtn_ = nullptr;
     QPushButton* redoBtn_ = nullptr;
+    QPushButton* backBtn_ = nullptr;
+    QPushButton* fwdBtn_  = nullptr;
+
+    // Where the caret has been, oldest first, with jumpAt_ pointing at where
+    // it is now. A deck is read by hopping - a keyword in the tree, into an
+    // INCLUDE, back out again - and the tab bar cannot say where in a file you
+    // were, only which file. Back and Forward walk this instead.
+    struct Jump { QString path; int line; };
+    QVector<Jump> jumps_;
+    int  jumpAt_ = -1;
+    bool navigating_ = false;   // a jump being replayed is not a new one
+
+    // Root deck first, then every INCLUDE in the order the scan met them.
+    // The list the whole-deck search walks.
+    QStringList deckFiles_;
     // Watches the open files so edits made outside the GUI are noticed.
     QFileSystemWatcher* watcher_ = nullptr;
     QString      rootDeck_;
@@ -116,6 +132,15 @@ private:
     QString includeTargetAt(DeckTextEdit* ed, int position) const;
     void openIncludeAt(DeckTextEdit* ed, int position);
     void refreshUndoButtons();
+    // Record the caret's present spot as somewhere worth coming back to.
+    void noteJump();
+    void pushJump(const QString& path, int line);
+    void goJump(int dir);             // -1 back, +1 forward
+    void refreshNavButtons();
+    // Carry the search on into the deck's other files, opening them as it
+    // goes. Returns true if it landed on a match.
+    bool findInDeck(bool backward);
+    void replaceAllInDeck();
     // Toggle "--" comments on the selected lines (or the current line).
     void toggleComment();
     // Re-read a tab from disk. force = discard unsaved changes without asking.
