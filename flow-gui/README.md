@@ -51,7 +51,11 @@ results, animate them in 3D, and edit decks — all in one window.
   updates the plot while a simulation is still writing, and the Summary Plots and
   3D tabs re-check their files when a job finishes and when the tab is
   shown (a case is registered as soon as its job starts, before flow has
-  written anything). The search box also accepts comma-separated
+  written anything). A refresh first compares the size and timestamp of
+  the files it would read, and does nothing when none has changed, so
+  leaving auto-refresh on while looking at finished runs costs a few
+  `stat` calls rather than re-reading and re-parsing every summary in the
+  plot every 10 seconds. The search box also accepts comma-separated
   **wildcard filters** qsummary-style — `WBHP:B*, WOPR*` narrows the tree
   to the matching `KEYWORD:ITEM` keys (plain text still matches anywhere).
   **Subplots** — the *Layout* button opens a grid picker: hover the cells

@@ -1555,6 +1555,36 @@ void SummaryPlotWidget::browseCase()
 }
 
 // ---------------------------------------------------------------------------
+QString SummaryPlotWidget::plottedStamp() const
+{
+    // Everything a reload would read: the active case, plus the checked ones
+    // it clears so replot() reopens them. mtime and size are enough to notice
+    // a run appending to a summary, and cost a stat() each.
+    QStringList paths(activePath());
+    for (int i = 0; i < caseList_->count(); ++i) {
+        const auto* it = caseList_->item(i);
+        if (it->checkState() == Qt::Checked)
+            paths << it->data(Qt::UserRole).toString();
+    }
+    QString stamp;
+    for (const QString& p : std::as_const(paths)) {
+        if (p.isEmpty()) continue;
+        QString base = p;
+        if (base.endsWith(QStringLiteral(".SMSPEC"), Qt::CaseInsensitive)) base.chop(7);
+        // the spec and whichever file carries the samples
+        for (const auto& suffix : { QStringLiteral(".SMSPEC"),
+                                    QStringLiteral(".UNSMRY"),
+                                    QStringLiteral(".ESMRY") }) {
+            const QFileInfo fi(base + suffix);
+            if (!fi.exists()) continue;
+            stamp += QStringLiteral("%1|%2|%3;").arg(fi.fileName())
+                         .arg(fi.lastModified().toMSecsSinceEpoch())
+                         .arg(fi.size());
+        }
+    }
+    return stamp;
+}
+
 void SummaryPlotWidget::reload(bool keepSelection)
 {
     const QString path = activePath();
@@ -1563,6 +1593,16 @@ void SummaryPlotWidget::reload(bool keepSelection)
         setStatus(QStringLiteral("waiting for %1 ...").arg(path));
         return;
     }
+
+    // A refresh of cases nothing has written to since they were read has
+    // nothing to give: re-opening and re-parsing them, rebuilding the vector
+    // tree and replotting is pure cost, and auto-refresh would pay it every
+    // 10 s for as long as the window is open. Finished runs are the common
+    // case - a plot is looked at far longer than it takes to produce.
+    const QString stamp = plottedStamp();
+    if (keepSelection && smry_ && path == smryPath_
+        && !stamp.isEmpty() && stamp == loadedStamp_)
+        return;
 
     QStringList reselect;
     if (keepSelection)
@@ -1646,6 +1686,11 @@ void SummaryPlotWidget::reload(bool keepSelection)
 
     rebuildFilters();
     rebuildTree(reselect);
+    // The stamp taken BEFORE the read, deliberately: a run appending while we
+    // were reading leaves the file newer than this, so the next refresh sees a
+    // difference and re-reads. Stamping afterwards would record data we never
+    // parsed and skip it for good.
+    loadedStamp_ = stamp;
 
     QString loaded = QStringLiteral("%1: %2 vectors, %3 timesteps")
                          .arg(QFileInfo(path).completeBaseName())

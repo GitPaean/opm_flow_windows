@@ -175,6 +175,11 @@ private:
                                                  // a failed read of ANOTHER
                                                  // case must not leave this
                                                  // one on screen under its name
+    // (mtime, size) of the files the last load read, so an auto-refresh of a
+    // case nothing is writing to costs a few stat() calls instead of
+    // re-reading and re-parsing every summary in the plot.
+    QString     loadedStamp_;
+    QString     plottedStamp() const;
     int         checkedCount_ = 0;   // cases asked for by the last replot
     QStringList unreadable_;         // ... of those, the ones that would not open
     QVector<Vec> vecs_;                          // parsed from the active case

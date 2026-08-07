@@ -19,12 +19,19 @@ the 10 s `timer_`; `FlowGuiWindow::startNextJob()` and the job-finished
 handler already know when a run begins and ends, and already call
 `summary_->caseFinished()`.
 
-*State of play:* auto-refresh now defaults to **on**, which covers most of
-what this was after. What is left is the narrower idea — overriding the
-setting for the duration of a run and restoring the user's own choice
-afterwards — which matters only for someone who deliberately turned it off.
-Worth keeping in mind that a saved session restores its own choice, so
-"the old setting" has to mean the user's, not the default.
+*State of play:* auto-refresh now defaults to **on**, and a refresh whose
+files have not changed since they were read returns after a few `stat`
+calls instead of re-reading them (measured on Norne: 22 ms of reading,
+tree rebuild and replot, down to 0.02 ms per idle tick). Between them
+those cover what this was after: leaving auto-refresh on is no longer
+something a user pays for.
+
+What is left is the narrower idea — overriding the setting for the
+duration of a run and restoring the user's own choice afterwards — which
+now matters only for someone who deliberately turned it off and would
+still like a running job followed. Worth keeping in mind that a saved
+session restores its own choice, so "the old setting" has to mean the
+user's, not the default.
 
 ---
 
