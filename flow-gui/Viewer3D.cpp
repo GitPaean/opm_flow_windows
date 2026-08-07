@@ -820,6 +820,13 @@ void Viewer3DWidget::caseFinished(const QString& smspecPath)
         openCase(idx);
 }
 
+bool Viewer3DWidget::restartIsBusy(const CaseFiles& cf) const
+{
+    return !runningEgrid_.isEmpty()
+        && flowgui::sameCasePath(cf.egrid, runningEgrid_)
+        && flowgui::isSyncedOrNetworkPath(cf.unrst);
+}
+
 void Viewer3DWidget::setRunningCase(const QString& smspecPath)
 {
     const QString egrid = smspecPath.isEmpty()
@@ -830,15 +837,15 @@ void Viewer3DWidget::setRunningCase(const QString& smspecPath)
     runningEgrid_ = egrid;
     rstRetryIdx_ = -1;
 
-    // A run just started on the case being shown: reopen it now so the restart
-    // reader is dropped straight away, rather than at whatever moment the user
-    // next moves the step slider. Clearing does not reopen here - the caller
-    // follows a finished job with caseFinished(), which reopens once; doing it
-    // in both places would rebuild the mesh twice.
+    // A run just started on the case being shown, on storage where we now stop
+    // reading: reopen it so the restart reader is dropped straight away rather
+    // than at whatever moment the user next moves the step slider. When the
+    // output is local nothing changes, so nothing is reopened. Clearing does
+    // not reopen either - the caller follows a finished job with
+    // caseFinished(), and doing it in both places would rebuild the mesh twice.
     if (egrid.isEmpty()) return;
     const int idx = caseBox_ ? caseBox_->currentIndex() : -1;
-    if (idx >= 0 && idx < cases_.size() &&
-        flowgui::sameCasePath(cases_[idx].egrid, egrid))
+    if (idx >= 0 && idx < cases_.size() && restartIsBusy(cases_[idx]))
         openCase(idx);
 }
 
@@ -943,18 +950,17 @@ void Viewer3DWidget::openCase(int idx)
     // What the status line says about the restart file, when there is anything
     // worth saying: it is either being written, or it could not be read.
     QString rstNote;
-    if (!runningEgrid_.isEmpty() && flowgui::sameCasePath(cf.egrid, runningEgrid_)) {
-        // A simulation is writing this case, so its restart file is left alone
-        // until the run ends. Not a workaround for a lock we hold: a reader and
-        // the simulator's writer do coexist on a local disk. But a restart file
-        // caught mid-write is worth little to look at, and on a network share or
-        // a synced folder (OneDrive, Dropbox) an oplock break or a sync scanner
-        // can turn someone else's read into a real sharing violation for the
-        // writer - which would fail the run, not the viewer. This is a policy,
-        // not a platform workaround, so it is not conditioned on the platform.
+    if (restartIsBusy(cf)) {
+        // A simulation is writing this case, onto storage where a reader can
+        // disturb the writer - see flowgui::isSyncedOrNetworkPath(). Leave the
+        // restart file alone until the run ends: a half-written one is worth
+        // little to look at, and it is the simulation that would pay for the
+        // collision. On a local disk this branch is not taken, and the view
+        // keeps following the run as it did.
         rst_.reset();
         steps_.clear();
-        rstNote = QStringLiteral(" - restart file not read while the run is in progress");
+        rstNote = QStringLiteral(" - restart file not read while the run is in "
+                                 "progress (output is on a network or synced folder)");
     } else {
         try {
             if (QFileInfo::exists(cf.unrst)) {

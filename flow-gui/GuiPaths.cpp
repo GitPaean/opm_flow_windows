@@ -10,9 +10,24 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QSettings>
+#include <QStorageInfo>
 #include <QtEndian>
 
 #include <algorithm>
+
+#ifdef Q_OS_WIN
+// NOMINMAX before <windows.h>, or its min/max macros eat the std::max() in the
+// PE reader below; WIN32_LEAN_AND_MEAN keeps the rest of the Win32 surface out.
+// (The Qt build happens to define NOMINMAX already - this makes the file stand
+// on its own, so it still compiles wherever it is dropped.)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>          // GetDriveTypeW; see isSyncedOrNetworkPath()
+#endif
 
 namespace {
 
@@ -195,6 +210,68 @@ QString flowgui::intelMpiExec()
     const QString exe = QDir(dir).filePath(QStringLiteral("mpiexec.exe"));
     if (!QFileInfo::exists(exe)) return QString();
     return QDir::toNativeSeparators(exe);
+}
+
+bool flowgui::isSyncedOrNetworkPath(const QString& path)
+{
+    if (path.isEmpty()) return false;
+    const QString abs = QDir::cleanPath(QFileInfo(path).absoluteFilePath());
+
+    // A sync client's folder, wherever it sits. Matched by name because the
+    // clients offer no API that answers "is this folder synced", and by whole
+    // path component so a directory merely called "Boxes" is not caught.
+    static const QStringList syncDirs = {
+        QStringLiteral("Dropbox"),      QStringLiteral("Google Drive"),
+        QStringLiteral("GoogleDrive"),  QStringLiteral("iCloudDrive"),
+        QStringLiteral("Box"),          QStringLiteral("Box Sync"),
+        QStringLiteral("Nextcloud"),    QStringLiteral("ownCloud"),
+    };
+    const QStringList parts = abs.split(QLatin1Char('/'), Qt::SkipEmptyParts);
+    for (const QString& part : parts) {
+        // OneDrive for Business appends the tenant, as in "OneDrive - Some
+        // Company", so that one alone is a prefix test.
+        if (part.startsWith(QStringLiteral("OneDrive"), Qt::CaseInsensitive)) return true;
+        // The rest match whole, so a directory merely called "Boxes" or
+        // "Dropbox_old" is not swept up.
+        for (const QString& s : syncDirs)
+            if (part.compare(s, Qt::CaseInsensitive) == 0) return true;
+    }
+
+    // OneDrive also exports its root, which catches one that has been
+    // relocated to a folder not named after it at all.
+    for (const char* var : { "OneDrive", "OneDriveCommercial", "OneDriveConsumer" }) {
+        const QString root = qEnvironmentVariable(var);
+        if (!root.isEmpty() &&
+            abs.startsWith(QDir::cleanPath(QDir::fromNativeSeparators(root)),
+                           Qt::CaseInsensitive))
+            return true;
+    }
+
+    // Is it a network file system? Qt has no portable "is this remote", and
+    // the way to ask genuinely differs, so this is one of the few places that
+    // has to know which platform it is on.
+#ifdef Q_OS_WIN
+    if (abs.startsWith(QLatin1String("//"))) return true;      // UNC \\server\share
+    // GetDriveType wants a root ("X:\"), and answers DRIVE_REMOTE for a mapped
+    // network drive - the case a UNC test misses.
+    if (abs.size() >= 2 && abs[1] == QLatin1Char(':')) {
+        const QString root = abs.left(2) + QLatin1Char('\\');
+        if (GetDriveTypeW(reinterpret_cast<const wchar_t*>(root.utf16())) == DRIVE_REMOTE)
+            return true;
+    }
+#else
+    // Linux/macOS: the mounted file system's type names it.
+    static const QStringList remoteFs = {
+        QStringLiteral("nfs"),  QStringLiteral("nfs4"), QStringLiteral("cifs"),
+        QStringLiteral("smb"),  QStringLiteral("smbfs"), QStringLiteral("smb2"),
+        QStringLiteral("afpfs"), QStringLiteral("sshfs"), QStringLiteral("davfs"),
+    };
+    const QString fs = QString::fromLatin1(QStorageInfo(abs).fileSystemType()).toLower();
+    for (const QString& r : remoteFs)
+        if (fs == r || fs.startsWith(r + QLatin1Char('.'))) return true;
+    if (fs.startsWith(QLatin1String("fuse"))) return true;   // sshfs, rclone, ...
+#endif
+    return false;
 }
 
 QProcessEnvironment flowgui::simulatorEnvironment()

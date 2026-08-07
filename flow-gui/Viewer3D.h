@@ -164,6 +164,10 @@ private:
         QString label, egrid, init, unrst;
     };
 
+    // Should this case's restart file be left alone right now? True only when a
+    // run is writing it AND it sits where a reader can disturb that writer.
+    bool restartIsBusy(const CaseFiles& cf) const;
+
     QComboBox*      caseBox_   = nullptr;
     QRadioButton*   staticSel_ = nullptr;
     QRadioButton*   dynSel_    = nullptr;
