@@ -88,14 +88,17 @@ out float vLight;
 // visible faces of a block all score about the same and it flattens out. Up
 // and to the left is the convention, and it keeps them apart.
 //
-// The range is 0.80 to 1.00, not 0.25 to 1.00. Enough to read the shape, close
-// enough that a face still matches the colour bar it is read against.
+// The range is 0.55 to 1.00. A quarter of the way to black, as it was, buried
+// the sides; 0.80 kept the colours honest but flattened a folded surface into
+// a wash, with the relief that tells a fault from a fold gone with it. This
+// sits between the two, and where exact colour matters more than shape the
+// shading box turns it off outright.
 void main() {
     vec3 p = vec3(aPos.x, aPos.y, aPos.z * uZScale);
     gl_Position = uMvp * vec4(p, 1.0);
     vec3 n = normalize(uNrm * aNrm);
     vec3 L = normalize(vec3(-0.30, 0.45, 1.0));
-    vLight = 0.80 + 0.20 * abs(dot(n, L));
+    vLight = 0.55 + 0.45 * abs(dot(n, L));
     vCol = aCol;
 }
 )";
@@ -323,7 +326,9 @@ void GridGLWidget::paintGL()
     prog_->setUniformValue("uMvp", m);
     prog_->setUniformValue("uNrm", nrmM);
     prog_->setUniformValue("uZScale", float(zscale_));
-    prog_->setUniformValue("uFlat", false);
+    // Shading off reuses the same unlit path the wells are drawn with, so a
+    // face comes out at exactly the colour the bar gives its value.
+    prog_->setUniformValue("uFlat", !shaded_);
 
     prog_->enableAttributeArray(0);
     vboPos_.bind(); prog_->setAttributeBuffer(0, GL_FLOAT, 0, 3);
@@ -516,6 +521,21 @@ Viewer3DWidget::Viewer3DWidget(QWidget* parent)
         wellsChk_->setChecked(true);
         row->addWidget(wellsChk_);
 
+        // Shading is a trade, not an improvement: it multiplies the cell's
+        // colour, so a shaded face no longer reads true against the colour
+        // bar. Worth it to see the shape of a folded or faulted surface,
+        // not worth it when the question is what value a cell holds - so it
+        // is a switch rather than a decision made for the user.
+        shadingChk_ = new QCheckBox(QStringLiteral("shading"));
+        shadingChk_->setChecked(true);
+        shadingChk_->setToolTip(QStringLiteral(
+            "light the grid so its shape reads.\n\n"
+            "Off, every face is drawn at exactly the colour the bar gives its "
+            "value - which is what you want when reading values off the "
+            "screen, at the cost of the relief that separates a fault from a "
+            "fold."));
+        row->addWidget(shadingChk_);
+
         row->addWidget(new QLabel(QStringLiteral("Z x")));
         zscale_ = new QDoubleSpinBox;
         zscale_->setRange(0.1, 50.0);
@@ -572,6 +592,8 @@ Viewer3DWidget::Viewer3DWidget(QWidget* parent)
         connect(dynBox_,    &QComboBox::currentIndexChanged, this, onProp);
         connect(staticSel_, &QRadioButton::toggled, this, onProp);
         connect(wellsChk_, &QCheckBox::toggled, this, [this](bool) { showWells(); });
+        connect(shadingChk_, &QCheckBox::toggled, this,
+                [this](bool on) { if (gl_) gl_->setShaded(on); });
         connect(zscale_, &QDoubleSpinBox::valueChanged, this,
                 [this](double v) { gl_->setZScale(v); });
     }
@@ -820,6 +842,7 @@ QJsonObject Viewer3DWidget::uiState() const
     if (auto* box = dyn ? dynBox_ : staticBox_)
         o[QStringLiteral("property")] = box->currentText();
     if (wellsChk_)   o[QStringLiteral("wells")]  = wellsChk_->isChecked();
+    if (shadingChk_) o[QStringLiteral("shading")] = shadingChk_->isChecked();
     if (zscale_)     o[QStringLiteral("zscale")] = zscale_->value();
     if (stepSlider_ && stepSlider_->isEnabled())
         o[QStringLiteral("step")] = stepSlider_->value();
@@ -831,6 +854,8 @@ void Viewer3DWidget::restoreUiState(const QJsonObject& state)
     if (state.isEmpty()) return;
     if (wellsChk_ && state.contains(QStringLiteral("wells")))
         wellsChk_->setChecked(state.value(QStringLiteral("wells")).toBool(true));
+    if (shadingChk_ && state.contains(QStringLiteral("shading")))
+        shadingChk_->setChecked(state.value(QStringLiteral("shading")).toBool(true));
     if (zscale_ && state.contains(QStringLiteral("zscale")))
         zscale_->setValue(state.value(QStringLiteral("zscale")).toDouble(3.0));
 

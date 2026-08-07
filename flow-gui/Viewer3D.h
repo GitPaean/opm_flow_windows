@@ -62,6 +62,9 @@ public:
     void setWells(const QVector<WellPath>& wells);
     void setZScale(double s);
     void setStepText(const QString& t) { stepText_ = t; update(); }
+    // Off draws every face at its colour-bar colour exactly, which is what
+    // you want to read a value off; on trades a little of that for shape.
+    void setShaded(bool on) { shaded_ = on; update(); }
     void resetCamera();
 
     // Standard viewpoints. Only the camera angles change - zoom and pan are
@@ -86,6 +89,7 @@ private:
 
     std::unique_ptr<QOpenGLShaderProgram> prog_;
     QOpenGLBuffer vboPos_, vboNrm_, vboCol_;
+    bool  shaded_ = true;
     bool  glReady_ = false;
     bool  meshDirty_ = false, colorDirty_ = false;
 
@@ -161,6 +165,7 @@ private:
     QComboBox*      staticBox_ = nullptr;
     QComboBox*      dynBox_    = nullptr;
     QCheckBox*      wellsChk_  = nullptr;
+    QCheckBox*      shadingChk_ = nullptr;   // relief, at the cost of exact colour
     QDoubleSpinBox* zscale_    = nullptr;
     QSlider*        stepSlider_ = nullptr;
     QPushButton*    playBtn_   = nullptr;
