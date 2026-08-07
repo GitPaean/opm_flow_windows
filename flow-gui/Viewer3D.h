@@ -183,6 +183,7 @@ private:
     QComboBox*      dynBox_    = nullptr;
     QCheckBox*      wellsChk_  = nullptr;
     QCheckBox*      shadingChk_ = nullptr;   // relief, at the cost of exact colour
+    QCheckBox*      autoRef_    = nullptr;   // follow a run as it writes steps
     QDoubleSpinBox* zscale_    = nullptr;
     QSlider*        stepSlider_ = nullptr;
     QPushButton*    playBtn_   = nullptr;

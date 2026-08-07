@@ -827,6 +827,12 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
         connect(autoRef_, &QCheckBox::toggled, this, [this](bool on) {
             if (on) timer_->start(); else timer_->stop();
         });
+        // On by default: a plot of a run in progress that silently stops
+        // updating is the more surprising behaviour, and re-reading a summary
+        // file is cheap next to what the simulation is doing. Set after the
+        // connection above so it starts the timer rather than only ticking the
+        // box. A restored session applies its own saved choice afterwards.
+        autoRef_->setChecked(true);
     }
 
     // --- filter row ----------------------------------------------------------

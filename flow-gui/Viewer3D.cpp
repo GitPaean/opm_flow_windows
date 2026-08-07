@@ -536,6 +536,21 @@ Viewer3DWidget::Viewer3DWidget(QWidget* parent)
             "fold."));
         row->addWidget(shadingChk_);
 
+        // Following a run costs a re-index of the restart file every few
+        // seconds, and for a big model that is not free. On by default, because
+        // a view that quietly stops at the step it opened on is the more
+        // surprising of the two; off for anyone who would rather spend the
+        // machine on the simulation.
+        autoRef_ = new QCheckBox(QStringLiteral("auto-refresh (5 s)"));
+        autoRef_->setChecked(true);
+        autoRef_->setToolTip(QStringLiteral(
+            "while a run is writing this case, re-read its restart file so new "
+            "report steps appear as they are produced.\n\n"
+            "Each refresh re-indexes the restart file, which on a large model "
+            "takes a moment - turn this off to leave the machine to the run. "
+            "The view then updates when the run finishes."));
+        row->addWidget(autoRef_);
+
         row->addWidget(new QLabel(QStringLiteral("Z x")));
         zscale_ = new QDoubleSpinBox;
         zscale_->setRange(0.1, 50.0);
@@ -592,6 +607,13 @@ Viewer3DWidget::Viewer3DWidget(QWidget* parent)
         connect(dynBox_,    &QComboBox::currentIndexChanged, this, onProp);
         connect(staticSel_, &QRadioButton::toggled, this, onProp);
         connect(wellsChk_, &QCheckBox::toggled, this, [this](bool) { showWells(); });
+        connect(autoRef_, &QCheckBox::toggled, this, [this](bool on) {
+            if (!followTimer_) return;
+            // Only meaningful while a run is writing the case; setRunningCase()
+            // starts the timer when one begins.
+            if (on && !runningEgrid_.isEmpty()) { followTimer_->start(); followRunningCase(); }
+            else                                 followTimer_->stop();
+        });
         connect(shadingChk_, &QCheckBox::toggled, this,
                 [this](bool on) { if (gl_) gl_->setShaded(on); });
         connect(zscale_, &QDoubleSpinBox::valueChanged, this,
@@ -851,8 +873,9 @@ void Viewer3DWidget::setRunningCase(const QString& smspecPath)
     if (egrid.isEmpty()) { if (followTimer_) followTimer_->stop(); return; }
     // Tick for as long as the run lasts, whichever case is on screen: the user
     // may switch to the running one at any point, and followRunningCase() is
-    // the thing that decides whether there is anything to do.
-    if (followTimer_) followTimer_->start();
+    // the thing that decides whether there is anything to do. Unless the user
+    // has turned following off, in which case the view waits for the run to end.
+    if (followTimer_ && (!autoRef_ || autoRef_->isChecked())) followTimer_->start();
 
     const int idx = caseBox_ ? caseBox_->currentIndex() : -1;
     if (idx < 0 || idx >= cases_.size()) return;
@@ -894,6 +917,7 @@ QJsonObject Viewer3DWidget::uiState() const
         o[QStringLiteral("property")] = box->currentText();
     if (wellsChk_)   o[QStringLiteral("wells")]  = wellsChk_->isChecked();
     if (shadingChk_) o[QStringLiteral("shading")] = shadingChk_->isChecked();
+    if (autoRef_)    o[QStringLiteral("autoRefresh")] = autoRef_->isChecked();
     if (zscale_)     o[QStringLiteral("zscale")] = zscale_->value();
     if (stepSlider_ && stepSlider_->isEnabled())
         o[QStringLiteral("step")] = stepSlider_->value();
@@ -909,6 +933,8 @@ void Viewer3DWidget::restoreUiState(const QJsonObject& state)
         shadingChk_->setChecked(state.value(QStringLiteral("shading")).toBool(true));
     if (zscale_ && state.contains(QStringLiteral("zscale")))
         zscale_->setValue(state.value(QStringLiteral("zscale")).toDouble(3.0));
+    if (autoRef_ && state.contains(QStringLiteral("autoRefresh")))
+        autoRef_->setChecked(state.value(QStringLiteral("autoRefresh")).toBool(true));
 
     // The case list is mirrored from the Summary Plots tab, so by now it holds
     // the restored cases; select ours without opening it (see showEvent).
