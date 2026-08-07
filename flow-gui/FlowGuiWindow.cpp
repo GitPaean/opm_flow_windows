@@ -52,6 +52,7 @@
 #include <QProgressBar>
 #include <QPushButton>
 #include <QRegularExpression>
+#include <QScreen>
 #include <QScrollBar>
 #include <QSet>
 #include <QSettings>
@@ -1263,25 +1264,67 @@ void FlowGuiWindow::viewJobFile(int row, const QString& ext)
     auto* dlg = new QDialog(this);
     dlg->setAttribute(Qt::WA_DeleteOnClose);
     dlg->setWindowTitle(QFileInfo(prt).fileName());
-    dlg->resize(900, 650);
     auto* lay = new QVBoxLayout(dlg);
 
     auto* view = new QPlainTextEdit;
     view->setReadOnly(true);
     view->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
+    // A PRT or DBG file is a fixed-width report: its tables and its columns of
+    // numbers line up only as long as a line is left as one line. Wrapping -
+    // which is what a QPlainTextEdit does by default - folds the overflow into
+    // the next row and takes the table apart. Scroll sideways instead.
+    view->setLineWrapMode(QPlainTextEdit::NoWrap);
     view->setPlainText(text);
     view->moveCursor(QTextCursor::End);
+
+    // ... and open wide enough that there is usually nothing to scroll to.
+    // 136 columns: flow's report lines run to 135 (measured across a PRT and a
+    // DBG - the old fixed 900 px showed about 110, and two lines in three were
+    // over 100, which is why so much of the file arrived folded). Asking in
+    // columns rather than pixels also survives a change of font size. Clamped
+    // to the screen, since 136 columns of a large font need not fit one.
+    const QFontMetrics fm(view->font());
+    const int wantW = fm.horizontalAdvance(QString(136, QLatin1Char('0')))
+                    + view->verticalScrollBar()->sizeHint().width() + 48;
+    const QRect avail = dlg->screen() ? dlg->screen()->availableGeometry()
+                                      : QRect(0, 0, 1280, 800);
+    dlg->resize(std::min(wantW, avail.width() * 95 / 100),
+                std::min(700,   avail.height() * 90 / 100));
+
+    // A window the user has sized is a window they sized on purpose; remember
+    // it, so the next PRT opens the way the last one was left.
+    {
+        const QByteArray geo = QSettings().value(QStringLiteral("viewer/geometry"))
+                                   .toByteArray();
+        if (!geo.isEmpty()) dlg->restoreGeometry(geo);
+    }
+    connect(dlg, &QDialog::finished, dlg, [dlg] {
+        QSettings().setValue(QStringLiteral("viewer/geometry"), dlg->saveGeometry());
+    });
 
     // search row: free text (Enter/Find = next match, wraps) and a
     // jump-to-problems button cycling through Error/Warning/Problem lines
     auto* srow = new QHBoxLayout;
     auto* searchEdit = new QLineEdit;
-    searchEdit->setPlaceholderText(QStringLiteral("search in PRT..."));
+    // Name the file being searched: this same viewer shows the DBG too.
+    searchEdit->setPlaceholderText(QStringLiteral("search in %1...").arg(ext));
     auto* bfind = new QPushButton(QStringLiteral("Find next"));
     auto* bprob = new QPushButton(QStringLiteral("Next problem"));
+    // Off by default - see the NoWrap above - but a long unbroken message is
+    // easier to read folded, and that is a per-look-at preference.
+    auto* wrapChk = new QCheckBox(QStringLiteral("wrap"));
+    wrapChk->setToolTip(QStringLiteral(
+        "fold long lines into the window.\n\n"
+        "Off (the default) keeps every line whole, which is what makes the "
+        "report's tables and columns line up; scroll sideways to follow one."));
+    connect(wrapChk, &QCheckBox::toggled, view, [view](bool on) {
+        view->setLineWrapMode(on ? QPlainTextEdit::WidgetWidth
+                                 : QPlainTextEdit::NoWrap);
+    });
     srow->addWidget(searchEdit, 1);
     srow->addWidget(bfind);
     srow->addWidget(bprob);
+    srow->addWidget(wrapChk);
     lay->addLayout(srow);
     lay->addWidget(view);
 
