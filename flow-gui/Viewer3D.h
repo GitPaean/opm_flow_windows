@@ -80,6 +80,9 @@ protected:
 private:
     void uploadColors();
     QMatrix4x4 mvp() const;
+    // The camera on its own. paintGL() needs it to put the surface normals in
+    // eye space, so the shading can follow the camera rather than the grid.
+    QMatrix4x4 viewMatrix() const;
 
     std::unique_ptr<QOpenGLShaderProgram> prog_;
     QOpenGLBuffer vboPos_, vboNrm_, vboCol_;

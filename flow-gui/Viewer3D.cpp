@@ -72,11 +72,30 @@ uniform mat3 uNrm;
 uniform float uZScale;
 out vec3 vCol;
 out float vLight;
+// Shading on a colour-mapped grid is a compromise: it multiplies the colour,
+// so every bit of it is a lie about the value the colour stands for. None at
+// all is worse - the faces of a cell come out identical and the block reads as
+// a flat silhouette, with no steps, no faults, no layering - so the aim is the
+// least that still shows the shape.
+//
+// uNrm puts the normal in EYE space, so the light travels with the camera and
+// no face can be turned away from it. It used to be the grid's own space with
+// the light straight down: a vertical face scored abs(n.z) = 0 and came out at
+// a quarter brightness, a quarter of the way to black at every angle there is,
+// and orbiting could not help because the light was welded to the grid.
+//
+// Slightly off the view axis rather than a pure headlight: dead-on, the three
+// visible faces of a block all score about the same and it flattens out. Up
+// and to the left is the convention, and it keeps them apart.
+//
+// The range is 0.80 to 1.00, not 0.25 to 1.00. Enough to read the shape, close
+// enough that a face still matches the colour bar it is read against.
 void main() {
     vec3 p = vec3(aPos.x, aPos.y, aPos.z * uZScale);
     gl_Position = uMvp * vec4(p, 1.0);
     vec3 n = normalize(uNrm * aNrm);
-    vLight = 0.25 + 0.75 * abs(n.z);
+    vec3 L = normalize(vec3(-0.30, 0.45, 1.0));
+    vLight = 0.80 + 0.20 * abs(dot(n, L));
     vCol = aCol;
 }
 )";
@@ -253,7 +272,7 @@ void GridGLWidget::initializeGL()
     glReady_ = true;
 }
 
-QMatrix4x4 GridGLWidget::mvp() const
+QMatrix4x4 GridGLWidget::viewMatrix() const
 {
     const QVector3D center = 0.5f * (bboxMin_ + bboxMax_);
     const QVector3D scaledCenter(center.x(), center.y(), center.z() * float(zscale_));
@@ -263,7 +282,12 @@ QMatrix4x4 GridGLWidget::mvp() const
     view.rotate(pitch_, 1, 0, 0);
     view.rotate(yaw_,   0, 0, 1);
     view.translate(-scaledCenter - panOffset_);
+    return view;
+}
 
+QMatrix4x4 GridGLWidget::mvp() const
+{
+    const QMatrix4x4 view = viewMatrix();
     QMatrix4x4 proj;
     const float aspect = height() > 0 ? float(width()) / float(height()) : 1.0f;
     proj.perspective(40.0f, aspect, dist_ * 0.01f, dist_ * 20.0f);
@@ -288,9 +312,12 @@ void GridGLWidget::paintGL()
     }
 
     const QMatrix4x4 m = mvp();
-    // normal matrix for the z-scaled model (uniform in x/y): inverse-transpose
+    // Normals in EYE space, so the light can sit with the camera. Built from
+    // view*model rather than model alone: the z-scale has to be in it (it is
+    // what makes a squashed cell's sides face where they do), and the camera
+    // has to be in it, or the light stays welded to the grid - see kVert.
     QMatrix4x4 model; model.scale(1.f, 1.f, float(zscale_));
-    const QMatrix3x3 nrmM = model.normalMatrix();
+    const QMatrix3x3 nrmM = (viewMatrix() * model).normalMatrix();
 
     prog_->bind();
     prog_->setUniformValue("uMvp", m);
