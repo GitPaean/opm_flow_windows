@@ -15,6 +15,7 @@
 #include "GuiPaths.h"
 
 #include <QApplication>
+#include <QClipboard>
 #include <QCheckBox>
 #include <QCloseEvent>
 #include <QComboBox>
@@ -42,6 +43,7 @@
 #include <QLineEdit>
 #include <QMenu>
 #include <QMenuBar>
+#include <QShortcut>
 #include <QMessageBox>
 #include <QMimeData>
 #include <QSaveFile>
@@ -331,6 +333,39 @@ FlowGuiWindow::FlowGuiWindow()
                 [this] { viewJobFile(jobTable_->currentRow(), QStringLiteral("DBG")); });
         connect(jobTable_, &QTableWidget::cellDoubleClicked, this,
                 [this](int row, int) { openJobFolder(row); });
+
+        // The Deck column shows the full path, but a table cell is not
+        // selectable text, so there was no way to get it out - and the path is
+        // the thing people want from this table: to paste into a terminal, a
+        // script, or a bug report. Right-click, or Ctrl+C on the selection.
+        jobTable_->setContextMenuPolicy(Qt::CustomContextMenu);
+        connect(jobTable_, &QTableWidget::customContextMenuRequested, this,
+                [this](const QPoint& pos) {
+            const QList<int> rows = selectedJobRows();
+            if (rows.isEmpty()) return;
+            QMenu menu(this);
+            QAction* aDeck = menu.addAction(rows.size() > 1
+                ? QStringLiteral("Copy %1 deck paths").arg(rows.size())
+                : QStringLiteral("Copy deck path"));
+            QAction* aOut = menu.addAction(QStringLiteral("Copy output directory"));
+            // A queued job has no output directory yet: it is resolved when the
+            // job starts, so there is nothing honest to copy before then.
+            bool anyOut = false;
+            for (int r : rows) if (!jobs_[r].outdir.isEmpty()) { anyOut = true; break; }
+            aOut->setEnabled(anyOut);
+            menu.addSeparator();
+            QAction* aOpen = menu.addAction(QStringLiteral("Open result folder"));
+            aOpen->setEnabled(rows.size() == 1);
+
+            QAction* chosen = menu.exec(jobTable_->viewport()->mapToGlobal(pos));
+            if (chosen == aDeck)      copySelectedJobPaths(false);
+            else if (chosen == aOut)  copySelectedJobPaths(true);
+            else if (chosen == aOpen) openJobFolder(rows.front());
+        });
+        auto* copySc = new QShortcut(QKeySequence::Copy, jobTable_);
+        copySc->setContext(Qt::WidgetShortcut);
+        connect(copySc, &QShortcut::activated, this,
+                [this] { copySelectedJobPaths(false); });
         connect(bedit, &QPushButton::clicked, this, [this] {
             const int r = jobTable_->currentRow();
             if (r < 0 || r >= jobs_.size() || !deckEd_) return;
@@ -1172,6 +1207,39 @@ void FlowGuiWindow::openJobFolder(int row)
     const QString d = jobs_[row].outdir.isEmpty()
         ? QFileInfo(jobs_[row].deck).absolutePath() : jobs_[row].outdir;
     QDesktopServices::openUrl(QUrl::fromLocalFile(d));
+}
+
+// The queue rows the user has selected, in the order they appear. Falls back to
+// the current row so a plain click, which selects nothing on some styles, still
+// acts on what the user is looking at.
+QList<int> FlowGuiWindow::selectedJobRows() const
+{
+    QList<int> rows;
+    const auto sel = jobTable_->selectionModel()->selectedRows();
+    for (const QModelIndex& i : sel)
+        if (i.row() >= 0 && i.row() < jobs_.size()) rows << i.row();
+    std::sort(rows.begin(), rows.end());
+    if (rows.isEmpty()) {
+        const int r = jobTable_->currentRow();
+        if (r >= 0 && r < jobs_.size()) rows << r;
+    }
+    return rows;
+}
+
+void FlowGuiWindow::copySelectedJobPaths(bool outputDir)
+{
+    QStringList out;
+    for (int r : selectedJobRows()) {
+        const QString p = outputDir ? jobs_[r].outdir : jobs_[r].deck;
+        if (!p.isEmpty()) out << QDir::toNativeSeparators(p);
+    }
+    if (out.isEmpty()) return;
+    // One per line, so a multi-row copy pastes as a list rather than a run-on
+    // string. Native separators: this is going somewhere outside the GUI.
+    // No confirmation shown - this window has no status bar, and asking for one
+    // would add a strip to the bottom of it; a silent copy is what Ctrl+C does
+    // everywhere else anyway.
+    QApplication::clipboard()->setText(out.join(QLatin1Char('\n')));
 }
 
 void FlowGuiWindow::viewJobFile(int row, const QString& ext)

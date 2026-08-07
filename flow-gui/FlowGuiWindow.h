@@ -139,6 +139,14 @@ private:
     void updateWindowTitle();
     void openJobFolder(int row);
     void viewJobFile(int row, const QString& ext);   // "PRT" or "DBG"
+
+    // The selected queue rows, or the current one when nothing is selected.
+    QList<int> selectedJobRows() const;
+    // Put the selected jobs' deck paths - or their output directories - on the
+    // clipboard, one per line. The Deck column shows the full path but a table
+    // cell is not selectable text, and that path is what people want to paste
+    // into a terminal or a bug report.
+    void copySelectedJobPaths(bool outputDir);
     void notifyQueueDone(int okCount, int failCount);
 
     void onAddDecks();
