@@ -2606,18 +2606,31 @@ int SummaryPlotWidget::plotChart(QChart* chart, const QList<int>& sel,
     // carries the first distinct unit (or a generic "value" axis when the
     // selection has none); a second distinct unit gets the right axis. Series
     // with a third unit are not plotted and are reported in the status line.
+    // A vector with no unit - WMCTL's control-mode code, a count, a region
+    // number - is not "compatible with everything": its integers share an axis
+    // with a rate no more sensibly than bar does. It was being skipped in the
+    // scan below instead, so it could never be given an axis at all and was
+    // dropped whenever anything with a unit was selected, however free the
+    // right axis was. Give it an identity so it competes for an axis like any
+    // other unit; only the axis TITLE has to say something friendlier.
+    const QString kNoUnit = QStringLiteral("\x01none");   // no real unit collides
+    auto unitKey = [&kNoUnit](const QString& u) {
+        return u.isEmpty() ? kNoUnit : u;
+    };
+    auto axisTitle = [&kNoUnit](const QString& u) {
+        return u == kNoUnit ? QStringLiteral("value") : u;
+    };
+
     QString unitL, unitR;
     bool haveL = false, haveR = false;
     for (int i : sel) {
-        const QString u = vecs_[i].unit;
-        if (u.isEmpty()) continue;
-        if      (!haveL)            { unitL = u; haveL = true; }
+        const QString u = unitKey(vecs_[i].unit);
+        if      (!haveL)               { unitL = u; haveL = true; }
         else if (u != unitL && !haveR) { unitR = u; haveR = true; }
     }
-    const bool genericLeft = !haveL;
-    auto axisFor = [&](const QString& u) -> int {   // 0 left, 1 right, -1 skip
-        if (genericLeft) return 0;
-        if (u == unitL)  return 0;
+    auto axisFor = [&](const QString& raw) -> int {   // 0 left, 1 right, -1 skip
+        const QString u = unitKey(raw);
+        if (u == unitL) return 0;
         if (haveR && u == unitR) return 1;
         return -1;
     };
@@ -2676,11 +2689,11 @@ int SummaryPlotWidget::plotChart(QChart* chart, const QList<int>& sel,
     }
     chart->addAxis(ax, Qt::AlignBottom);
     QValueAxis* ayL = new QValueAxis;
-    ayL->setTitleText(genericLeft ? QStringLiteral("value") : unitL);
+    ayL->setTitleText(axisTitle(unitL));
     chart->addAxis(ayL, Qt::AlignLeft);
     QValueAxis* ayR = nullptr;
     if (haveR) {
-        ayR = new QValueAxis; ayR->setTitleText(unitR);
+        ayR = new QValueAxis; ayR->setTitleText(axisTitle(unitR));
         chart->addAxis(ayR, Qt::AlignRight);
     }
     styleAxis(ax); styleAxis(ayL); styleAxis(ayR);

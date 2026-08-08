@@ -47,7 +47,9 @@ results, animate them in 3D, and edit decks — all in one window.
   are shown as grid `I,J,K` indices) and a text search, then a
   tree grouped by quantity with human-readable names (WOPR → "Oil Production
   Rate", ~130 mnemonics). Multi-select plots several curves, with a second
-  Y axis when units differ (e.g. rate vs. pressure); 10 s auto-refresh
+  Y axis when units differ (e.g. rate vs. pressure) — a vector with no unit
+  at all, such as WMCTL's control-mode code, counts as its own unit and
+  takes an axis titled *value*, rather than being dropped; 10 s auto-refresh
   updates the plot while a simulation is still writing, and the Summary Plots and
   3D tabs re-check their files when a job finishes and when the tab is
   shown (a case is registered as soon as its job starts, before flow has
