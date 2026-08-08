@@ -49,7 +49,11 @@ results, animate them in 3D, and edit decks — all in one window.
   Rate", ~130 mnemonics). Multi-select plots several curves, with a second
   Y axis when units differ (e.g. rate vs. pressure) — a vector with no unit
   at all, such as WMCTL's control-mode code, counts as its own unit and
-  takes an axis titled *value*, rather than being dropped; 10 s auto-refresh
+  takes an axis titled *value*, rather than being dropped. Where **both**
+  axes cross zero their grids are made to match, so there is one zero
+  line rather than two at different heights: each axis keeps its own
+  tick step and whichever has fewer ticks on one side of zero is
+  extended, which lines up every gridline and cuts off no data; 10 s auto-refresh
   updates the plot while a simulation is still writing, and the Summary Plots and
   3D tabs re-check their files when a job finishes and when the tab is
   shown (a case is registered as soon as its job starts, before flow has

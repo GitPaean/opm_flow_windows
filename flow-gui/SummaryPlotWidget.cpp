@@ -2953,6 +2953,41 @@ int SummaryPlotWidget::plotChart(QChart* chart, const QList<int>& sel,
     };
     if (lset) pad(ayL, lmin, lmax);
     if (ayR && rset) pad(ayR, rmin, rmax);
+
+    // Two axes both crossing zero put two different zero lines on one plot,
+    // at whatever heights their own ranges happened to land - so a curve
+    // touching "0" on the left sits above or below the right axis' zero, and
+    // the two gridlines read as data. Give them a common grid instead: keep
+    // each axis' own tick step and extend whichever has fewer ticks on one
+    // side of zero, so both end up with the same number above and below. Zero
+    // lines up, every other gridline lines up with it, and since this only
+    // ever extends a range no data is cut off.
+    if (lset && ayR && rset && ayL->min() < 0 && ayL->max() > 0
+        && ayR->min() < 0 && ayR->max() > 0) {
+        auto shape = [](QValueAxis* ax, int& below, int& above, double& step) {
+            const int n = std::max(2, ax->tickCount());
+            step  = (ax->max() - ax->min()) / (n - 1);
+            below = int(std::lround(-ax->min() / step));
+            above = int(std::lround( ax->max() / step));
+        };
+        int lBelow, lAbove, rBelow, rAbove;
+        double lStep, rStep;
+        shape(ayL, lBelow, lAbove, lStep);
+        shape(ayR, rBelow, rAbove, rStep);
+        const int below = std::max(lBelow, rBelow);
+        const int above = std::max(lAbove, rAbove);
+        // Only worth it while the shared grid stays a sensible number of
+        // lines; ranges wildly apart in shape would otherwise be stretched
+        // into a plot that is mostly empty.
+        if (below > 0 && above > 0 && below + above + 1 <= 2 * yTicks + 2) {
+            ayL->setRange(-below * lStep, above * lStep);
+            ayL->setTickCount(below + above + 1);
+            ayR->setRange(-below * rStep, above * rStep);
+            ayR->setTickCount(below + above + 1);
+            applyTickFormat(ayL);
+            applyTickFormat(ayR);
+        }
+    }
     // The title carries whatever the legend does not.
     //
     // With several cases drawn the legend names every one of them, so a title
