@@ -44,6 +44,11 @@ on:
 
 permissions:
   contents: read
+  # ... and to file the failure report below. A scheduled run that only fails
+  # by e-mail is a run nobody hears about: GitHub mails the account that last
+  # touched the cron, if that account has Actions notifications on, and leaves
+  # nothing behind in the repository either way.
+  issues: write
 
 concurrency:
   group: windows-weekly
@@ -204,3 +209,61 @@ jobs:
           path: |
             build/opm-simulators/bin/*.exe
             build/opm-simulators/bin/*.dll
+
+      # Say so somewhere that survives a missed e-mail. One issue is kept open
+      # and commented on rather than a fresh one filed every Friday: the point
+      # is to notice a break, and a pile of identical issues is how a canary
+      # stops being read. It closes itself when a run passes again, so an open
+      # issue means "still broken" without anyone having to tend it.
+      - name: Report a failure as an issue
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = 'windows-weekly: the Windows patch series stopped building';
+            const url = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}` +
+                        `/actions/runs/${context.runId}`;
+            const body = [
+              `The weekly canary failed: [run ${context.runId}](${url}).`,
+              '',
+              'The step summary on that run says which module conflicted or what',
+              'the build said. A **conflict** needs the patch series rebased by',
+              'hand; a **build failure** usually names the upstream commit.',
+              '',
+              `_Triggered by \`${context.eventName}\` on \`${context.sha.slice(0, 9)}\`._`
+            ].join('\n');
+            const open = await github.rest.issues.listForRepo({
+              ...context.repo, state: 'open', labels: 'windows-weekly', per_page: 10
+            });
+            if (open.data.length > 0) {
+              await github.rest.issues.createComment({
+                ...context.repo, issue_number: open.data[0].number, body
+              });
+              core.notice(`Commented on the open report, issue #${open.data[0].number}`);
+            } else {
+              const made = await github.rest.issues.create({
+                ...context.repo, title, body, labels: ['windows-weekly']
+              });
+              core.notice(`Opened issue #${made.data.number}`);
+            }
+
+      - name: Close the failure report once it builds again
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const open = await github.rest.issues.listForRepo({
+              ...context.repo, state: 'open', labels: 'windows-weekly', per_page: 10
+            });
+            const url = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}` +
+                        `/actions/runs/${context.runId}`;
+            for (const issue of open.data) {
+              await github.rest.issues.createComment({
+                ...context.repo, issue_number: issue.number,
+                body: `Building again as of [run ${context.runId}](${url}) - closing.`
+              });
+              await github.rest.issues.update({
+                ...context.repo, issue_number: issue.number, state: 'closed'
+              });
+              core.notice(`Closed issue #${issue.number}`);
+            }
