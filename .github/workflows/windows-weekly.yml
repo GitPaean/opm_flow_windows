@@ -3,11 +3,14 @@
 # Weekly canary: does the Windows patch series still build against today's
 # upstream OPM, and does what it builds still run?
 #
-# It builds the configuration the package ships - hybrid MPI+OpenMP - and runs
-# Norne on 4 ranks, rather than a serial build on a ten-cell tutorial. That
-# costs build time (MS-MPI, Zoltan from Trilinos) and buys coverage of the
-# parallel path: partitioning, the linear solver across ranks, and the rank-0
-# output gather, none of which a serial smoke test can break on.
+# It builds the configurations the packages ship - hybrid MPI+OpenMP against
+# MS-MPI, and the same against Intel MPI for the no-administrator package - and
+# runs Norne on 4 ranks under each, rather than a serial build on a ten-cell
+# tutorial. That costs build time (two chains, Zoltan from Trilinos twice) and
+# buys coverage of the parallel path: partitioning, the linear solver across
+# ranks, and the rank-0 output gather, none of which a serial smoke test can
+# break on - and it answers the question for both released packages rather than
+# leaving the second one to be discovered broken by whoever downloads it.
 #
 # The series lives on the 'windows' branch of the GitPaean forks and is rebased
 # onto upstream master as it moves. Left alone, the cost of that rebase grows
@@ -276,7 +279,83 @@ jobs:
           if ($ranks -ne '4') {
               throw "expected 4 MPI processes, the run reported: $ranks"
           }
-          "`n## Smoke test`nNorne ran to completion on $ranks MPI ranks and wrote its summary output." |
+          "`n## Smoke test`nNorne ran to completion on $ranks MS-MPI ranks and wrote its summary output." |
+            Out-File -Append $env:GITHUB_STEP_SUMMARY
+
+      # The Intel MPI tree is the second thing released - the package for a
+      # locked-down machine, where MS-MPI cannot be installed without an
+      # administrator - so it is worth the same weekly question. It reuses the
+      # rebased sources and the Trilinos clone from above and rebuilds the
+      # chain against Intel MPI into build-impi\, which roughly doubles the
+      # build time; disk is not the constraint, the workspace is on a volume
+      # with ~147 GB free.
+      - name: Disk before the Intel MPI build
+        run: |
+          Get-PSDrive -PSProvider FileSystem |
+            Select-Object Name,
+              @{n='UsedGB';e={[math]::Round($_.Used/1GB,1)}},
+              @{n='FreeGB';e={[math]::Round($_.Free/1GB,1)}} |
+            Format-Table -AutoSize | Out-String | Write-Host
+
+      - name: Install the Intel MPI runtime (pip, no administrator)
+        run: |
+          # This is exactly how the released impi package tells a user to get
+          # the runtime, so CI installs it the same way rather than a way no
+          # user would take: it lands in %APPDATA%\Python\Library.
+          python -m pip install --user impi-rt impi-devel
+          if ($LASTEXITCODE -ne 0) { throw 'pip install of the Intel MPI runtime failed' }
+          $impi = Join-Path $env:APPDATA 'Python\Library'
+          foreach ($f in 'lib\impi.lib', 'bin\impi.dll', 'bin\mpiexec.exe') {
+            if (-not (Test-Path (Join-Path $impi $f))) { throw "Intel MPI is missing $f" }
+          }
+          Write-Host "Intel MPI runtime at $impi"
+
+      - name: Build against Intel MPI
+        run: |
+          $target = '${{ inputs.sim_target }}'
+          if (-not $target) { $target = 'flow_blackoil' }
+          # Sources and the Trilinos clone are already there from the MS-MPI
+          # build; this rebuilds Zoltan, DUNE and OPM against Intel MPI.
+          .\build-intelmpi.ps1 -SimTarget $target -Jobs 4
+          if ($LASTEXITCODE -ne 0) { throw 'Intel MPI build failed' }
+
+      - name: Run Norne on 4 Intel MPI ranks
+        run: |
+          $target = '${{ inputs.sim_target }}'
+          if (-not $target) { $target = 'flow_blackoil' }
+          $exe = ".\build-impi\opm-simulators\bin\$target.exe"
+          if (-not (Test-Path $exe)) { throw "no Intel MPI simulator at $exe" }
+
+          # Idempotent, and build-impi\ did not exist when it ran for the
+          # MS-MPI binary, so this exe needs its own rule.
+          .\allow-firewall.ps1
+
+          # What bin\flow-impi.cmd does in the released package: pip puts the
+          # runtime somewhere not on PATH, so put it there for this step.
+          $impi = Join-Path $env:APPDATA 'Python\Library'
+          $env:Path = "$impi\bin;$env:Path"
+
+          $deck = '.\opm-tests\norne\NORNE_ATW2013.DATA'
+          & "$impi\bin\mpiexec.exe" -n 4 $exe $deck `
+            --output-dir=norne_impi_out --threads-per-process=1
+          if ($LASTEXITCODE -ne 0) { throw "Norne under Intel MPI failed ($LASTEXITCODE)" }
+
+          $spec = Test-Path 'norne_impi_out\NORNE_ATW2013.SMSPEC'
+          $data = (Test-Path 'norne_impi_out\NORNE_ATW2013.ESMRY') -or
+                  (Test-Path 'norne_impi_out\NORNE_ATW2013.UNSMRY')
+          if (-not ($spec -and $data)) {
+              Write-Host 'output directory contained:'
+              Get-ChildItem norne_impi_out | Select-Object -ExpandProperty Name | Write-Host
+              throw 'Norne under Intel MPI wrote no summary output'
+          }
+          # Same trap as the MS-MPI run: four serial copies over one output
+          # directory would pass a file-exists check.
+          $prt = Get-Content 'norne_impi_out\NORNE_ATW2013.PRT' -Raw -ErrorAction SilentlyContinue
+          $ranks = if ($prt -match 'Number of MPI processes:\s*(\d+)') { $matches[1] } else { '?' }
+          if ($ranks -ne '4') {
+              throw "expected 4 Intel MPI processes, the run reported: $ranks"
+          }
+          "Norne also ran to completion on $ranks Intel MPI ranks." |
             Out-File -Append $env:GITHUB_STEP_SUMMARY
 
       - name: Free disk after
@@ -297,6 +376,8 @@ jobs:
           path: |
             build-mpi/opm-simulators/bin/*.exe
             build-mpi/opm-simulators/bin/*.dll
+            build-impi/opm-simulators/bin/*.exe
+            build-impi/opm-simulators/bin/*.dll
 
       # Say so somewhere that survives a missed e-mail. One issue is kept open
       # and commented on rather than a fresh one filed every Friday: the point
