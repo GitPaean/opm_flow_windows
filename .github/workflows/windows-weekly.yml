@@ -1,7 +1,13 @@
 # Copyright (C) 2026 SINTEF Digital, Mathematics & Cybernetics; GPL-3.0-or-later (see LICENSE).
 #
 # Weekly canary: does the Windows patch series still build against today's
-# upstream OPM?
+# upstream OPM, and does what it builds still run?
+#
+# It builds the configuration the package ships - hybrid MPI+OpenMP - and runs
+# Norne on 4 ranks, rather than a serial build on a ten-cell tutorial. That
+# costs build time (MS-MPI, Zoltan from Trilinos) and buys coverage of the
+# parallel path: partitioning, the linear solver across ranks, and the rank-0
+# output gather, none of which a serial smoke test can break on.
 #
 # The series lives on the 'windows' branch of the GitPaean forks and is rebased
 # onto upstream master as it moves. Left alone, the cost of that rebase grows
@@ -81,6 +87,44 @@ jobs:
           script: |
             core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
+      # The released package is a hybrid MPI+OpenMP build, so the canary builds
+      # and exercises one - a serial build would leave the configuration that
+      # actually ships untested. That needs the MS-MPI runtime (mpiexec,
+      # msmpi.dll) and its SDK (mpi.h, msmpi.lib).
+      #
+      # build-all.ps1 would reach for winget; these are fetched straight from
+      # Microsoft instead, which does not depend on a package source being
+      # reachable from a runner and is the same runtime the package ships in
+      # redist\. Ensure-MsMpi then finds MSMPI_INC already set and does nothing.
+      - name: Install MS-MPI (runtime + SDK)
+        run: |
+          $base = 'https://download.microsoft.com/download/7/2/7/72731ebb-b63c-4170-ade7-836966263a8f'
+          foreach ($f in 'msmpisetup.exe', 'msmpisdk.msi') {
+            Invoke-WebRequest -Uri "$base/$f" -OutFile $f -UseBasicParsing
+          }
+          # -unattend is MS-MPI's own silent switch; the SDK is a plain MSI.
+          Start-Process -Wait -FilePath .\msmpisetup.exe -ArgumentList '-unattend'
+          Start-Process -Wait -FilePath msiexec.exe `
+            -ArgumentList '/i', 'msmpisdk.msi', '/quiet', '/norestart'
+
+          # Both installers set MSMPI_* machine-wide, but this job's environment
+          # was captured before that, so hand them to the later steps by hand.
+          foreach ($v in 'MSMPI_INC', 'MSMPI_LIB64', 'MSMPI_BIN') {
+            $val = [Environment]::GetEnvironmentVariable($v, 'Machine')
+            if ($val) { "$v=$val" | Out-File -Append $env:GITHUB_ENV }
+          }
+          $bin = [Environment]::GetEnvironmentVariable('MSMPI_BIN', 'Machine')
+          if ($bin) { $bin | Out-File -Append $env:GITHUB_PATH }
+
+          # Fail here rather than 40 minutes into a build that cannot find MPI.
+          if (-not [Environment]::GetEnvironmentVariable('MSMPI_INC', 'Machine')) {
+            throw 'MS-MPI SDK did not register MSMPI_INC; the MPI build would not find MPI.'
+          }
+          Write-Host "MSMPI_INC=$env:MSMPI_INC"
+          if (-not (Test-Path (Join-Path $bin 'mpiexec.exe'))) {
+            throw "mpiexec.exe not found under $bin"
+          }
 
       # Disk is the constraint most likely to sink this on a hosted runner: the
       # working trees measured ~35 GB on a developer machine, of which vcpkg is
@@ -162,33 +206,77 @@ jobs:
         run: |
           $target = '${{ inputs.sim_target }}'
           if (-not $target) { $target = 'flow_blackoil' }
-          Write-Host "building target: $target"
-          .\build-all.ps1 -SimTarget $target -Jobs 4
+          Write-Host "building target: $target (MPI)"
+          # -Mpi: DUNE and the OPM modules built against MS-MPI, plus Zoltan
+          # from a Trilinos clone, into build-mpi\ / install-mpi\.
+          .\build-all.ps1 -Mpi -SimTarget $target -Jobs 4
           if ($LASTEXITCODE -ne 0) { throw "build failed" }
 
-      - name: Run SPE1
+      # Norne rather than SPE1: a real field case with faults, multi-segment
+      # wells and a decade of schedule exercises far more of the simulator than
+      # a ten-cell tutorial, and on 4 ranks it also covers the parallel path -
+      # partitioning, the linear solver across ranks, and the rank-0 output
+      # gather - which is what the package ships and what SPE1 never touched.
+      - name: Fetch the Norne deck
+        run: |
+          # opm-tests is ~4.4 GB; the deck and its INCLUDE tree are a few MB of
+          # it and the rest of norne\ is reference solutions this does not read.
+          # Hence blobless + a non-cone sparse set, not a clone.
+          git clone --filter=blob:none --no-checkout --depth 1 `
+            https://github.com/OPM/opm-tests.git opm-tests
+          if ($LASTEXITCODE -ne 0) { throw 'could not clone opm-tests' }
+          git -C opm-tests sparse-checkout init --no-cone
+          git -C opm-tests sparse-checkout set '/norne/NORNE_ATW2013.DATA' '/norne/INCLUDE/**'
+          git -C opm-tests checkout
+          if (-not (Test-Path 'opm-tests\norne\NORNE_ATW2013.DATA')) {
+            throw 'Norne deck was not checked out'
+          }
+          $inc = @(Get-ChildItem 'opm-tests\norne\INCLUDE' -Recurse -File).Count
+          Write-Host "deck plus $inc INCLUDE files"
+
+      - name: Run Norne on 4 MPI ranks
         run: |
           $target = '${{ inputs.sim_target }}'
           if (-not $target) { $target = 'flow_blackoil' }
-          $exe  = ".\build\opm-simulators\bin\$target.exe"
-          $deck = '.\src\opm-simulators\python\test_data\SPE1CASE1a\SPE1CASE1.DATA'
-          & $exe $deck --output-dir=spe1_out --threads-per-process=1
-          if ($LASTEXITCODE -ne 0) { throw "SPE1 run failed ($LASTEXITCODE)" }
+          $exe = ".\build-mpi\opm-simulators\bin\$target.exe"
+          if (-not (Test-Path $exe)) { throw "no simulator at $exe" }
+
+          # Pre-authorize the exe in the firewall. Unattended there is nobody to
+          # answer a popup, and a cancelled one leaves a Block rule that makes
+          # mpiexec hang rather than fail - a 5.5 h timeout instead of an error.
+          .\allow-firewall.ps1
+
+          # setup-env.ps1 imports MSMPI_* from the machine registry and puts
+          # mpiexec on PATH for this shell.
+          . .\setup-env.ps1
+
+          # 4 ranks, one thread each: the hosted runner has 4 vCPUs, so more of
+          # either only oversubscribes and makes the run slower and noisier.
+          $deck = '.\opm-tests\norne\NORNE_ATW2013.DATA'
+          mpiexec -n 4 $exe $deck --output-dir=norne_out --threads-per-process=1
+          if ($LASTEXITCODE -ne 0) { throw "Norne run failed ($LASTEXITCODE)" }
 
           # A run that exits 0 having written nothing would still be a failure,
-          # so check the output exists - but check for what flow actually
-          # writes. The summary payload is .ESMRY for this deck, not the .UNSMRY
-          # an earlier version of this step looked for, which failed a run whose
-          # simulation had completed perfectly. .SMSPEC accompanies either form.
-          $spec = Test-Path 'spe1_out\SPE1CASE1.SMSPEC'
-          $data = (Test-Path 'spe1_out\SPE1CASE1.ESMRY') -or
-                  (Test-Path 'spe1_out\SPE1CASE1.UNSMRY')
+          # so check the output exists - and check for what flow actually
+          # writes: the summary payload is .ESMRY or .UNSMRY depending on the
+          # deck, and .SMSPEC accompanies either form.
+          $spec = Test-Path 'norne_out\NORNE_ATW2013.SMSPEC'
+          $data = (Test-Path 'norne_out\NORNE_ATW2013.ESMRY') -or
+                  (Test-Path 'norne_out\NORNE_ATW2013.UNSMRY')
           if (-not ($spec -and $data)) {
               Write-Host 'output directory contained:'
-              Get-ChildItem spe1_out | Select-Object -ExpandProperty Name | Write-Host
-              throw 'SPE1 wrote no summary output'
+              Get-ChildItem norne_out | Select-Object -ExpandProperty Name | Write-Host
+              throw 'Norne wrote no summary output'
           }
-          "`n## Smoke test`nSPE1 ran to completion and wrote its summary output." |
+          # The PRT reports the rank count it actually ran on: a parallel build
+          # launched wrongly would run 4 independent serial copies over each
+          # other's output and still look like a pass here.
+          $prt = Get-Content 'norne_out\NORNE_ATW2013.PRT' -Raw -ErrorAction SilentlyContinue
+          $ranks = if ($prt -match 'Number of MPI processes:\s*(\d+)') { $matches[1] } else { '?' }
+          if ($ranks -ne '4') {
+              throw "expected 4 MPI processes, the run reported: $ranks"
+          }
+          "`n## Smoke test`nNorne ran to completion on $ranks MPI ranks and wrote its summary output." |
             Out-File -Append $env:GITHUB_STEP_SUMMARY
 
       - name: Free disk after
@@ -207,8 +295,8 @@ jobs:
           name: flow-windows-x64
           retention-days: 14
           path: |
-            build/opm-simulators/bin/*.exe
-            build/opm-simulators/bin/*.dll
+            build-mpi/opm-simulators/bin/*.exe
+            build-mpi/opm-simulators/bin/*.dll
 
       # Say so somewhere that survives a missed e-mail. One issue is kept open
       # and commented on rather than a fresh one filed every Friday: the point
