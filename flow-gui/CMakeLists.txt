@@ -1,6 +1,6 @@
 # Copyright (C) 2026 SINTEF Digital, Mathematics & Cybernetics; GPL-3.0-or-later (see LICENSE).
 cmake_minimum_required(VERSION 3.21)
-project(flow-gui VERSION 0.7.1 LANGUAGES CXX)
+project(flow-gui VERSION 0.7.2 LANGUAGES CXX)
 
 # C++20: the opm-common headers used by the Results tab require it (and Qt 6
 # is fine with it everywhere).
