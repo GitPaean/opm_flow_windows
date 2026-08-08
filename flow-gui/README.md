@@ -85,11 +85,15 @@ results, animate them in 3D, and edit decks — all in one window.
   floating legend can be **dragged** anywhere with the mouse, keeping its
   spot across refreshes and resizes (picking a placement again re-parks it).
   Curves are styled for print from a colourblind-safe palette, with round
-  axis ticks. The **dash pattern always keys the case**, so a comparison
-  survives greyscale; **colour follows whichever dimension carries the
-  information** — comparing one vector across cases it separates the
-  *cases*, otherwise it keys the *vector* (and the dash still tells the
-  cases apart). *Save figure...* writes a **vector PDF**
+  axis ticks. **Colour keys one dimension and the dash pattern with the
+  marker shape the other**, so no two curves share every channel and a
+  comparison survives greyscale. The *Colour* box says which: *auto* keys
+  the **case** when one vector is compared across runs and the **vector**
+  when several are plotted; *by case* gives each run one colour, which is
+  what you want when the pair being read against each other is two runs of
+  the same quantity — with *by vector* those two are one colour and only
+  the dash separates them, which is hard to follow where they run close.
+  *Save figure...* writes a **vector PDF**
   sized to the figure (7 in wide, no margins — drop it straight into
   `\includegraphics`) or a **300 dpi PNG** rendered at 3×, not grabbed off
   the screen; *Save CSV* exports the plotted curves of every checked case.

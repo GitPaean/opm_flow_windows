@@ -167,6 +167,7 @@ private:
     QDoubleSpinBox* lineWidthSpin_   = nullptr;   // curve pen width, points
     QDoubleSpinBox* markerSizeSpin_  = nullptr;   // data-point marker size, px
     QSpinBox*       markerEverySpin_ = nullptr;   // mark every n-th point (1 = all)
+    QComboBox*      colourByBox_ = nullptr;       // what colour keys: auto/vector/case
     QLabel*      status_    = nullptr;
     QTimer*      timer_     = nullptr;
 

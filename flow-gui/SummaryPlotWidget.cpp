@@ -767,6 +767,20 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
         row->addWidget(markerSizeSpin_);
         row->addWidget(markerEverySpin_);
         row->addWidget(stagger_);
+        // Which dimension colour separates. Comparing runs of one deck, two
+        // curves of the same quantity are the pair being read against each
+        // other, and giving them one colour is what makes them hard to tell
+        // apart where they run close - so which dimension deserves the colour
+        // is the plot's question, not something to guess once.
+        colourByBox_ = new QComboBox;
+        colourByBox_->addItem(QStringLiteral("Colour: auto"),      0);
+        colourByBox_->addItem(QStringLiteral("Colour: by vector"), 1);
+        colourByBox_->addItem(QStringLiteral("Colour: by case"),   2);
+        colourByBox_->setToolTip(QStringLiteral(
+            "what the curve colour separates. Auto keys the vector when several "
+            "are plotted and the case when only one is; the other dimension "
+            "takes the dash pattern and the marker shape either way"));
+        row->addWidget(colourByBox_);
         row->addWidget(new QLabel(QStringLiteral("Axis:")));
         row->addWidget(axisScaleSpin_);
         row->addWidget(new QLabel(QStringLiteral("Legend:")));
@@ -821,6 +835,7 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
         connect(markerEverySpin_, &QSpinBox::valueChanged, this,
                 [this, syncStagger](int) { syncStagger(); replot(); });
         syncStagger();
+        connect(colourByBox_, &QComboBox::currentIndexChanged, this, [this](int) { replot(); });
         connect(axisScaleSpin_,   &QDoubleSpinBox::valueChanged, this, [this](double) { replot(); });
         connect(legendScaleSpin_, &QDoubleSpinBox::valueChanged, this, [this](double) { replot(); });
         connect(autoScale_, &QCheckBox::toggled, this, [this](bool) { replot(); });
@@ -2651,12 +2666,20 @@ int SummaryPlotWidget::plotChart(QChart* chart, const QList<int>& sel,
     // 1 = mark every data point (the default: markers are the data)
     const int markerEvery = std::max(1, markerEverySpin_ ? markerEverySpin_->value() : 1);
 
-    // What colour means depends on which dimension actually varies. Comparing
-    // ONE vector across several cases - the usual comparison - colour has to
-    // separate the CASES; keying it to the vector would paint every curve the
-    // same. With several vectors, colour keys the vector and the dash the
-    // case, so both dimensions stay readable.
-    const bool colourByCase = multi && sel.size() == 1;
+    // What colour separates. Auto: the CASES when one vector is compared across
+    // runs (keying colour to the vector would paint every curve the same), the
+    // VECTOR when several are plotted. Either way the dimension colour does not
+    // carry takes the dash and the marker shape, so both stay readable - and
+    // the box lets that be chosen outright, since which pair a reader is
+    // comparing is a property of the plot, not something to guess.
+    const int colourMode = colourByBox_ ? colourByBox_->currentData().toInt() : 0;
+    const bool colourByCase = (colourMode == 2)
+        || (colourMode == 0 && multi && sel.size() == 1);
+    // The dash carries the other dimension - except where that one does not
+    // vary (a single vector across cases), where keying it to the case keeps
+    // the runs apart in a greyscale print too.
+    const bool dashByVector  = colourByCase && sel.size() > 1;
+    const bool shapeByVector = colourByCase && sel.size() > 1;
 
     // How many ticks a subplot this size can label. Qt ELIDES a label that
     // does not fit rather than dropping the tick, so in a dense grid a date
@@ -2751,13 +2774,13 @@ int SummaryPlotWidget::plotChart(QChart* chart, const QList<int>& sel,
 
             auto* s = new QLineSeries;
             s->setName(multi ? pc.first + QStringLiteral(" | ") + v.key : v.key);
-            // dash always keys the case (so a print in grey still separates
-            // them); colour keys whichever dimension carries the information
+            // Colour keys one dimension, dash and marker shape the other, so
+            // no two curves in the plot share every channel.
             QPen pen(kCurveColors[(colourByCase ? ci : si) % kCurveColorCount]);
             // Thinner for each case in turn, so the ones drawn earlier are not
             // simply buried by the ones drawn over them where they agree.
             pen.setWidthF(caseLineWidth(lineW, ci, int(plotCases.size())));
-            pen.setStyle(kCaseDashes[ci % kCaseDashCount]);
+            pen.setStyle(kCaseDashes[(dashByVector ? si : ci) % kCaseDashCount]);
             pen.setCosmetic(true);
             s->setPen(pen);
             const size_t n = std::min(time.size(), data.size());
@@ -2791,15 +2814,17 @@ int SummaryPlotWidget::plotChart(QChart* chart, const QList<int>& sel,
             sample->setName(s->name());
             sample->setPen(legendPen(pen, legendW));
             if (showPts) {
-                // Markers are on, so the entry shows what the curve shows: the
-                // case's shape riding on the sample line. Qt sizes a sample
-                // carrying a marker from the series' marker size, which also
-                // buys the line a little more length to show its dash in.
+                // Markers are on, so the entry shows what the curve shows:
+                // the same shape riding on the sample line - the SAME index
+                // the curve used, or the legend would describe a marker the
+                // plot does not draw. Qt sizes a sample carrying a marker from
+                // the series' marker size, which also buys the line a little
+                // more length to show its dash in.
                 const qreal box  = legendMarkerBox(markerS, legendSpin);
                 const qreal size = std::min(markerS, box - 3.0);
                 sample->setMarkerSize(box);
                 sample->setLightMarker(
-                    sampleMarker(kShapes[ci % kShapeCount], box, size,
+                    sampleMarker(kShapes[(shapeByVector ? si : ci) % kShapeCount], box, size,
                                  pen.color(), ci == 0));
             }
             chart->addSeries(sample);
@@ -2836,7 +2861,7 @@ int SummaryPlotWidget::plotChart(QChart* chart, const QList<int>& sel,
 
                 auto* sc = new QScatterSeries;
                 sc->replace(marks);
-                sc->setMarkerShape(kShapes[ci % kShapeCount]);
+                sc->setMarkerShape(kShapes[(shapeByVector ? si : ci) % kShapeCount]);
                 sc->setMarkerSize(markerS);
                 chart->addSeries(sc);
                 sc->attachAxis(ax);
