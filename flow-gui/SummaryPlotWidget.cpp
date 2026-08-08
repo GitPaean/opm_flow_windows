@@ -1851,6 +1851,7 @@ void SummaryPlotWidget::rebuildTree(const QStringList& reselect)
     // ... and the view: which keyword groups are expanded, and the scroll
     // position, so a refresh does not collapse the list.
     QSet<QString> expanded;
+    QTreeWidgetItem* firstSelected = nullptr;   // to scroll to on a fresh load
     const bool hadItems = tree_->topLevelItemCount() > 0;
     for (int i = 0; i < tree_->topLevelItemCount(); ++i) {
         auto* it = tree_->topLevelItem(i);
@@ -1906,19 +1907,36 @@ void SummaryPlotWidget::rebuildTree(const QStringList& reselect)
             auto* grp = new QTreeWidgetItem(tree_);
             grp->setText(0, kwLabel);
             grp->setFlags(grp->flags() & ~Qt::ItemIsSelectable);   // select children, not the group
+            bool holdsSelected = false;
             for (int idx : idxs) {
                 const Vec& v = vecs_[idx];
                 auto* leaf = new QTreeWidgetItem(grp);
                 leaf->setText(0, v.item.isEmpty() ? kw : v.item);
                 leaf->setData(0, RoleVecIndex, v.key);
                 leaf->setData(0, RoleVecIndex + 1, idx);
-                if (keep.contains(v.key)) leaf->setSelected(true);
+                if (keep.contains(v.key)) { leaf->setSelected(true); holdsSelected = true; }
             }
-            if (expanded.contains(kwLabel)) grp->setExpanded(true);
+            // Open a group that holds something plotted, as well as one the
+            // user had open. Restoring a session there was nothing to restore
+            // from, so every group came up collapsed and the tree said nothing
+            // about what the chart was already showing.
+            // Only on a FRESH tree: on a rebuild the snapshot above is the
+            // user's own doing, and a group they collapsed must not spring
+            // open again every time a running case refreshes.
+            if ((!hadItems && holdsSelected) || expanded.contains(kwLabel))
+                grp->setExpanded(true);
+            if (holdsSelected && !firstSelected) firstSelected = grp->child(0);
         }
     }
     tree_->blockSignals(false);
-    if (hadItems) tree_->verticalScrollBar()->setValue(scrollPos);
+    if (hadItems) {
+        tree_->verticalScrollBar()->setValue(scrollPos);
+    } else if (firstSelected) {
+        // Nothing was on screen to preserve, so put what is plotted there:
+        // a restored session otherwise opened on the top of a long list with
+        // its selection somewhere below the fold.
+        tree_->scrollToItem(firstSelected, QAbstractItemView::PositionAtTop);
+    }
 
     // Selection was set with signals blocked (or cleared by clear()); sync the
     // chart to whatever is now selected.
@@ -2183,6 +2201,20 @@ void SummaryPlotWidget::swapCharts(int a, int b)
     setStatus(QStringLiteral("subplots %1 and %2 swapped").arg(a + 1).arg(b + 1));
 }
 
+void SummaryPlotWidget::expandToSelection()
+{
+    QTreeWidgetItem* first = nullptr;
+    QTreeWidgetItemIterator it(tree_);
+    while (*it) {
+        if ((*it)->isSelected()) {
+            for (auto* p = (*it)->parent(); p; p = p->parent()) p->setExpanded(true);
+            if (!first) first = *it;
+        }
+        ++it;
+    }
+    if (first) tree_->scrollToItem(first, QAbstractItemView::EnsureVisible);
+}
+
 void SummaryPlotWidget::setFocusChart(int i)
 {
     if (i < 0 || i >= chartSel_.size()) return;
@@ -2200,6 +2232,10 @@ void SummaryPlotWidget::setFocusChart(int i)
     }
     tree_->blockSignals(false);
     syncingTree_ = false;
+    // A selection nobody can see says nothing: this path mirrors chartSel_
+    // without rebuilding the tree, so the groups holding it stay shut - which
+    // is what a restored session came up looking like.
+    expandToSelection();
     updateChartFrames();
     if (visibleCharts_ > 1)
         setStatus(QStringLiteral("subplot %1 focused - the vector tree now edits it")

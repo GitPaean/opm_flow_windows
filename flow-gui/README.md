@@ -60,6 +60,10 @@ results, animate them in 3D, and edit decks — all in one window.
   plot every 10 seconds. The search box also accepts comma-separated
   **wildcard filters** qsummary-style — `WBHP:B*, WOPR*` narrows the tree
   to the matching `KEYWORD:ITEM` keys (plain text still matches anywhere).
+  Opening the tab on a restored session **opens the groups holding what
+  is plotted** and scrolls to them, so the tree says what the chart is
+  already showing rather than a list of closed keywords; a group you
+  collapse yourself stays collapsed across refreshes.
   **Subplots** — the *Layout* button opens a grid picker: hover the cells
   to choose **rows × columns**, up to **6 × 8**. A shape rather than a list,
   because a wide screen wants 2×5 or 3×6 and a preset list long enough to

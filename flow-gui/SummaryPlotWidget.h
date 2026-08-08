@@ -232,7 +232,9 @@ private:
     void setLayoutGrid(int rows, int cols);   // what the picker chose
     void ensureCharts(int n);        // grow the pool to n charts
     void applyChartLayout(int rows, int cols);   // the visible grid
-    void setFocusChart(int i);      // focus subplot i, mirror its keys in the tree
+    void setFocusChart(int i);
+    // Open the groups holding selected vectors and bring them into view.
+    void expandToSelection();      // focus subplot i, mirror its keys in the tree
     int  chartAt(const QPoint& globalPos) const;   // subplot under the cursor
     void swapCharts(int a, int b);  // exchange what two subplots show
     void resetZoom(bool focusedOnly);   // all subplots, or just the focused
