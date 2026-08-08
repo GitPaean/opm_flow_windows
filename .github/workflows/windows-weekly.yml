@@ -135,6 +135,9 @@ jobs:
       # even if a later step fails.
       - name: Free disk before
         run: |
+          # Cores decide how Norne is run below: the two legs are sized to this
+          # number, so record it rather than assume it stays 4.
+          Write-Host "logical processors: $env:NUMBER_OF_PROCESSORS"
           # Every fixed drive, not a hardcoded C:. The workspace is on D: on a
           # hosted runner, so measuring C: reports a volume the build never
           # touches - which looks reassuring and says nothing.
@@ -253,8 +256,11 @@ jobs:
           # mpiexec on PATH for this shell.
           . .\setup-env.ps1
 
-          # 4 ranks, one thread each: the hosted runner has 4 vCPUs, so more of
-          # either only oversubscribes and makes the run slower and noisier.
+          # 4 ranks, one thread each. The runner has 4 vCPUs, so this fills it
+          # exactly and puts the pressure on the widest domain decomposition;
+          # the Intel MPI leg below runs 2x2 instead, so between them both the
+          # MPI and the OpenMP half of the hybrid build are exercised without
+          # either run oversubscribing the machine.
           $deck = '.\opm-tests\norne\NORNE_ATW2013.DATA'
           mpiexec -n 4 $exe $deck --output-dir=norne_out --threads-per-process=1
           if ($LASTEXITCODE -ne 0) { throw "Norne run failed ($LASTEXITCODE)" }
@@ -335,9 +341,13 @@ jobs:
           $impi = Join-Path $env:APPDATA 'Python\Library'
           $env:Path = "$impi\bin;$env:Path"
 
+          # 2 ranks x 2 threads, where the MS-MPI leg ran 4 x 1. Same four
+          # threads on the runner's four vCPUs, but this one drives the OpenMP
+          # side of the hybrid build, which --threads-per-process=1 never
+          # touches - a break in the threaded assembly would otherwise ship.
           $deck = '.\opm-tests\norne\NORNE_ATW2013.DATA'
-          & "$impi\bin\mpiexec.exe" -n 4 $exe $deck `
-            --output-dir=norne_impi_out --threads-per-process=1
+          & "$impi\bin\mpiexec.exe" -n 2 $exe $deck `
+            --output-dir=norne_impi_out --threads-per-process=2
           if ($LASTEXITCODE -ne 0) { throw "Norne under Intel MPI failed ($LASTEXITCODE)" }
 
           $spec = Test-Path 'norne_impi_out\NORNE_ATW2013.SMSPEC'
@@ -348,14 +358,17 @@ jobs:
               Get-ChildItem norne_impi_out | Select-Object -ExpandProperty Name | Write-Host
               throw 'Norne under Intel MPI wrote no summary output'
           }
-          # Same trap as the MS-MPI run: four serial copies over one output
-          # directory would pass a file-exists check.
+          # Same trap as the MS-MPI run: serial copies over one output directory
+          # would pass a file-exists check. The thread count is checked too -
+          # this leg exists to exercise the threaded path, and a build that
+          # quietly ran single-threaded would otherwise look like it had.
           $prt = Get-Content 'norne_impi_out\NORNE_ATW2013.PRT' -Raw -ErrorAction SilentlyContinue
-          $ranks = if ($prt -match 'Number of MPI processes:\s*(\d+)') { $matches[1] } else { '?' }
-          if ($ranks -ne '4') {
-              throw "expected 4 Intel MPI processes, the run reported: $ranks"
+          $ranks   = if ($prt -match 'Number of MPI processes:\s*(\d+)')   { $matches[1] } else { '?' }
+          $threads = if ($prt -match 'Threads per MPI process:\s*(\d+)')   { $matches[1] } else { '?' }
+          if ($ranks -ne '2' -or $threads -ne '2') {
+              throw "expected 2 Intel MPI ranks x 2 threads, the run reported: $ranks x $threads"
           }
-          "Norne also ran to completion on $ranks Intel MPI ranks." |
+          "Norne also ran to completion on $ranks Intel MPI ranks x $threads OpenMP threads." |
             Out-File -Append $env:GITHUB_STEP_SUMMARY
 
       - name: Free disk after
