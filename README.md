@@ -17,9 +17,9 @@ the Norne benchmark case:
 
 | Run queue with live progress | Summary plotting & case comparison |
 |---|---|
-| ![Run tab: job queue running Norne on 6 MPI ranks](docs/screenshots/run-tab.png) | ![Results tab: FOPR of two cases compared on a date axis](docs/screenshots/results-compare.png) |
+| ![Run tab: job queue with Norne running on 4 MPI ranks, showing live progress and an ETA](docs/screenshots/run-tab.png) | ![Results tab: four subplots comparing a finished Norne run against one still being written](docs/screenshots/results-compare.png) |
 | **3D results viewer** | **Deck editor** |
-| ![3D View: oil-saturation animation with well trajectories](docs/screenshots/viewer-3d.png) | ![Deck editor: section tree with INCLUDE files and syntax highlighting](docs/screenshots/deck-editor.png) |
+| ![3D View: oil saturation on Norne with well trajectories, following the run as it writes report steps](docs/screenshots/viewer-3d.png) | ![Deck editor: section tree with INCLUDE files and syntax highlighting](docs/screenshots/deck-editor.png) |
 
 ## Prerequisites
 - Windows 10/11 x64; `git` and `winget` on PATH; ~15 GB free disk; internet.
