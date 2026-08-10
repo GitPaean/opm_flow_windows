@@ -12,6 +12,9 @@
   #include "Viewer3D.h"
 #endif
 #include "DeckEditor.h"
+#ifdef FLOWGUI_HAVE_SUMMARY
+#include "RestartCompare.h"
+#endif
 #include "GuiPaths.h"
 
 #include <QApplication>
@@ -495,6 +498,30 @@ FlowGuiWindow::FlowGuiWindow()
                 [this](const QStringList& paths) { viewer3D_->reorderCases(paths); });
     }
 #endif
+#endif
+
+    // ================= Compare tab ==========================================
+    // A tab of its own, beside running and plotting rather than tucked behind
+    // a button on one of them: "do these two runs agree" is a task people come
+    // here to do, and it needs the case list the Summary tab keeps, mirrored
+    // the same way the 3D tab mirrors it.
+#if defined(FLOWGUI_HAVE_SUMMARY)
+    compare_ = new flowgui::RestartComparePanel;
+    tabs_->addTab(compare_, QStringLiteral("Compare"));
+    if (summary_) {
+        connect(summary_, &SummaryPlotWidget::caseAdded, compare_,
+                [this](const QString& label, const QString& path) {
+                    compare_->addCase(label, path);
+                });
+        connect(summary_, &SummaryPlotWidget::caseRenamed, compare_,
+                [this](const QString& path, const QString& label) {
+                    compare_->renameCase(path, label);
+                });
+        connect(summary_, &SummaryPlotWidget::caseRemoved, compare_,
+                [this](const QString& path) { compare_->removeCase(path); });
+        connect(summary_, &SummaryPlotWidget::caseOrder, compare_,
+                [this](const QStringList& paths) { compare_->reorderCases(paths); });
+    }
 #endif
 
     // ================= Deck editor tab ======================================

@@ -12,7 +12,6 @@
 #include <QChart>
 #include <QChartView>
 #include <QComboBox>
-#include <QDialogButtonBox>
 #include <QDoubleSpinBox>
 #include <QFileInfo>
 #include <QFormLayout>
@@ -255,19 +254,12 @@ CompareResult compareRestarts(const QString& smspecA, const QString& smspecB,
 // ===========================================================================
 namespace flowgui {
 
-RestartCompareDialog::RestartCompareDialog(const QVector<CaseEntry>& cases, QWidget* parent)
-    : QDialog(parent), cases_(cases)
+RestartComparePanel::RestartComparePanel(QWidget* parent)
+    : QWidget(parent)
 {
-    setWindowTitle(QStringLiteral("Compare restarts"));
-    setModal(false);
-    resize(1000, 700);
-
     caseA_ = new QComboBox; caseB_ = new QComboBox;
-    for (const auto& c : cases_) {
-        caseA_->addItem(c.label);
-        caseB_->addItem(c.label);
-    }
-    if (caseB_->count() > 1) caseB_->setCurrentIndex(1);
+    caseA_->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+    caseB_->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
 
     absTol_ = new QDoubleSpinBox;
     absTol_->setDecimals(10); absTol_->setRange(0.0, 1e6);
@@ -338,13 +330,51 @@ RestartCompareDialog::RestartCompareDialog(const QVector<CaseEntry>& cases, QWid
     table_->horizontalHeader()->setStretchLastSection(true);
     table_->setEditTriggers(QAbstractItemView::NoEditTriggers);
     table_->setSelectionBehavior(QAbstractItemView::SelectRows);
-    table_->setMaximumHeight(200);
+
+    // The drill-down. The summary table says WHICH property parted company;
+    // this says where, step by step or the other way round - every property at
+    // one report step. Both readings come off the same reduction that is
+    // already in memory, so switching between them costs nothing.
+    detailMode_ = new QComboBox;
+    detailMode_->addItem(QStringLiteral("steps of one property"));
+    detailMode_->addItem(QStringLiteral("all properties at one step"));
+    detailPick_ = new QComboBox;
+    detailPick_->setSizeAdjustPolicy(QComboBox::AdjustToContents);
+    detailPick_->setMinimumWidth(140);
+    detailInfo_ = new QLabel;
+    detailInfo_->setStyleSheet(QStringLiteral("color:#555b61;"));
+    auto* drow = new QHBoxLayout;
+    drow->addWidget(new QLabel(QStringLiteral("Detail:")));
+    drow->addWidget(detailMode_);
+    drow->addWidget(detailPick_);
+    drow->addWidget(detailInfo_, 1);
+
+    detail_ = new QTableWidget(0, 6);
+    detail_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    detail_->setSelectionBehavior(QAbstractItemView::SelectRows);
+    detail_->horizontalHeader()->setStretchLastSection(true);
+
+    auto* detailBox = new QWidget;
+    auto* dlay = new QVBoxLayout(detailBox);
+    dlay->setContentsMargins(0, 0, 0, 0);
+    dlay->addLayout(drow);
+    dlay->addWidget(detail_, 1);
+
+    auto* lower = new QSplitter(Qt::Horizontal);
+    lower->addWidget(table_);
+    lower->addWidget(detailBox);
+    lower->setStretchFactor(0, 2);
+    lower->setStretchFactor(1, 3);
 
     auto* split = new QSplitter(Qt::Vertical);
     split->addWidget(chartView_);
-    split->addWidget(table_);
+    split->addWidget(lower);
     split->setStretchFactor(0, 3);
-    split->setStretchFactor(1, 1);
+    split->setStretchFactor(1, 2);
+    // Explicit sizes: stretch factors alone let the tables' size hints squeeze
+    // the chart to a sliver once they have a few hundred rows in them.
+    split->setSizes({ 460, 320 });
+    lower->setSizes({ 380, 620 });
 
     auto* lay = new QVBoxLayout(this);
     lay->addLayout(top);
@@ -353,20 +383,30 @@ RestartCompareDialog::RestartCompareDialog(const QVector<CaseEntry>& cases, QWid
     lay->addWidget(note_);
     lay->addLayout(mrow);
     lay->addWidget(split, 1);
-    auto* bb = new QDialogButtonBox(QDialogButtonBox::Close);
-    connect(bb, &QDialogButtonBox::rejected, this, &QDialog::close);
-    lay->addWidget(bb);
 
     connect(runBtn_, &QPushButton::clicked, this, [this] { startCompare(); });
     connect(metric_, &QComboBox::currentIndexChanged, this, [this](int) { replot(); });
     connect(onlyBad_, &QCheckBox::toggled, this, [this](bool) { replot(); });
+    // Clicking a property in the summary is the natural way to ask "where?",
+    // so it drives the detail view rather than only selecting a row.
+    connect(table_, &QTableWidget::itemSelectionChanged, this, [this] {
+        const int row = table_->currentRow();
+        if (row < 0 || row >= result_.keywords.size()) return;
+        if (detailMode_->currentIndex() != 0) return;
+        const QString kw = result_.keywords[row].keyword;
+        const int at = detailPick_->findText(kw);
+        if (at >= 0 && at != detailPick_->currentIndex()) detailPick_->setCurrentIndex(at);
+        else refreshDetail();
+    });
+    connect(detailMode_, &QComboBox::currentIndexChanged, this, [this](int) { syncCombos(); });
+    connect(detailPick_, &QComboBox::currentIndexChanged, this, [this](int) { refreshDetail(); });
 
     poll_ = new QTimer(this);
     poll_->setInterval(120);
     connect(poll_, &QTimer::timeout, this, [this] { bar_->setValue(progress_.load()); });
 }
 
-RestartCompareDialog::~RestartCompareDialog()
+RestartComparePanel::~RestartComparePanel()
 {
     // A worker still reading two restarts has to be told to stop and waited
     // for: it writes into members of this dialog.
@@ -374,7 +414,173 @@ RestartCompareDialog::~RestartCompareDialog()
     if (worker_) { worker_->quit(); worker_->wait(5000); }
 }
 
-void RestartCompareDialog::startCompare()
+// -- the case list, mirrored from the Summary tab ---------------------------
+
+void RestartComparePanel::addCase(const QString& label, const QString& smspecPath)
+{
+    const QString p = normalizeCasePath(smspecPath);
+    for (const auto& c : cases_) if (sameCasePath(c.smspec, p)) return;
+    cases_.push_back({ label, p });
+    const int a = caseA_->currentIndex(), b = caseB_->currentIndex();
+    caseA_->addItem(label); caseB_->addItem(label);
+    // A first pair is worth offering; after that, leave the user's choice be.
+    if (a < 0) caseA_->setCurrentIndex(0);
+    if (b < 0 && caseB_->count() > 1) caseB_->setCurrentIndex(1);
+}
+
+void RestartComparePanel::renameCase(const QString& smspecPath, const QString& label)
+{
+    for (int i = 0; i < cases_.size(); ++i)
+        if (sameCasePath(cases_[i].smspec, smspecPath)) {
+            cases_[i].label = label;
+            caseA_->setItemText(i, label);
+            caseB_->setItemText(i, label);
+            return;
+        }
+}
+
+void RestartComparePanel::removeCase(const QString& smspecPath)
+{
+    for (int i = 0; i < cases_.size(); ++i)
+        if (sameCasePath(cases_[i].smspec, smspecPath)) {
+            cases_.removeAt(i);
+            caseA_->removeItem(i);
+            caseB_->removeItem(i);
+            return;
+        }
+}
+
+void RestartComparePanel::reorderCases(const QStringList& smspecPaths)
+{
+    QVector<CaseEntry> out;
+    for (const QString& p : smspecPaths)
+        for (const auto& c : cases_)
+            if (sameCasePath(c.smspec, p)) { out.push_back(c); break; }
+    for (const auto& c : cases_) {          // anything the list did not mention
+        bool seen = false;
+        for (const auto& o : out) if (sameCasePath(o.smspec, c.smspec)) { seen = true; break; }
+        if (!seen) out.push_back(c);
+    }
+    if (out.size() != cases_.size()) return;
+    const QString a = caseA_->currentIndex() >= 0 ? cases_[caseA_->currentIndex()].smspec : QString();
+    const QString b = caseB_->currentIndex() >= 0 ? cases_[caseB_->currentIndex()].smspec : QString();
+    cases_ = out;
+    caseA_->clear(); caseB_->clear();
+    for (const auto& c : cases_) { caseA_->addItem(c.label); caseB_->addItem(c.label); }
+    for (int i = 0; i < cases_.size(); ++i) {
+        if (!a.isEmpty() && sameCasePath(cases_[i].smspec, a)) caseA_->setCurrentIndex(i);
+        if (!b.isEmpty() && sameCasePath(cases_[i].smspec, b)) caseB_->setCurrentIndex(i);
+    }
+}
+
+// -- the drill-down ----------------------------------------------------------
+
+void RestartComparePanel::syncCombos()
+{
+    const QSignalBlocker block(detailPick_);
+    detailPick_->clear();
+    if (!result_.ran) { refreshDetail(); return; }
+    if (detailMode_->currentIndex() == 0) {
+        for (const auto& k : result_.keywords) detailPick_->addItem(k.keyword);
+        const int row = table_->currentRow();
+        if (row >= 0 && row < result_.keywords.size()) detailPick_->setCurrentIndex(row);
+    } else {
+        for (int s : result_.steps) detailPick_->addItem(QString::number(s));
+        // Open on the step the verdict named, which is the one being asked
+        // about far more often than step one.
+        int first = -1;
+        for (const auto& k : result_.keywords)
+            if (k.firstBadSeqnum >= 0 && (first < 0 || k.firstBadSeqnum < first))
+                first = k.firstBadSeqnum;
+        const int at = first >= 0 ? detailPick_->findText(QString::number(first)) : -1;
+        if (at >= 0) detailPick_->setCurrentIndex(at);
+    }
+    refreshDetail();
+}
+
+void RestartComparePanel::refreshDetail()
+{
+    detail_->setRowCount(0);
+    detailInfo_->clear();
+    if (!result_.ran || detailPick_->currentIndex() < 0) return;
+    if (detailMode_->currentIndex() == 0) showKeywordDetail(detailPick_->currentText());
+    else                                  showStepDetail(detailPick_->currentText().toInt());
+}
+
+// Every report step of one property: where it holds and where it gives way.
+void RestartComparePanel::showKeywordDetail(const QString& keyword)
+{
+    const KeywordDiff* kd = nullptr;
+    for (const auto& k : result_.keywords) if (k.keyword == keyword) { kd = &k; break; }
+    if (!kd) return;
+    detail_->setHorizontalHeaderLabels({ QStringLiteral("Step"),
+                                         QStringLiteral("Cells outside tol"),
+                                         QStringLiteral("max |A-B|"),
+                                         QStringLiteral("RMS"),
+                                         QStringLiteral("Worst cell"),
+                                         QStringLiteral("A / B there") });
+    for (const auto& sd : kd->steps) {
+        const int row = detail_->rowCount();
+        detail_->insertRow(row);
+        detail_->setItem(row, 0, new QTableWidgetItem(QString::number(sd.seqnum)));
+        detail_->setItem(row, 1, new QTableWidgetItem(QString::number(sd.nBad)));
+        detail_->setItem(row, 2, new QTableWidgetItem(QStringLiteral("%1").arg(sd.maxAbs, 0, 'g', 6)));
+        detail_->setItem(row, 3, new QTableWidgetItem(QStringLiteral("%1").arg(sd.rms, 0, 'g', 6)));
+        detail_->setItem(row, 4, new QTableWidgetItem(
+            sd.worstCell < 0 ? QStringLiteral("-") : QString::number(sd.worstCell)));
+        detail_->setItem(row, 5, new QTableWidgetItem(
+            sd.worstCell < 0 ? QStringLiteral("-")
+                             : QStringLiteral("%1  /  %2").arg(sd.aWorst, 0, 'g', 8)
+                                                          .arg(sd.bWorst, 0, 'g', 8)));
+        if (sd.nBad > 0)
+            for (int c = 0; c < 6; ++c)
+                detail_->item(row, c)->setForeground(QBrush(QColor(0xa8, 0x50, 0x0d)));
+    }
+    detail_->resizeColumnsToContents();
+    detailInfo_->setText(kd->clean()
+        ? QStringLiteral("%1 agrees at every step").arg(keyword)
+        : QStringLiteral("%1 first differs at step %2").arg(keyword).arg(kd->firstBadSeqnum));
+}
+
+// Every property at one report step: what else went wrong where this did.
+void RestartComparePanel::showStepDetail(int seqnum)
+{
+    detail_->setHorizontalHeaderLabels({ QStringLiteral("Property"),
+                                         QStringLiteral("Cells outside tol"),
+                                         QStringLiteral("max |A-B|"),
+                                         QStringLiteral("RMS"),
+                                         QStringLiteral("Worst cell"),
+                                         QStringLiteral("A / B there") });
+    int differing = 0;
+    for (const auto& k : result_.keywords) {
+        const StepDiff* sd = nullptr;
+        for (const auto& s : k.steps) if (s.seqnum == seqnum) { sd = &s; break; }
+        if (!sd) continue;
+        const int row = detail_->rowCount();
+        detail_->insertRow(row);
+        detail_->setItem(row, 0, new QTableWidgetItem(k.keyword));
+        detail_->setItem(row, 1, new QTableWidgetItem(QString::number(sd->nBad)));
+        detail_->setItem(row, 2, new QTableWidgetItem(QStringLiteral("%1").arg(sd->maxAbs, 0, 'g', 6)));
+        detail_->setItem(row, 3, new QTableWidgetItem(QStringLiteral("%1").arg(sd->rms, 0, 'g', 6)));
+        detail_->setItem(row, 4, new QTableWidgetItem(
+            sd->worstCell < 0 ? QStringLiteral("-") : QString::number(sd->worstCell)));
+        detail_->setItem(row, 5, new QTableWidgetItem(
+            sd->worstCell < 0 ? QStringLiteral("-")
+                              : QStringLiteral("%1  /  %2").arg(sd->aWorst, 0, 'g', 8)
+                                                           .arg(sd->bWorst, 0, 'g', 8)));
+        if (sd->nBad > 0) {
+            ++differing;
+            for (int c = 0; c < 6; ++c)
+                detail_->item(row, c)->setForeground(QBrush(QColor(0xa8, 0x50, 0x0d)));
+        }
+    }
+    detail_->resizeColumnsToContents();
+    detailInfo_->setText(differing
+        ? QStringLiteral("step %1: %2 propert(y/ies) outside tolerance").arg(seqnum).arg(differing)
+        : QStringLiteral("step %1: every property within tolerance").arg(seqnum));
+}
+
+void RestartComparePanel::startCompare()
 {
     if (worker_) return;
     const int ia = caseA_->currentIndex(), ib = caseB_->currentIndex();
@@ -401,7 +607,7 @@ void RestartCompareDialog::startCompare()
     worker_->start();
 }
 
-void RestartCompareDialog::finishCompare()
+void RestartComparePanel::finishCompare()
 {
     poll_->stop();
     bar_->setVisible(false);
@@ -410,7 +616,7 @@ void RestartCompareDialog::finishCompare()
     showResult();
 }
 
-void RestartCompareDialog::showResult()
+void RestartComparePanel::showResult()
 {
     const bool same = result_.identical();
     verdict_->setText(result_.verdict());
@@ -452,10 +658,12 @@ void RestartCompareDialog::showResult()
             for (int c = 0; c < 4; ++c)
                 table_->item(row, c)->setForeground(QBrush(QColor(0xa8, 0x50, 0x0d)));
     }
+    syncCombos();
+    table_->resizeColumnsToContents();
     replot();
 }
 
-void RestartCompareDialog::replot()
+void RestartComparePanel::replot()
 {
     chart_->removeAllSeries();
     for (auto* ax : chart_->axes()) chart_->removeAxis(ax);

@@ -6,8 +6,6 @@
 */
 #include "SummaryPlotWidget.h"
 
-#include "RestartCompare.h"
-
 #include "FlowLayout.h"
 
 #include "CasePath.h"
@@ -741,14 +739,6 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
         auto* bpng  = new QPushButton(QStringLiteral("Save figure..."));
         auto* bcsv  = new QPushButton(QStringLiteral("Save CSV..."));
         bcsv->setToolTip(QStringLiteral("export the plotted vectors of every checked case"));
-        // The summary answers "what did the wells do"; the restart answers
-        // "did the two runs compute the same thing", which is a different
-        // question and far too much data to look at directly. Hence its own
-        // window rather than another curve in this one.
-        auto* bcmp  = new QPushButton(QStringLiteral("Compare restarts..."));
-        bcmp->setToolTip(QStringLiteral(
-            "compare the UNRST of two cases: whether they agree, and from "
-            "which report step and property they stop agreeing"));
         layoutBtn_ = new QToolButton;
         layoutBtn_->setPopupMode(QToolButton::InstantPopup);
         layoutBtn_->setToolTip(QStringLiteral(
@@ -823,7 +813,6 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
         row->addWidget(bzoom);
         row->addWidget(bpng);
         row->addWidget(bcsv);
-        row->addWidget(bcmp);
 
 
         connect(bbrowse,  &QPushButton::clicked, this, [this] { browseCase(); });
@@ -853,7 +842,6 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
         connect(bzoom, &QToolButton::clicked, this, [this] { resetZoom(false); });
         connect(bpng,  &QPushButton::clicked, this, [this] { savePng(); });
         connect(bcsv,  &QPushButton::clicked, this, [this] { saveCsv(); });
-        connect(bcmp,  &QPushButton::clicked, this, [this] { compareRestarts(); });
         timer_ = new QTimer(this);
         timer_->setInterval(10000);
         connect(timer_, &QTimer::timeout, this, [this] { reload(true); });
@@ -3044,25 +3032,6 @@ int SummaryPlotWidget::plotChart(QChart* chart, const QList<int>& sel,
     chart->setTitle(!title.isEmpty() ? title : shown);
     placeLegend(chart);      // the legend just changed size
     return skipped;
-}
-
-// The restart comparison, on the cases this tab already lists. A window of
-// its own and modeless: a comparison over a long run takes a while, and the
-// plots behind it stay usable while it runs.
-void SummaryPlotWidget::compareRestarts()
-{
-    QVector<flowgui::RestartCompareDialog::CaseEntry> entries;
-    for (int i = 0; i < caseList_->count(); ++i) {
-        auto* it = caseList_->item(i);
-        entries.push_back({ it->text(), it->data(Qt::UserRole).toString() });
-    }
-    if (entries.size() < 2) {
-        setStatus(QStringLiteral("two cases are needed to compare restarts"));
-        return;
-    }
-    auto* dlg = new flowgui::RestartCompareDialog(entries, this);
-    dlg->setAttribute(Qt::WA_DeleteOnClose);
-    dlg->show();
 }
 
 // Export the plotted vectors (tree selection or expression, all subplots

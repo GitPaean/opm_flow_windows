@@ -35,6 +35,7 @@ class QTimer;
 class DeckEditorWidget;
 class SummaryPlotWidget;
 class Viewer3DWidget;
+namespace flowgui { class RestartComparePanel; }
 
 class FlowGuiWindow : public QMainWindow
 {
@@ -82,6 +83,8 @@ private:
     QSystemTrayIcon* tray_       = nullptr;
     SummaryPlotWidget* summary_  = nullptr;   // null when built without summary
     Viewer3DWidget*    viewer3D_ = nullptr;   // null when built without 3D
+    // The restart comparison tab; null when built without summary support.
+    flowgui::RestartComparePanel* compare_ = nullptr;
     DeckEditorWidget*  deckEd_   = nullptr;
 
     // run state

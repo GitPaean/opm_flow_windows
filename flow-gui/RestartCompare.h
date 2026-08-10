@@ -20,7 +20,7 @@
 */
 #pragma once
 
-#include <QDialog>
+#include <QWidget>
 #include <QString>
 #include <QStringList>
 #include <QVector>
@@ -114,21 +114,38 @@ CompareResult compareRestarts(const QString& smspecA, const QString& smspecB,
                               std::atomic<bool>* cancel = nullptr);
 
 // ---------------------------------------------------------------------------
-// The dialog: pick two cases, pick tolerances, get the verdict, and see which
-// property parted company when.
-class RestartCompareDialog : public QDialog
+// The tab: pick two cases, pick tolerances, get the verdict, and drill into
+// whichever property or report step the verdict points at.
+//
+// A tab and not a dialog. Asking whether two runs agree is a thing people come
+// to this program to do, on the same footing as running one or plotting one,
+// and a button at the end of a wrapping toolbar is where features go to be
+// missed. It also mirrors the case list the way the 3D tab does, so a run that
+// finishes while this is open can be compared without reopening anything.
+class RestartComparePanel : public QWidget
 {
     Q_OBJECT
 public:
+    explicit RestartComparePanel(QWidget* parent = nullptr);
+    ~RestartComparePanel() override;
+
+    // The same case currency as the other tabs: the SMSPEC path.
+    void addCase(const QString& label, const QString& smspecPath);
+    void renameCase(const QString& smspecPath, const QString& label);
+    void removeCase(const QString& smspecPath);
+    void reorderCases(const QStringList& smspecPaths);
+
     struct CaseEntry { QString label, smspec; };
-    RestartCompareDialog(const QVector<CaseEntry>& cases, QWidget* parent = nullptr);
-    ~RestartCompareDialog() override;
 
 private:
     void startCompare();
     void finishCompare();
     void showResult();
     void replot();
+    void showKeywordDetail(const QString& keyword);
+    void showStepDetail(int seqnum);
+    void refreshDetail();
+    void syncCombos();
 
     QComboBox*      caseA_ = nullptr;
     QComboBox*      caseB_ = nullptr;
@@ -141,6 +158,10 @@ private:
     QLabel*         verdict_ = nullptr;
     QLabel*         note_    = nullptr;
     QTableWidget*   table_  = nullptr;
+    QComboBox*      detailMode_ = nullptr;  // by property, or by report step
+    QComboBox*      detailPick_ = nullptr;  // which property / which step
+    QLabel*         detailInfo_ = nullptr;
+    QTableWidget*   detail_ = nullptr;
     QChart*         chart_  = nullptr;
     QChartView*     chartView_ = nullptr;
     QTimer*         poll_   = nullptr;
