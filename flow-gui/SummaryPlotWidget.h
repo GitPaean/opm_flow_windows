@@ -219,6 +219,8 @@ private:
     void caseOrderChanged();
     void savePng();
     void saveCsv();
+    // Open the restart comparison on the cases this tab knows about.
+    void compareRestarts();
     // Put the legend where legendBox_ asks: docked to an edge, floating in a
     // corner of the plot area, or hidden.
     void placeLegend(QChart* chart);

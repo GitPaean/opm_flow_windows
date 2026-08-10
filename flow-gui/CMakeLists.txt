@@ -47,7 +47,11 @@ set(FLOWGUI_HAVE_SUMMARY OFF)
 if(Qt6Charts_FOUND AND EXISTS "${_opmlib}"
    AND EXISTS "${FLOWGUI_OPM_PREFIX}/include/opm/io/eclipse/ESmry.hpp")
     set(FLOWGUI_HAVE_SUMMARY ON)
-    list(APPEND FLOWGUI_SOURCES SummaryPlotWidget.cpp SummaryPlotWidget.h)
+    # RestartCompare rides along with the summary option: it needs opm-common
+    # for ERst and Qt Charts to draw the divergence, which is exactly the pair
+    # this option already establishes.
+    list(APPEND FLOWGUI_SOURCES SummaryPlotWidget.cpp SummaryPlotWidget.h
+                                RestartCompare.cpp RestartCompare.h)
 endif()
 message(STATUS "flow-gui summary plotting: ${FLOWGUI_HAVE_SUMMARY}")
 
