@@ -1,18 +1,23 @@
 /*
-  RestartCompare - do two runs agree, and if not, from when?
+  RestartCompare - do two runs agree, and if not, where and when?
 
   A UNRST holds a value per active cell per property per report step, which is
-  far too much to look at directly: comparing two of them by eye is hopeless
-  and comparing them cell by cell produces more output than anyone reads. So
-  each (property, step) is reduced to three numbers - the largest absolute
-  difference, the RMS, and how many cells fall outside tolerance - and those
-  are plotted against the report step. That answers the two questions actually
-  being asked, "are these the same" and "from where do they part", off one
-  streaming pass and without holding a whole restart in memory.
+  far too much to look at directly. Each (property, step) is reduced to a
+  handful of numbers - the largest absolute difference, the RMS, how many cells
+  fall outside tolerance, and the pore-volume weighted mean of each run - off
+  one streaming pass that never holds more than two arrays at a time.
+
+  Steps are paired by the DATE they were written at, not by their position in
+  the file and not by SEQNUM. Two runs of the same field need not report at the
+  same times: a restart, a different TUNING, or adaptive stepping all shift
+  them, and comparing the n-th step of one against the n-th of the other would
+  then be comparing different moments and calling the result a divergence.
+  INTEHEAD carries the calendar date of each step, as integers, so dates pair
+  exactly and there is no tolerance to argue about.
 
   What counts as a difference is not invented here: it is the test compareECL
-  applies, so a green result here means the same thing as a green regression
-  test rather than something almost like it. See diffIsSignificant().
+  applies, so a green result means the same thing as a green regression test.
+  See diffIsSignificant().
 
   Copyright (C) 2026 SINTEF Digital, Mathematics & Cybernetics
 
@@ -20,13 +25,14 @@
 */
 #pragma once
 
-#include <QWidget>
+#include <QDateTime>
 #include <QString>
 #include <QStringList>
 #include <QVector>
+#include <QWidget>
 
 #include <atomic>
-#include <functional>
+#include <cmath>
 
 class QCheckBox;
 class QComboBox;
@@ -37,11 +43,9 @@ class QPushButton;
 class QTableWidget;
 class QThread;
 class QTimer;
-QT_BEGIN_NAMESPACE
-namespace QtCharts { }
-QT_END_NAMESPACE
 class QChart;
 class QChartView;
+class QTabWidget;
 
 namespace flowgui {
 
@@ -62,66 +66,97 @@ inline bool diffIsSignificant(double a, double b, const DiffTol& tol)
     if (a == 0.0 && b == 0.0) return false;
     const double dAbs = std::abs(a - b);
     const double denom = std::max(std::abs(a), std::abs(b));
-    // rel is undefined (compareECL leaves it at -1) when either value is zero
     const bool relUndefined = (a == 0.0 || b == 0.0);
     const double dRel = relUndefined ? -1.0 : dAbs / denom;
     return dAbs > tol.abs && (dRel > tol.rel || relUndefined);
 }
 
-// One property at one report step, reduced.
+// One property at one report DATE, reduced.
 struct StepDiff {
-    int    seqnum   = 0;
+    QDateTime when;
+    int    seqA = -1, seqB = -1;   // the two files' own step numbers, as labels
     double maxAbs   = 0.0;
     double rms      = 0.0;
-    int    nBad     = 0;    // cells failing diffIsSignificant()
+    int    nBad     = 0;
     int    worstCell = -1;
     double aWorst = 0.0, bWorst = 0.0;
+    // The quantity itself, averaged over the field: pore-volume weighted when
+    // a PORV was found, else a plain cell mean. Weighted is the one that means
+    // something physically - an unweighted mean of PRESSURE is not the average
+    // reservoir pressure, it is the average of a set of numbers.
+    double aggA = 0.0, aggB = 0.0;
 };
 
 struct KeywordDiff {
     QString           keyword;
     QVector<StepDiff> steps;
-    int    firstBadSeqnum = -1;
+    QDateTime firstBad;            // invalid when it never differs
     long   totalBad       = 0;
     double maxAbsOverall  = 0.0;
     bool   clean() const { return totalBad == 0; }
 };
 
 struct CompareResult {
-    bool    ran = false;         // finished rather than failed or was cancelled
+    bool    ran = false;
     bool    cancelled = false;
-    QString problem;             // why it could not run, when !ran
+    QString problem;
 
-    // What the two cases have in common, and what they do not. Reported
-    // rather than silently intersected away: a step or a property missing
-    // from one side is usually the most interesting thing about a comparison.
-    QVector<int> steps;
-    QVector<int> stepsOnlyInA, stepsOnlyInB;
+    // Paired by date. What only one side has is reported, not intersected away.
+    QVector<QDateTime> times;
+    QVector<QDateTime> timesOnlyInA, timesOnlyInB;
+    QDateTime endA, endB;          // last report date of each run
     QStringList  kwOnlyInA, kwOnlyInB;
-    QString      gridNote;       // dimensions/active cells, or why they clash
+    QStringList  kwSkipped;        // present, but not one value per cell
+    QString      gridNote;
+    bool         porvWeighted = false;
 
     QVector<KeywordDiff> keywords;
 
     bool    identical() const;
-    QString verdict() const;     // the one line worth reading first
+    bool    sameEnd() const;       // both runs reached the same date
+    QString verdict() const;
 };
 
-// Compare the UNRST siblings of two SMSPEC paths. Runs on the calling thread;
-// `cancel` is polled between arrays and `progress` gets 0..100.
 CompareResult compareRestarts(const QString& smspecA, const QString& smspecB,
                               const DiffTol& tol,
                               std::atomic<int>* progress = nullptr,
                               std::atomic<bool>* cancel = nullptr);
 
 // ---------------------------------------------------------------------------
-// The tab: pick two cases, pick tolerances, get the verdict, and drill into
-// whichever property or report step the verdict points at.
-//
-// A tab and not a dialog. Asking whether two runs agree is a thing people come
-// to this program to do, on the same footing as running one or plotting one,
-// and a button at the end of a wrapping toolbar is where features go to be
-// missed. It also mirrors the case list the way the 3D tab does, so a run that
-// finishes while this is open can be compared without reopening anything.
+// Properties down, time across, colour for how far apart the two runs are.
+// The overview: with a dozen or more properties a line per property is a
+// tangle, and the question it has to answer first is WHICH property and WHEN,
+// not by how much.
+class DivergenceHeatmap : public QWidget
+{
+    Q_OBJECT
+public:
+    explicit DivergenceHeatmap(QWidget* parent = nullptr);
+    void setResult(const CompareResult* r, int metric, bool onlyDiffering);
+
+signals:
+    void cellPicked(const QString& keyword, const QDateTime& when);
+
+protected:
+    void paintEvent(QPaintEvent* ev) override;
+    void mousePressEvent(QMouseEvent* ev) override;
+    bool event(QEvent* ev) override;          // tooltips
+    QSize minimumSizeHint() const override;
+
+private:
+    int rowAt(int y) const;
+    int colAt(int x) const;
+    double valueAt(int row, int col) const;
+
+    const CompareResult* r_ = nullptr;
+    int  metric_ = 0;
+    bool onlyDiffering_ = true;
+    QVector<int> rows_;      // indices into r_->keywords, in display order
+    double vmax_ = 0.0;
+    int    labelW_ = 90;
+};
+
+// ---------------------------------------------------------------------------
 class RestartComparePanel : public QWidget
 {
     Q_OBJECT
@@ -129,7 +164,6 @@ public:
     explicit RestartComparePanel(QWidget* parent = nullptr);
     ~RestartComparePanel() override;
 
-    // The same case currency as the other tabs: the SMSPEC path.
     void addCase(const QString& label, const QString& smspecPath);
     void renameCase(const QString& smspecPath, const QString& label);
     void removeCase(const QString& smspecPath);
@@ -143,9 +177,10 @@ private:
     void showResult();
     void replot();
     void showKeywordDetail(const QString& keyword);
-    void showStepDetail(int seqnum);
+    void showStepDetail(const QDateTime& when);
     void refreshDetail();
     void syncCombos();
+    void pickFromHeatmap(const QString& keyword, const QDateTime& when);
 
     QComboBox*      caseA_ = nullptr;
     QComboBox*      caseB_ = nullptr;
@@ -157,9 +192,11 @@ private:
     QProgressBar*   bar_    = nullptr;
     QLabel*         verdict_ = nullptr;
     QLabel*         note_    = nullptr;
+    QTabWidget*     views_  = nullptr;
+    DivergenceHeatmap* heat_ = nullptr;
     QTableWidget*   table_  = nullptr;
-    QComboBox*      detailMode_ = nullptr;  // by property, or by report step
-    QComboBox*      detailPick_ = nullptr;  // which property / which step
+    QComboBox*      detailMode_ = nullptr;
+    QComboBox*      detailPick_ = nullptr;
     QLabel*         detailInfo_ = nullptr;
     QTableWidget*   detail_ = nullptr;
     QChart*         chart_  = nullptr;
