@@ -25,6 +25,7 @@
 #include <QDialog>
 #include <QDragEnterEvent>
 #include <QDropEvent>
+#include <QDateTime>
 #include <QDesktopServices>
 #include <QDir>
 #include <QFile>
@@ -1008,6 +1009,15 @@ void FlowGuiWindow::onRun(bool selectedOnly)
                                  "%3 logical cores of this machine.\n")
                       .arg(ranksSpin_->value()).arg(threadsSpin_->value()).arg(cores));
     aborted_ = false;
+    // Mark where this batch begins rather than clearing what came before it.
+    // A run that fails to start leaves no PRT, so the log is the only record
+    // of why - and that is exactly the run someone fixes and starts again.
+    // Dated, because a long log is read backwards from whatever went wrong.
+    appendLog(QStringLiteral("\n================================================================\n"
+                             "  run started %1  -  %2 job(s)\n"
+                             "================================================================\n")
+                  .arg(QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")))
+                  .arg(batch));
     setRunning(true);
     saveSettings();
     startNextJob();
