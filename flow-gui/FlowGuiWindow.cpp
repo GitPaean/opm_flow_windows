@@ -498,6 +498,13 @@ FlowGuiWindow::FlowGuiWindow()
                 [this](const QStringList& paths) { viewer3D_->reorderCases(paths); });
     }
 #endif
+    // "Open EGRID..." hands its file here rather than adding it itself. The
+    // Summary tab owns the case list: it is what recognises a case arriving
+    // spelled two ways, and what tags two runs sharing a file name with the
+    // folder that separates them. The case comes back to the 3D tab through
+    // caseAdded, named once and named the same everywhere.
+    connect(viewer3D_, &Viewer3DWidget::openCaseRequested, this,
+            [this](const QString& smspec) { openCaseEverywhere(smspec); });
 #endif
 
     // ================= Compare tab ==========================================
@@ -522,6 +529,8 @@ FlowGuiWindow::FlowGuiWindow()
         connect(summary_, &SummaryPlotWidget::caseOrder, compare_,
                 [this](const QStringList& paths) { compare_->reorderCases(paths); });
     }
+    connect(compare_, &flowgui::RestartComparePanel::openCaseRequested, this,
+            [this](const QString& smspec) { openCaseEverywhere(smspec); });
 #endif
 
     // ================= Deck editor tab ======================================
@@ -576,6 +585,27 @@ FlowGuiWindow::FlowGuiWindow()
 }
 
 // ---------------------------------------------------------------------------
+// A case picked in any tab, registered once. The Summary tab owns the list -
+// it dedupes, it tags two runs that share a name, and it is what the project
+// file records - so everything else routes through it and receives the case
+// back already named. Without summary support the tabs keep their own copy,
+// which is the most that can be offered then.
+void FlowGuiWindow::openCaseEverywhere(const QString& smspecPath)
+{
+    if (smspecPath.isEmpty()) return;
+#ifdef FLOWGUI_HAVE_SUMMARY
+    if (summary_) {
+        const QString label = QFileInfo(smspecPath).completeBaseName();
+        summary_->addCase(label, smspecPath);   // tags, dedupes, then emits
+        return;
+    }
+#endif
+#ifdef FLOWGUI_HAVE_3D
+    if (viewer3D_)
+        viewer3D_->addCase(QFileInfo(smspecPath).completeBaseName(), smspecPath);
+#endif
+}
+
 void FlowGuiWindow::loadSettings()
 {
     QSettings s(QStringLiteral("OPM"), QLatin1String(kAppName));

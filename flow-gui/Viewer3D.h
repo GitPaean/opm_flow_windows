@@ -118,6 +118,7 @@ private:
 // slider + play, Z exaggeration, and the GL canvas.
 class Viewer3DWidget : public QWidget
 {
+    Q_OBJECT
 public:
     explicit Viewer3DWidget(QWidget* parent = nullptr);
     ~Viewer3DWidget() override;
@@ -149,6 +150,15 @@ public:
     // at the end.
     void reorderCases(const QStringList& smspecPaths);
 
+signals:
+    // "Open EGRID..." picked a file. The tab does NOT add it itself: the
+    // Summary tab owns the case list - it is what dedupes a case arriving
+    // spelled two ways, and what tags two runs that share a file name with
+    // the folder that tells them apart - so a new case is handed there and
+    // arrives back through addCase() already named. Wired in FlowGuiWindow.
+    void openCaseRequested(const QString& smspecPath);
+
+public:
     // Session state: which case is shown, with which property, and how. The
     // case itself is only opened once the tab is looked at, so a restored
     // choice waits in pending* below until then.

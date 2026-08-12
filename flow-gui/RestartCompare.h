@@ -171,6 +171,12 @@ public:
 
     struct CaseEntry { QString label, smspec; };
 
+signals:
+    // "Add case..." picked a file. As in the 3D tab, it is handed to whoever
+    // owns the case list rather than added here, so it is deduped and named
+    // once and consistently across the tabs. Wired in FlowGuiWindow.
+    void openCaseRequested(const QString& smspecPath);
+
 private:
     void startCompare();
     void finishCompare();
@@ -189,6 +195,7 @@ private:
     QComboBox*      metric_ = nullptr;
     QCheckBox*      onlyBad_ = nullptr;
     QPushButton*    runBtn_ = nullptr;
+    QPushButton*    addBtn_ = nullptr;
     QProgressBar*   bar_    = nullptr;
     QLabel*         verdict_ = nullptr;
     QLabel*         note_    = nullptr;

@@ -114,6 +114,8 @@ private:
     void saveSettings();
     void appendLog(const QString& text);
     void setRunning(bool on);
+    // Register a case picked in any tab, through whichever list owns naming.
+    void openCaseEverywhere(const QString& smspecPath);
     void addDecks(const QStringList& files);
     void refreshRow(int i);
     void parseProgress(const QString& chunk);

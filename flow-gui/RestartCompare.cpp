@@ -15,6 +15,7 @@
 #include <QDateTimeAxis>
 #include <QDoubleSpinBox>
 #include <QEvent>
+#include <QFileDialog>
 #include <QFileInfo>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -532,6 +533,13 @@ RestartComparePanel::RestartComparePanel(QWidget* parent)
         "zero: there is no ratio to take, so the absolute tolerance decides "
         "on its own."));
 
+    // Its own way in. Mirroring the Summary tab is how the list is kept in
+    // step, but a tab you cannot put anything into reads as broken when it is
+    // the tab you happen to open first.
+    addBtn_ = new QPushButton(QStringLiteral("Add case..."));
+    addBtn_->setToolTip(QStringLiteral(
+        "open a run's SMSPEC (or EGRID) and add it to the case list shared "
+        "with the Summary Plots and 3D View tabs"));
     runBtn_ = new QPushButton(QStringLiteral("Compare"));
     bar_ = new QProgressBar; bar_->setRange(0, 100); bar_->setValue(0);
     bar_->setVisible(false);
@@ -541,6 +549,7 @@ RestartComparePanel::RestartComparePanel(QWidget* parent)
     top->addWidget(new QLabel(QStringLiteral("B:")));   top->addWidget(caseB_, 1);
     top->addWidget(new QLabel(QStringLiteral("abs:"))); top->addWidget(absTol_);
     top->addWidget(new QLabel(QStringLiteral("rel:"))); top->addWidget(relTol_);
+    top->addWidget(addBtn_);
     top->addWidget(runBtn_);
 
     verdict_ = new QLabel(QStringLiteral("pick two cases and press Compare"));
@@ -648,6 +657,18 @@ RestartComparePanel::RestartComparePanel(QWidget* parent)
     lay->addLayout(mrow);
     lay->addWidget(split, 1);
 
+    connect(addBtn_, &QPushButton::clicked, this, [this] {
+        const QString start = cases_.isEmpty()
+            ? QString() : QFileInfo(cases_.last().smspec).absolutePath();
+        const QString f = QFileDialog::getOpenFileName(
+            this, QStringLiteral("Add a case"), start,
+            QStringLiteral("Eclipse case (*.SMSPEC *.EGRID);;All files (*)"));
+        if (f.isEmpty()) return;
+        QString base = f;
+        if (base.endsWith(QStringLiteral(".EGRID"), Qt::CaseInsensitive)) base.chop(6);
+        else if (base.endsWith(QStringLiteral(".SMSPEC"), Qt::CaseInsensitive)) base.chop(7);
+        emit openCaseRequested(base + QStringLiteral(".SMSPEC"));
+    });
     connect(runBtn_, &QPushButton::clicked, this, [this] { startCompare(); });
     connect(metric_, &QComboBox::currentIndexChanged, this, [this](int) { replot(); });
     connect(onlyBad_, &QCheckBox::toggled, this, [this](bool) { replot(); });
@@ -702,11 +723,18 @@ void RestartComparePanel::addCase(const QString& label, const QString& smspecPat
     const QString p = normalizeCasePath(smspecPath);
     for (const auto& c : cases_) if (sameCasePath(c.smspec, p)) return;
     cases_.push_back({ label, p });
-    const int a = caseA_->currentIndex(), b = caseB_->currentIndex();
-    caseA_->addItem(label); caseB_->addItem(label);
+    const int a = caseA_->currentIndex();
+    // The path on the tooltip: two runs of one deck can only differ by folder,
+    // and the label is a tag at best.
+    caseA_->addItem(label); caseA_->setItemData(caseA_->count() - 1, p, Qt::ToolTipRole);
+    caseB_->addItem(label); caseB_->setItemData(caseB_->count() - 1, p, Qt::ToolTipRole);
     // A first pair is worth offering; after that, leave the user's choice be.
+    // Qt puts currentIndex at 0 the moment the first item lands, so testing
+    // "unset" never fires for B and both boxes would sit on the same case -
+    // whereupon Compare has nothing to do. The second case is the moment to
+    // offer a pair, and the only one.
     if (a < 0) caseA_->setCurrentIndex(0);
-    if (b < 0 && caseB_->count() > 1) caseB_->setCurrentIndex(1);
+    if (cases_.size() == 2) caseB_->setCurrentIndex(1);
 }
 
 void RestartComparePanel::renameCase(const QString& smspecPath, const QString& label)
@@ -747,7 +775,10 @@ void RestartComparePanel::reorderCases(const QStringList& smspecPaths)
     const QString b = caseB_->currentIndex() >= 0 ? cases_[caseB_->currentIndex()].smspec : QString();
     cases_ = out;
     caseA_->clear(); caseB_->clear();
-    for (const auto& c : cases_) { caseA_->addItem(c.label); caseB_->addItem(c.label); }
+    for (const auto& c : cases_) {
+        caseA_->addItem(c.label); caseA_->setItemData(caseA_->count() - 1, c.smspec, Qt::ToolTipRole);
+        caseB_->addItem(c.label); caseB_->setItemData(caseB_->count() - 1, c.smspec, Qt::ToolTipRole);
+    }
     for (int i = 0; i < cases_.size(); ++i) {
         if (!a.isEmpty() && sameCasePath(cases_[i].smspec, a)) caseA_->setCurrentIndex(i);
         if (!b.isEmpty() && sameCasePath(cases_[i].smspec, b)) caseB_->setCurrentIndex(i);

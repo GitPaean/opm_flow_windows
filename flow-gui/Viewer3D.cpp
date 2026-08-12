@@ -599,8 +599,17 @@ Viewer3DWidget::Viewer3DWidget(QWidget* parent)
             if (f.isEmpty()) return;
             flowgui::rememberDir(QStringLiteral("grid"), f);
             QString base = f; base.chop(6);   // ".EGRID"
-            addCase(QFileInfo(f).completeBaseName(), base + QStringLiteral(".SMSPEC"));
-            caseBox_->setCurrentIndex(caseBox_->count() - 1);
+            // Handed to whoever owns the case list rather than added here: two
+            // grids with the same file name in different folders would both
+            // come out called the same thing, and this tab has no way to tell
+            // them apart. It comes back through addCase(), tagged.
+            emit openCaseRequested(base + QStringLiteral(".SMSPEC"));
+            for (int i = 0; i < caseBox_->count(); ++i)
+                if (flowgui::sameCasePath(caseBox_->itemData(i).toString(),
+                                          base + QStringLiteral(".EGRID"))) {
+                    caseBox_->setCurrentIndex(i);
+                    break;
+                }
         });
         connect(bremove, &QPushButton::clicked, this,
                 [this] { removeCaseAt(caseBox_->currentIndex()); });
