@@ -610,6 +610,35 @@ QString SummaryPlotWidget::friendlyName(const QString& keyword, Cat cat)
     if (hasScopeLetter(cat) && body.size() > 1)
         body = body.mid(1);
 
+    // A stem does not always mean the same thing in every scope, and the
+    // table below is keyed by stem alone: PR is the average reservoir
+    // pressure of a field or a region, but a GROUP's PR is its nodal
+    // pressure and a BLOCK's is that block's, so answering from the stem
+    // states something false with the same confidence as something true.
+    // Anything genuinely scope-dependent is answered here or not at all -
+    // a keyword shown bare is honest, a wrong definition is not.
+    {
+        static const QHash<QString, QString> byScope = {
+            {QStringLiteral("G|PR"),  QStringLiteral("Group Nodal Pressure")},
+            {QStringLiteral("N|PR"),  QStringLiteral("Node Pressure")},
+            {QStringLiteral("B|PR"),  QStringLiteral("Block Pressure")},
+            {QStringLiteral("C|PR"),  QStringLiteral("Connection Pressure")},
+        };
+        static const QSet<QString> scopeDependent = { QStringLiteral("PR") };
+
+        QChar scope;
+        if (hasScopeLetter(cat) && keyword.size() > 1) scope = keyword.at(0);
+        if (!scope.isNull()) {
+            const auto sit = byScope.constFind(QString(scope) + QLatin1Char('|') + body);
+            if (sit != byScope.constEnd()) return sit.value();
+            // Scope-dependent and not listed for this scope: say nothing
+            // rather than fall through to another scope's meaning.
+            if (scopeDependent.contains(body) && scope != QLatin1Char('F')
+                && scope != QLatin1Char('R'))
+                return QString();
+        }
+    }
+
     auto it = table.constFind(body);
     if (it != table.constEnd()) return it.value();
 

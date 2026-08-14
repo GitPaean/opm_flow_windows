@@ -66,3 +66,30 @@ reading an older file that only has the global one.
 - Does a job keep the settings it actually ran with, so a finished run
   records how it was produced? That is arguably the more valuable half of
   the feature, and it is close to free once the record exists.
+
+---
+
+## 3. Audit the summary-keyword descriptions against a real source
+
+The "Oil Production Rate" text beside each mnemonic comes from a table
+hand-written in `SummaryPlotWidget::friendlyName()`. Nothing authoritative
+backs it: the entries were written from familiarity, matched on the stem
+left after stripping the scope letter.
+
+That matching was scope-blind, which made `GPR` read "Average Reservoir
+Pressure" (the meaning of `FPR`/`RPR`) when it is the group nodal
+pressure, and `BPR` the same when it is a block's. Both are fixed, and
+`friendlyName()` now returns nothing for a scope-dependent stem it has no
+entry for, so an unlabelled mnemonic is the failure mode rather than a
+confident wrong one.
+
+*What is left:* the rest of the table has never been checked. It is ~130
+entries and the same class of error can hide anywhere in it - a
+description that is right for one scope and quietly wrong for another.
+
+*Where to check against:* the OPM reference manual's summary appendix
+(`opm-reference-manual`, `parts/appendices`, ODF). Its `keyword-names`
+lists are deck keywords only and do not carry descriptions, so the text
+has to come from the appendix itself. Worth extracting once into a table
+that says where each line came from, rather than correcting entries one
+report at a time.
