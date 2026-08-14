@@ -3034,10 +3034,17 @@ int SummaryPlotWidget::plotChart(QChart* chart, const QList<int>& sel,
                                // encoding survives a literal one
     QString shown;
     if (plotCases.size() > 1) {
+        // Only what was actually drawn. A vector dropped for want of a third
+        // axis must not be counted in "+N more": the title would then claim
+        // the plot shows something it does not, which is how "+1 more" came
+        // to name a curve that is not there.
+        QList<int> drawn;
+        for (int i : sel)
+            if (i >= 0 && i < vecs_.size() && axisFor(vecs_[i].unit) >= 0)
+                drawn << i;
         QStringList parts;
         int named = 0;
-        for (int i : sel) {
-            if (i < 0 || i >= vecs_.size()) continue;
+        for (int i : drawn) {
             if (named == 2) break;
             const Vec& v = vecs_[i];
             const QString fn = friendlyName(v.keyword, v.cat);
@@ -3050,7 +3057,7 @@ int SummaryPlotWidget::plotChart(QChart* chart, const QList<int>& sel,
         shown = parts.join(QStringLiteral(",   "));
         // Two named and the rest counted: a title is a label, not a list, and
         // past two the legend is the place to read them off.
-        const int rest = int(sel.size()) - named;
+        const int rest = int(drawn.size()) - named;
         if (rest > 0) shown += QStringLiteral("   +%1 more").arg(rest);
     } else {
         shown = plotCases.front().first;
