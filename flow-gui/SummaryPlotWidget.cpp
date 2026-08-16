@@ -1858,15 +1858,24 @@ void SummaryPlotWidget::rebuildTree(const QStringList& reselect)
     // A term with * or ? is a wildcard pattern over the KEYWORD:ITEM key
     // (qsummary-style, e.g. WBHP:B*); a plain term matches as substring in
     // the key or the friendly quantity name.
-    QVector<QRegularExpression> wilds;
+    // A pattern naming no item is about the KEYWORD: W*PR means WOPR, WWPR,
+    // WVPR - not "a key that ends in PR", which nothing does once the item is
+    // on it (WOPR:D-1H). So a term without a ':' is matched against the
+    // keyword as well as the whole key; one with a ':' stays a key pattern,
+    // which is what WBHP:B* needs.
+    QVector<QRegularExpression> wilds;      // matched against the full key
+    QVector<QRegularExpression> wildsKw;    // ... and these against the keyword
     QStringList substrings;
     for (const QString& t : search.split(QLatin1Char(','), Qt::SkipEmptyParts)) {
         const QString term = t.trimmed();
         if (term.isEmpty()) continue;
-        if (term.contains(QLatin1Char('*')) || term.contains(QLatin1Char('?')))
-            wilds.push_back(QRegularExpression::fromWildcard(term, Qt::CaseInsensitive));
-        else
+        if (term.contains(QLatin1Char('*')) || term.contains(QLatin1Char('?'))) {
+            const auto re = QRegularExpression::fromWildcard(term, Qt::CaseInsensitive);
+            wilds.push_back(re);
+            if (!term.contains(QLatin1Char(':'))) wildsKw.push_back(re);
+        } else {
             substrings << term;
+        }
     }
 
     // Preserve the FOCUSED subplot's selection across any rebuild (filter
@@ -1905,6 +1914,9 @@ void SummaryPlotWidget::rebuildTree(const QStringList& reselect)
             bool hit = false;
             for (const auto& re : wilds)
                 if (re.match(v.key).hasMatch()) { hit = true; break; }
+            if (!hit)
+                for (const auto& re : wildsKw)
+                    if (re.match(v.keyword).hasMatch()) { hit = true; break; }
             if (!hit) {
                 const QString fn = friendlyName(v.keyword, v.cat);
                 for (const QString& s : substrings)

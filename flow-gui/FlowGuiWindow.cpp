@@ -11,6 +11,7 @@
 #ifdef FLOWGUI_HAVE_3D
   #include "Viewer3D.h"
 #endif
+#include "CasePath.h"
 #include "DeckEditor.h"
 #ifdef FLOWGUI_HAVE_SUMMARY
 #include "RestartCompare.h"
@@ -745,8 +746,11 @@ void FlowGuiWindow::addDecks(const QStringList& files)
         // case so its results are immediately available in the Results tab.
         if (summary_) {
             const QFileInfo di(f);
-            const QString prev = di.absolutePath() + '/' + di.completeBaseName()
-                + QStringLiteral("_run/") + di.completeBaseName() + QStringLiteral(".SMSPEC");
+            const QString prevDir = di.absolutePath() + '/' + di.completeBaseName()
+                + QStringLiteral("_run");
+            const QString prev = prevDir + '/'
+                + flowgui::outputBaseName(prevDir, di.completeBaseName())
+                + QStringLiteral(".SMSPEC");
             if (QFileInfo::exists(prev))
                 summary_->addCase(di.completeBaseName(), prev);
         }
@@ -1108,7 +1112,8 @@ void FlowGuiWindow::startNextJob()
     jobTimer_.start();
     refreshRow(current_);
 
-    const QString runSmspec = j.outdir + '/' + deckInfo.completeBaseName()
+    const QString runSmspec = j.outdir + '/'
+        + flowgui::outputBaseName(j.outdir, deckInfo.completeBaseName())
                             + QStringLiteral(".SMSPEC");
 #ifdef FLOWGUI_HAVE_SUMMARY
     if (summary_)
@@ -1150,7 +1155,8 @@ void FlowGuiWindow::startNextJob()
                        : (code == 0) ? Job::Done : Job::Failed;
             {
                 const QFileInfo di(jj.deck);
-                const QString smspec = jj.outdir + '/' + di.completeBaseName()
+                const QString smspec = jj.outdir + '/'
+                    + flowgui::outputBaseName(jj.outdir, di.completeBaseName())
                                      + QStringLiteral(".SMSPEC");
                 // The run is over, so both tabs reload the case in full,
                 // whichever way it ended: whatever they were showing was at
@@ -1314,9 +1320,12 @@ void FlowGuiWindow::viewJobFile(int row, const QString& ext)
     if (row < 0 || row >= jobs_.size()) return;
     const Job& j = jobs_[row];
     const QFileInfo deckInfo(j.deck);
-    const QString prt = (j.outdir.isEmpty()
-        ? deckInfo.absolutePath() : j.outdir) + '/'
-        + deckInfo.completeBaseName() + '.' + ext;
+    const QString dir = j.outdir.isEmpty() ? deckInfo.absolutePath() : j.outdir;
+    // flow upper-cases the case name, so the report is not necessarily
+    // spelled the way the deck is - View PRT would otherwise report a
+    // missing file for a run that wrote one.
+    const QString prt = dir + '/'
+        + flowgui::outputBaseName(dir, deckInfo.completeBaseName()) + '.' + ext;
     QFile f(prt);
     if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) {
         QMessageBox::information(this, QLatin1String(kAppName),
