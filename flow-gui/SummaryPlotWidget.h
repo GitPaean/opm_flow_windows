@@ -205,6 +205,8 @@ private:
     void populateItemBox();
     void populateSubItemBox();
     void rebuildTree(const QStringList& reselect);
+    // The tree's selection -> the focused subplot's curve list.
+    void applyTreeSelection();
     void replot();
     // How much to scale what is drawn on this chart: 1.0 at about the size of
     // a single chart in a normal window, less in a subplot layout or a small

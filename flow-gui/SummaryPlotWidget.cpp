@@ -51,6 +51,7 @@
 #include <QPainter>
 #include <QPdfWriter>
 #include <QShowEvent>
+#include <QMessageBox>
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QScrollBar>
@@ -907,6 +908,52 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
             "with * or ? the comma-separated patterns match the KEYWORD:ITEM "
             "key, e.g. WBHP:B*, WOPR*"));
         row->addWidget(filter_, 1);
+
+        // Filtering narrows the list; it deliberately does not plot, because a
+        // filter is also how you go looking for one vector among thousands.
+        // But a pattern like W*PR is usually meant as "these are the curves I
+        // want", and going on to click each leaf is the boring half of that -
+        // so offer the whole listed set in one press.
+        auto* plotAll = new QPushButton(QStringLiteral("Plot all listed"));
+        plotAll->setToolTip(QStringLiteral(
+            "select every vector the list currently shows, so the filter's "
+            "matches are plotted in one go"));
+        row->addWidget(plotAll);
+        connect(plotAll, &QPushButton::clicked, this, [this] {
+            QList<QTreeWidgetItem*> leaves;
+            for (int i = 0; i < tree_->topLevelItemCount(); ++i) {
+                auto* g = tree_->topLevelItem(i);
+                if (g->childCount() == 0) { leaves << g; continue; }
+                for (int j = 0; j < g->childCount(); ++j) leaves << g->child(j);
+            }
+            if (leaves.isEmpty()) {
+                setStatus(QStringLiteral("nothing to plot: the filter matches no vector"));
+                return;
+            }
+            // A wide pattern over a big case can list thousands of vectors, and
+            // each is a curve per checked case. Say what that would mean before
+            // spending it, rather than appearing to hang.
+            int cases = 0;
+            for (int i = 0; i < caseList_->count(); ++i)
+                if (caseList_->item(i)->checkState() == Qt::Checked) ++cases;
+            const int curves = leaves.size() * std::max(1, cases);
+            if (curves > 60 &&
+                QMessageBox::question(this, QStringLiteral("Summary plots"),
+                    QStringLiteral("Plot %1 vectors across %2 case(s) - %3 curves?\n"
+                                   "Narrow the filter for fewer.")
+                        .arg(leaves.size()).arg(std::max(1, cases)).arg(curves))
+                    != QMessageBox::Yes)
+                return;
+            // Select in bulk with the tree quiet, then replot once.
+            syncingTree_ = true;
+            tree_->clearSelection();
+            for (auto* it : std::as_const(leaves)) {
+                if (it->parent()) it->parent()->setExpanded(true);
+                it->setSelected(true);
+            }
+            syncingTree_ = false;
+            applyTreeSelection();
+        });
         top->addLayout(row);
 
         // Cascade: category -> item -> cell; each level repopulates the next.
@@ -1038,17 +1085,8 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
         split->setSizes({ 320, 680 });
         top->addWidget(split, 1);
 
-        connect(tree_, &QTreeWidget::itemSelectionChanged, this, [this] {
-            if (syncingTree_) return;      // programmatic reselect, not the user
-            QStringList keys;
-            for (auto* it : tree_->selectedItems()) {
-                const QVariant k = it->data(0, RoleVecIndex);
-                if (k.isValid()) keys << k.toString();
-            }
-            if (focusChart_ >= 0 && focusChart_ < chartSel_.size())
-                chartSel_[focusChart_] = keys;
-            replot();
-        });
+        connect(tree_, &QTreeWidget::itemSelectionChanged, this,
+                &SummaryPlotWidget::applyTreeSelection);
     }
 
     setLayoutGrid(1, 1);        // labels the button, lays the single chart out
@@ -2392,6 +2430,22 @@ bool SummaryPlotWidget::eventFilter(QObject* obj, QEvent* ev)
         }
     }
     return QWidget::eventFilter(obj, ev);   // otherwise let zooming work
+}
+
+// What the tree has selected becomes the focused subplot's curve list. Its
+// own signal calls this, and so does "Plot all listed" after selecting in
+// bulk - one replot for the lot rather than one per item.
+void SummaryPlotWidget::applyTreeSelection()
+{
+    if (syncingTree_) return;          // programmatic reselect, not the user
+    QStringList keys;
+    for (auto* it : tree_->selectedItems()) {
+        const QVariant k = it->data(0, RoleVecIndex);
+        if (k.isValid()) keys << k.toString();
+    }
+    if (focusChart_ >= 0 && focusChart_ < chartSel_.size())
+        chartSel_[focusChart_] = keys;
+    replot();
 }
 
 void SummaryPlotWidget::replot()
