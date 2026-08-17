@@ -739,7 +739,24 @@ void FlowGuiWindow::onAddDecks()
 
 void FlowGuiWindow::addDecks(const QStringList& files)
 {
+    // A deck already queued is not added twice. Two rows for one deck run the
+    // same deck with the same options into the same output directory, so the
+    // second would quietly overwrite the first one's results - and re-running
+    // a finished job is what Run queue already offers. The existing row is
+    // selected instead, so the answer to "where did it go" is on screen.
+    int duplicates = 0;
+    int firstExisting = -1;
     for (const QString& f : files) {
+        int existing = -1;
+        for (int i = 0; i < jobs_.size(); ++i)
+            if (flowgui::sameCasePath(jobs_[i].deck, f)) { existing = i; break; }
+        if (existing >= 0) {
+            ++duplicates;
+            if (firstExisting < 0) firstExisting = existing;
+            appendLog(QStringLiteral("already in the queue, not added again: %1\n")
+                          .arg(QDir::toNativeSeparators(f)));
+            continue;
+        }
         Job j; j.deck = QDir::toNativeSeparators(f);
 #ifdef FLOWGUI_HAVE_SUMMARY
         // If this deck already has finished output next to it, register the
@@ -765,6 +782,15 @@ void FlowGuiWindow::addDecks(const QStringList& files)
         jobTable_->setCellWidget(r, ColProgress, bar);
         jobTable_->setItem(r, ColElapsed, new QTableWidgetItem(QStringLiteral("-")));
         jobTable_->setItem(r, ColEta,     new QTableWidgetItem(QStringLiteral("-")));
+    }
+
+    if (firstExisting >= 0) {
+        jobTable_->clearSelection();
+        jobTable_->selectRow(firstExisting);
+        jobTable_->scrollToItem(jobTable_->item(firstExisting, ColDeck));
+        jobTable_->setCurrentCell(firstExisting, ColDeck);
+        appendLog(QStringLiteral("%1 deck(s) were already queued; showing the first\n")
+                      .arg(duplicates));
     }
 }
 
