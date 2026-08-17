@@ -93,6 +93,8 @@ signals:
 protected:
     // The active case's files may have appeared while the tab was hidden.
     void showEvent(QShowEvent* ev) override;
+    // Leaving the tab stops the refresh timer; coming back resumes it.
+    void hideEvent(QHideEvent* ev) override;
 
 private:
     // one plottable summary vector, parsed from an ESmry SummaryNode
@@ -170,6 +172,8 @@ private:
     QComboBox*      colourByBox_ = nullptr;       // what colour keys: auto/vector/case
     QLabel*      status_    = nullptr;
     QTimer*      timer_     = nullptr;
+    // Consecutive refreshes that found nothing written; paces the timer.
+    int          idleTicks_ = 0;
 
     std::unique_ptr<Opm::EclIO::ESmry> smry_;   // the ACTIVE case
     QString smryPath_;                           // ... and the case it holds:
@@ -205,6 +209,8 @@ private:
     void populateItemBox();
     void populateSubItemBox();
     void rebuildTree(const QStringList& reselect);
+    // Start, stop or re-pace the auto-refresh timer for the current state.
+    void syncRefreshTimer();
     // The tree's selection -> the focused subplot's curve list.
     void applyTreeSelection();
     void replot();

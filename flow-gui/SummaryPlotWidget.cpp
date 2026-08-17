@@ -78,6 +78,16 @@
 #include <utility>
 #include <vector>
 
+// Auto-refresh cadence: fast while the plotted files change, then two steps
+// down. Six fast ticks of nothing (a minute) is a settled case, twelve is one
+// nobody is writing at all.
+static constexpr int kFastRefreshMs  = 10000;
+static constexpr int kSlowRefreshMs  = 30000;
+static constexpr int kQuietRefreshMs = 60000;
+static constexpr int kIdleTicksSlow  = 6;
+static constexpr int kIdleTicksQuiet = 12;
+
+
 using Opm::EclIO::ESmry;
 using Cat  = Opm::EclIO::SummaryNode::Category;
 using Type = Opm::EclIO::SummaryNode::Type;
@@ -671,7 +681,11 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
         top->addWidget(FlowLayout::host(&row));
         auto* bbrowse  = new QPushButton(QStringLiteral("Open SMSPEC..."));
         auto* brefresh = new QPushButton(QStringLiteral("Refresh"));
-        autoRef_ = new QCheckBox(QStringLiteral("auto-refresh (10 s)"));
+        autoRef_ = new QCheckBox(QStringLiteral("auto-refresh"));
+        autoRef_->setToolTip(QStringLiteral(
+            "re-read the plotted cases as they are written: every 10 s while\n"
+            "something is changing, dropping to a minute once nothing is, and\n"
+            "not at all while another tab is shown"));
         dateAxis_ = new QCheckBox(QStringLiteral("date axis"));
         dateAxis_->setChecked(true);   // calendar dates by default
         markers_  = new QCheckBox(QStringLiteral("markers"));
@@ -873,10 +887,11 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
         connect(bpng,  &QPushButton::clicked, this, [this] { savePng(); });
         connect(bcsv,  &QPushButton::clicked, this, [this] { saveCsv(); });
         timer_ = new QTimer(this);
-        timer_->setInterval(10000);
+        timer_->setInterval(kFastRefreshMs);
         connect(timer_, &QTimer::timeout, this, [this] { reload(true); });
-        connect(autoRef_, &QCheckBox::toggled, this, [this](bool on) {
-            if (on) timer_->start(); else timer_->stop();
+        connect(autoRef_, &QCheckBox::toggled, this, [this](bool) {
+            idleTicks_ = 0;          // a fresh tick-off deserves a fast look
+            syncRefreshTimer();
         });
         // On by default: a plot of a run in progress that silently stops
         // updating is the more surprising behaviour, and re-reading a summary
@@ -1594,6 +1609,35 @@ void SummaryPlotWidget::showEvent(QShowEvent* ev)
 {
     QWidget::showEvent(ev);
     if (!smry_ && QFileInfo::exists(activePath())) reload(false);
+    // Coming back to the tab: catch up on whatever was written while it was
+    // away (cheap - an unchanged case costs a few stat calls), then resume.
+    else if (autoRef_ && autoRef_->isChecked()) { idleTicks_ = 0; reload(true); }
+    syncRefreshTimer();
+}
+
+void SummaryPlotWidget::hideEvent(QHideEvent* ev)
+{
+    QWidget::hideEvent(ev);
+    syncRefreshTimer();        // another tab is up: stop polling entirely
+}
+
+// When the refresh timer should run, and how often. Three things make an
+// auto-refresh tick worth nothing: no case to follow, a case nobody is
+// writing, and a tab nobody is looking at - and the last two are the normal
+// state of a plot, which is studied far longer than it takes to produce.
+// So: 10 s while the files are changing, backing off to a minute once they
+// are not, and stopped while this tab is not the one on screen. Any changed
+// byte snaps it back, so a run started here or in a terminal is picked up
+// within a tick either way.
+void SummaryPlotWidget::syncRefreshTimer()
+{
+    if (!timer_ || !autoRef_) return;
+    if (!autoRef_->isChecked() || !isVisible()) { timer_->stop(); return; }
+    const int want = idleTicks_ < kIdleTicksSlow  ? kFastRefreshMs
+                   : idleTicks_ < kIdleTicksQuiet ? kSlowRefreshMs
+                                                  : kQuietRefreshMs;
+    if (timer_->interval() != want) timer_->setInterval(want);   // restarts it
+    if (!timer_->isActive()) timer_->start();
 }
 
 void SummaryPlotWidget::removeCurrentCase()
@@ -1683,8 +1727,18 @@ void SummaryPlotWidget::reload(bool keepSelection)
     // case - a plot is looked at far longer than it takes to produce.
     const QString stamp = plottedStamp();
     if (keepSelection && smry_ && path == smryPath_
-        && !stamp.isEmpty() && stamp == loadedStamp_)
+        && !stamp.isEmpty() && stamp == loadedStamp_) {
+        ++idleTicks_;              // nothing is being written; poll less often
+        syncRefreshTimer();
         return;
+    }
+    // Past the guard: either the files changed or this is a deliberate reload,
+    // and both want the fast pace back. Set here rather than after the read
+    // below, because a read that fails is not evidence of an idle case - a
+    // half-written file is unreadable for a moment precisely while a run is
+    // writing it, which is when following it matters most.
+    idleTicks_ = 0;
+    syncRefreshTimer();
 
     QStringList reselect;
     if (keepSelection)
