@@ -1363,9 +1363,41 @@ void FlowGuiWindow::viewJobFile(int row, const QString& ext)
     if (f.size() > kMax) f.seek(f.size() - kMax);
     const QString text = QString::fromLocal8Bit(f.readAll());
 
+    // One viewer per file. Pressing View DBG again used to stack a second
+    // window on the first, and the useful one was then whichever happened to
+    // be on top. Reread the file into the open window and bring that forward
+    // instead: a run appends to its report, so what a second press is usually
+    // after is the part that has arrived since - and rereading here means the
+    // View button doubles as the refresh this window did not have.
+    const QString viewerKey = flowgui::normalizeCasePath(prt);
+    if (auto* open = reportViewers_.value(viewerKey)) {
+        if (auto* view = open->findChild<QPlainTextEdit*>()) {
+            // Stay where the reader was. Following the tail is the common
+            // case, so a view already at the end follows the new end.
+            auto* sb = view->verticalScrollBar();
+            const bool atEnd = sb->value() == sb->maximum();
+            const int  where = sb->value();
+            view->setPlainText(text);
+            if (atEnd) view->moveCursor(QTextCursor::End);
+            else       sb->setValue(std::min(where, sb->maximum()));
+        }
+        if (open->isMinimized()) open->showNormal();   // but leave a maximised
+        open->raise();                                 // window maximised
+        open->activateWindow();
+        return;
+    }
+
     auto* dlg = new QDialog(this);
     dlg->setAttribute(Qt::WA_DeleteOnClose);
+    // A plain window, not a dialog: a report is read for a long time, next to
+    // the plot it explains, and a window manager gives a Qt::Dialog no
+    // maximise - which is exactly what a 135-column fixed-width report wants,
+    // vertically most of all.
+    dlg->setWindowFlags(Qt::Window);
     dlg->setWindowTitle(QFileInfo(prt).fileName());
+    reportViewers_.insert(viewerKey, dlg);
+    connect(dlg, &QObject::destroyed, this,
+            [this, viewerKey] { reportViewers_.remove(viewerKey); });
     auto* lay = new QVBoxLayout(dlg);
 
     auto* view = new QPlainTextEdit;

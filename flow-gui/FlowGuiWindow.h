@@ -10,6 +10,7 @@
 #pragma once
 
 #include <QElapsedTimer>
+#include <QHash>
 #include <QMainWindow>
 #include <QString>
 #include <QStringList>
@@ -18,6 +19,7 @@
 class QCheckBox;
 class QCloseEvent;
 class QComboBox;
+class QDialog;
 class QDragEnterEvent;
 class QDropEvent;
 class QLineEdit;
@@ -100,6 +102,9 @@ private:
     QString       logPend_;       // batched log text (flushed every 100 ms)
     QTimer*       logTimer_ = nullptr;
     QString       projectPath_;   // current .opmproj file ("" = unsaved)
+    // Open PRT/DBG viewers by normalised file path, so a second View press
+    // raises the window already showing that report rather than cloning it.
+    QHash<QString, QDialog*> reportViewers_;
 
     // helpers
     static QString findFlowExe();
