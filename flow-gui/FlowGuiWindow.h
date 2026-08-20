@@ -37,7 +37,7 @@ class QTimer;
 class DeckEditorWidget;
 class SummaryPlotWidget;
 class Viewer3DWidget;
-namespace flowgui { class RestartComparePanel; }
+namespace flowgui { class RestartComparePanel; class StructurePanel; }
 
 class FlowGuiWindow : public QMainWindow
 {
@@ -87,6 +87,8 @@ private:
     Viewer3DWidget*    viewer3D_ = nullptr;   // null when built without 3D
     // The restart comparison tab; null when built without summary support.
     flowgui::RestartComparePanel* compare_ = nullptr;
+    // The group tree / network view; null when built without the deck model.
+    flowgui::StructurePanel* structure_ = nullptr;
     DeckEditorWidget*  deckEd_   = nullptr;
 
     // run state

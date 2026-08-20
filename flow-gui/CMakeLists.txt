@@ -65,6 +65,54 @@ if(Qt6OpenGLWidgets_FOUND AND EXISTS "${_opmlib}"
 endif()
 message(STATUS "flow-gui 3D viewer: ${FLOWGUI_HAVE_3D}")
 
+# --- optional deck model: the group tree and the network -------------------
+# Needs opm-common's Parser/EclipseState/Schedule rather than only its EclIO
+# file readers, which is a heavier link than the rest of this program takes:
+# depending on how opm-common was configured it drags in cJSON, and libpython
+# when it was built with the Python bindings. So it is not assumed - it is
+# tried, once, and the feature exists only where the link actually succeeds.
+# A package built without those libraries simply has no Structure tab, which
+# is better than a build that will not link.
+set(FLOWGUI_HAVE_DECKMODEL OFF)
+if(EXISTS "${FLOWGUI_OPM_PREFIX}/include/opm/input/eclipse/Schedule/Schedule.hpp")
+    include(CheckCXXSourceCompiles)
+    set(_dm_libs "${_opmlib}" "${FLOWGUI_FMT_LIB}")
+    find_library(FLOWGUI_CJSON_LIB NAMES cjson libcjson)
+    if(FLOWGUI_CJSON_LIB)
+        list(APPEND _dm_libs "${FLOWGUI_CJSON_LIB}")
+    endif()
+    find_package(Python3 COMPONENTS Development QUIET)
+    if(Python3_LIBRARIES)
+        list(APPEND _dm_libs ${Python3_LIBRARIES})
+    endif()
+    if(NOT MSVC)
+        find_package(OpenMP QUIET)
+        if(OpenMP_CXX_FOUND)
+            list(APPEND _dm_libs OpenMP::OpenMP_CXX)
+        endif()
+    endif()
+    set(CMAKE_REQUIRED_INCLUDES  "${FLOWGUI_OPM_PREFIX}/include")
+    set(CMAKE_REQUIRED_LIBRARIES ${_dm_libs})
+    check_cxx_source_compiles("
+        #include <opm/input/eclipse/Parser/Parser.hpp>
+        #include <opm/input/eclipse/EclipseState/EclipseState.hpp>
+        #include <opm/input/eclipse/Schedule/Schedule.hpp>
+        #include <opm/input/eclipse/Python/Python.hpp>
+        int main() {
+            Opm::Parser p;
+            auto py = std::make_shared<Opm::Python>();
+            return int(p.size()) + int(py != nullptr);
+        }" FLOWGUI_DECKMODEL_LINKS)
+    unset(CMAKE_REQUIRED_INCLUDES)
+    unset(CMAKE_REQUIRED_LIBRARIES)
+    if(FLOWGUI_DECKMODEL_LINKS)
+        set(FLOWGUI_HAVE_DECKMODEL ON)
+        set(FLOWGUI_DECKMODEL_LIBS ${_dm_libs})
+        list(APPEND FLOWGUI_SOURCES DeckModel.cpp DeckModel.h)
+    endif()
+endif()
+message(STATUS "flow-gui deck model (group tree / network): ${FLOWGUI_HAVE_DECKMODEL}")
+
 qt_add_executable(flow-gui WIN32 MACOSX_BUNDLE ${FLOWGUI_SOURCES})
 target_compile_definitions(flow-gui PRIVATE FLOWGUI_VERSION="${PROJECT_VERSION}")
 target_link_libraries(flow-gui PRIVATE Qt6::Widgets)
@@ -90,6 +138,11 @@ qt_add_resources(flow-gui "appicon"
         icons/flow-gui-64.png
         icons/flow-gui-128.png
         icons/flow-gui-256.png)
+
+if(FLOWGUI_HAVE_DECKMODEL)
+    target_compile_definitions(flow-gui PRIVATE FLOWGUI_HAVE_DECKMODEL)
+    target_link_libraries(flow-gui PRIVATE ${FLOWGUI_DECKMODEL_LIBS})
+endif()
 
 if(FLOWGUI_HAVE_3D)
     target_compile_definitions(flow-gui PRIVATE FLOWGUI_HAVE_3D)

@@ -13,6 +13,9 @@
 #endif
 #include "CasePath.h"
 #include "DeckEditor.h"
+#ifdef FLOWGUI_HAVE_DECKMODEL
+#include "DeckModel.h"
+#endif
 #ifdef FLOWGUI_HAVE_SUMMARY
 #include "RestartCompare.h"
 #endif
@@ -533,6 +536,15 @@ FlowGuiWindow::FlowGuiWindow()
     }
     connect(compare_, &flowgui::RestartComparePanel::openCaseRequested, this,
             [this](const QString& smspec) { openCaseEverywhere(smspec); });
+#endif
+
+    // ================= Structure tab ========================================
+    // What the field looks like: which groups feed which, where the wells
+    // hang, and how the network is plumbed. Read from the deck, so it answers
+    // before a run rather than after one.
+#ifdef FLOWGUI_HAVE_DECKMODEL
+    structure_ = new flowgui::StructurePanel;
+    tabs_->addTab(structure_, QStringLiteral("Structure"));
 #endif
 
     // ================= Deck editor tab ======================================
