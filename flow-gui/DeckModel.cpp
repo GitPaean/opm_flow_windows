@@ -21,6 +21,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QPainter>
+#include <QMouseEvent>
 #include <QPainterPath>
 #include <QProgressBar>
 #include <QPushButton>
@@ -52,6 +53,32 @@
 
 namespace flowgui {
 
+QString injectName(Inject d)
+{
+    switch (d) {
+        case Inject::Water: return QStringLiteral("water injector");
+        case Inject::Gas:   return QStringLiteral("gas injector");
+        case Inject::Oil:   return QStringLiteral("oil injector");
+        case Inject::Multi: return QStringLiteral("multi-phase injector");
+    }
+    return QStringLiteral("injector");
+}
+
+namespace {
+// What to draw a well as, at this moment: producers are one thing, injectors
+// three, since water and gas going back in are not the same operation and the
+// picture is read by people for whom that distinction is the point.
+int wellKind(const Structure& s, const QString& well)
+{
+    if (!s.injectors.contains(well)) return GraphView::KindProducer;
+    switch (s.injectors.value(well)) {
+        case Inject::Water: return GraphView::KindInjWater;
+        case Inject::Gas:   return GraphView::KindInjGas;
+        default:            return GraphView::KindInjOther;
+    }
+}
+} // namespace
+
 const GroupNode* Structure::find(const QString& name) const
 {
     for (const auto& g : groups) if (g.name == name) return &g;
@@ -78,8 +105,9 @@ QString Structure::fingerprint() const
     // Injectors count towards identity: converting a producer changes nothing
     // about the hierarchy but everything about what the picture says, and a
     // step that only did that would otherwise collapse into the one before it.
-    QStringList inj = injectors;
-    inj.sort();
+    QStringList inj;
+    for (auto it = injectors.cbegin(); it != injectors.cend(); ++it)
+        inj << it.key() + QLatin1Char('=') + QString::number(int(it.value()));
     return bits.join(QLatin1Char(';')) + QStringLiteral("|") + nb.join(QLatin1Char(';'))
            + QStringLiteral("|") + inj.join(QLatin1Char(','))
            + QStringLiteral("|%1%2").arg(int(netActive)).arg(int(netStandard));
@@ -119,9 +147,14 @@ Structure snapshotAt(const Opm::Schedule& sched, std::size_t step)
         for (const auto& w : g.wells()) {
             const QString wn = QString::fromStdString(w);
             n.wells << wn;
-            if (st.wells.has(w) && st.wells.get(w).isInjector()
-                && !s.injectors.contains(wn))
-                s.injectors << wn;
+            if (st.wells.has(w) && st.wells.get(w).isInjector()) {
+                switch (st.wells.get(w).injectorType()) {
+                    case Opm::InjectorType::WATER: s.injectors[wn] = Inject::Water; break;
+                    case Opm::InjectorType::GAS:   s.injectors[wn] = Inject::Gas;   break;
+                    case Opm::InjectorType::OIL:   s.injectors[wn] = Inject::Oil;   break;
+                    default:                       s.injectors[wn] = Inject::Multi; break;
+                }
+            }
         }
         s.groups.push_back(n);
     }
@@ -204,6 +237,8 @@ DeckStructure readDeckStructure(const QString& dataFile,
 GraphView::GraphView(QWidget* parent) : QWidget(parent)
 {
     setMinimumHeight(160);
+    setToolTip(QStringLiteral(
+        "drag the key to move it; double-click it to put it back"));
     setAutoFillBackground(true);
     QPalette pal = palette();
     pal.setColor(QPalette::Window, Qt::white);
@@ -298,24 +333,15 @@ void GraphView::relayout()
 void GraphView::paintNode(QPainter& p, const QRectF& r, const QString& text,
                           int kind, bool root, bool hot) const
 {
-    QColor fill, line, ink(0x22, 0x26, 0x2b);
-    switch (kind) {
-        case KindProducer:  fill = QColor(0xdc, 0xef, 0xd8); line = QColor(0x2e, 0x7d, 0x32);
-                            ink  = QColor(0x1b, 0x5e, 0x20); break;
-        case KindInjector:  fill = QColor(0xd8, 0xe6, 0xfa); line = QColor(0x15, 0x65, 0xc0);
-                            ink  = QColor(0x0d, 0x47, 0xa1); break;
-        case KindWellGroup: fill = QColor(0xfa, 0xef, 0xd6); line = QColor(0xa8, 0x7a, 0x2c);
-                            ink  = QColor(0x6b, 0x4a, 0x0f); break;
-        default:            fill = QColor(0xe8, 0xf6, 0xef); line = QColor(0x7a, 0x86, 0x92);
-                            break;
-    }
+    QColor fill, line, ink;
+    kindColours(kind, fill, line, ink);
     if (root) { fill = QColor(0x00, 0x3c, 0x65); ink = Qt::white; line = fill.darker(115); }
     if (hot)  { fill = QColor(0xff, 0xf1, 0xdd); line = QColor(0xd5, 0x5e, 0x00);
                 ink  = QColor(0x22, 0x26, 0x2b); }
 
     p.setPen(QPen(line, hot ? 2.0 : 1.2));
     p.setBrush(fill);
-    if (kind == KindProducer || kind == KindInjector) {
+    if (isWellKind(kind)) {
         p.drawEllipse(r);
     } else {
         p.drawRoundedRect(r, 4, 4);
@@ -331,11 +357,47 @@ void GraphView::paintNode(QPainter& p, const QRectF& r, const QString& text,
     p.drawText(r, Qt::AlignCenter, text);
 }
 
+// The one place the palette lives. The tree pane reads its text colours from
+// here too, so the two panes cannot drift apart into two colour schemes.
+void GraphView::kindColours(int kind, QColor& fill, QColor& line, QColor& ink)
+{
+    ink = QColor(0x22, 0x26, 0x2b);
+    switch (kind) {
+        case KindProducer:  fill = QColor(0xdc, 0xef, 0xd8); line = QColor(0x2e, 0x7d, 0x32);
+                            ink  = QColor(0x1b, 0x5e, 0x20); break;
+        case KindInjWater:  fill = QColor(0xd8, 0xe6, 0xfa); line = QColor(0x15, 0x65, 0xc0);
+                            ink  = QColor(0x0d, 0x47, 0xa1); break;
+        case KindInjGas:    fill = QColor(0xfa, 0xdc, 0xdc); line = QColor(0xc6, 0x28, 0x28);
+                            ink  = QColor(0x8e, 0x1c, 0x1c); break;
+        case KindInjOther:  fill = QColor(0xec, 0xe0, 0xf5); line = QColor(0x6a, 0x3d, 0x9a);
+                            ink  = QColor(0x4a, 0x2a, 0x6b); break;
+        case KindWellGroup: fill = QColor(0xfa, 0xef, 0xd6); line = QColor(0xa8, 0x7a, 0x2c);
+                            ink  = QColor(0x6b, 0x4a, 0x0f); break;
+        default:            fill = QColor(0xe8, 0xf6, 0xef); line = QColor(0x7a, 0x86, 0x92);
+                            break;
+    }
+}
+
+QColor GraphView::kindInk(int kind)
+{
+    QColor fill, line, ink;
+    kindColours(kind, fill, line, ink);
+    return ink;
+}
+
+bool GraphView::isWellKind(int kind)
+{
+    return kind == KindProducer || kind == KindInjWater
+        || kind == KindInjGas   || kind == KindInjOther;
+}
+
 QString GraphView::kindName(int kind)
 {
     switch (kind) {
         case KindProducer:  return QStringLiteral("producer");
-        case KindInjector:  return QStringLiteral("injector");
+        case KindInjWater:  return QStringLiteral("water injector");
+        case KindInjGas:    return QStringLiteral("gas injector");
+        case KindInjOther:  return QStringLiteral("other injector");
         case KindWellGroup: return QStringLiteral("well group");
         default:            return QStringLiteral("group");
     }
@@ -355,19 +417,8 @@ void GraphView::render(QPainter& p, const QRectF& area) const
     const QFontMetricsF fm(nf);
     const double boxH = fm.height() + 10;
 
-    // A key, when there is more than one kind of thing on screen. Colour the
-    // reader has to guess at is worse than no colour, and an exported picture
-    // travels away from whoever made it - so the key belongs in the drawing,
-    // not in the window around it.
-    QVector<int> keyKinds;
-    for (const auto& q : placed_) {
-        const int k = kinds_.value(q.name, KindGroup);
-        if (k != KindNetwork && !keyKinds.contains(k)) keyKinds << k;
-    }
-    if (keyKinds.size() < 2) keyKinds.clear();
-    std::sort(keyKinds.begin(), keyKinds.end());
-    const double keyH = keyKinds.isEmpty() ? 0.0 : boxH + 10;
-    const QRectF plot = area.adjusted(0, 0, 0, -keyH);
+    const QVector<int> kk = keyKinds();
+    const QRectF plot = area;
 
     const double rowGap = maxDepth_ > 0
         ? (plot.height() - boxH - 24) / maxDepth_ : 0.0;
@@ -375,8 +426,7 @@ void GraphView::render(QPainter& p, const QRectF& area) const
     // A well sits in an ellipse, which needs more width than a rectangle does
     // to hold the same text without the curve eating its ends.
     auto isWell = [&](const QString& n) {
-        const int k = kinds_.value(n, KindGroup);
-        return k == KindProducer || k == KindInjector;
+        return isWellKind(kinds_.value(n, KindGroup));
     };
     auto boxOf = [&](const Placed& q) {
         const double pad = isWell(q.name) ? 28.0 : 18.0;
@@ -419,18 +469,125 @@ void GraphView::render(QPainter& p, const QRectF& area) const
         paintNode(p, boxOf(q), q.name, kinds_.value(q.name, KindGroup),
                   q.depth == 0, !highlight_.isEmpty() && q.name == highlight_);
 
-    if (keyKinds.isEmpty()) return;
-    QFont kf = p.font(); kf.setPointSizeF(8.0); kf.setBold(false);
+    if (kk.isEmpty()) return;
+
+    // The key floats over the drawing rather than taking a strip off it: it is
+    // small, the corner it starts in is usually empty, and where it should go
+    // depends on the graph - so it is draggable, and drag beats guessing.
+    const QFont kf = keyFont();
     p.setFont(kf);
     const QFontMetricsF kfm(kf);
-    double x = area.left() + 20;
-    const double y = area.bottom() - keyH + 5;
-    for (int k : keyKinds) {
-        const QString lbl = kindName(k);
-        const double w = std::max(46.0, kfm.horizontalAdvance(lbl) + 22);
-        paintNode(p, QRectF(x, y, w, boxH - 2), lbl, k, false, false);
-        x += w + 10;
+    const QRectF kr = keyRect(area, kfm);
+    const double rowH = kfm.height() + 6;
+
+    p.setPen(QPen(QColor(0xb6, 0xbe, 0xc6), 1.0));
+    p.setBrush(QColor(255, 255, 255, 235));
+    p.drawRoundedRect(kr, 5, 5);
+
+    double ky = kr.top() + 7;
+    for (int k : kk) {
+        paintNode(p, QRectF(kr.left() + 10, ky + (rowH - 14) / 2, 26, 14),
+                  QString(), k, false, false);
+        p.setPen(QColor(0x33, 0x38, 0x3d));
+        p.drawText(QRectF(kr.left() + 44, ky, kr.width() - 52, rowH),
+                   Qt::AlignVCenter | Qt::AlignLeft, kindName(k));
+        ky += rowH;
     }
+}
+
+QFont GraphView::keyFont() const
+{
+    QFont f = font();
+    f.setPointSizeF(8.0);
+    f.setBold(false);
+    return f;
+}
+
+QVector<int> GraphView::keyKinds() const
+{
+    QVector<int> kk;
+    for (const auto& q : placed_) {
+        const int k = kinds_.value(q.name, KindGroup);
+        if (k != KindNetwork && !kk.contains(k)) kk << k;
+    }
+    if (kk.size() < 2) return {};      // one kind tells nothing apart
+    std::sort(kk.begin(), kk.end());
+    return kk;
+}
+
+QRectF GraphView::keyRect(const QRectF& area, const QFontMetricsF& fm) const
+{
+    const QVector<int> kk = keyKinds();
+    if (kk.isEmpty()) return {};
+    const double rowH = fm.height() + 6;
+    double tw = 0;
+    for (int k : kk) tw = std::max(tw, fm.horizontalAdvance(kindName(k)));
+    const double w = 10 + 26 + 8 + tw + 10;
+    const double h = 7 + kk.size() * rowH + 7;
+
+    double x, y;
+    if (keyPos_.x() < 0) {                       // the default corner
+        x = area.right() - w - 12;
+        y = area.top() + 12;
+    } else {
+        x = area.left() + keyPos_.x() * area.width();
+        y = area.top()  + keyPos_.y() * area.height();
+    }
+    // Never off the edge, however the window was resized after the drag.
+    x = std::clamp(x, area.left(), std::max(area.left(), area.right() - w));
+    y = std::clamp(y, area.top(),  std::max(area.top(),  area.bottom() - h));
+    return QRectF(x, y, w, h);
+}
+
+void GraphView::resetKey()
+{
+    keyPos_ = QPointF(-1.0, -1.0);
+    update();
+}
+
+void GraphView::mousePressEvent(QMouseEvent* ev)
+{
+    const QRectF kr = keyRect(QRectF(rect()), QFontMetricsF(keyFont()));
+    if (ev->button() == Qt::LeftButton && !kr.isEmpty()
+        && kr.contains(ev->position())) {
+        keyDrag_ = true;
+        keyGrab_ = ev->position() - kr.topLeft();
+        setCursor(Qt::ClosedHandCursor);
+        ev->accept();
+        return;
+    }
+    QWidget::mousePressEvent(ev);
+}
+
+void GraphView::mouseMoveEvent(QMouseEvent* ev)
+{
+    if (!keyDrag_) { QWidget::mouseMoveEvent(ev); return; }
+    const QRectF area(rect());
+    if (area.width() <= 0 || area.height() <= 0) return;
+    const QPointF tl = ev->position() - keyGrab_;
+    keyPos_ = QPointF(std::clamp((tl.x() - area.left()) / area.width(), 0.0, 1.0),
+                      std::clamp((tl.y() - area.top()) / area.height(), 0.0, 1.0));
+    update();
+    ev->accept();
+}
+
+void GraphView::mouseReleaseEvent(QMouseEvent* ev)
+{
+    if (keyDrag_) {
+        keyDrag_ = false;
+        unsetCursor();
+        ev->accept();
+        return;
+    }
+    QWidget::mouseReleaseEvent(ev);
+}
+
+// Put it back where it started, for anyone who dragged it somewhere unhelpful.
+void GraphView::mouseDoubleClickEvent(QMouseEvent* ev)
+{
+    const QRectF kr = keyRect(QRectF(rect()), QFontMetricsF(keyFont()));
+    if (!kr.isEmpty() && kr.contains(ev->position())) { resetKey(); ev->accept(); return; }
+    QWidget::mouseDoubleClickEvent(ev);
 }
 
 void GraphView::paintEvent(QPaintEvent*)
@@ -668,10 +825,10 @@ void StructurePanel::showShape(int index)
             for (const auto& w : g->wells) {
                 auto* wi = new QTreeWidgetItem(it);
                 wi->setText(0, w);
-                const bool inj = s.injectors.contains(w);
-                wi->setForeground(0, QBrush(inj ? QColor(0x0d, 0x47, 0xa1)
-                                                : QColor(0x1b, 0x5e, 0x20)));
-                wi->setText(1, inj ? QStringLiteral("injector")
+                const int k = wellKind(s, w);
+                wi->setForeground(0, QBrush(GraphView::kindInk(k)));
+                wi->setText(1, s.injectors.contains(w)
+                                   ? injectName(s.injectors.value(w))
                                    : QStringLiteral("producer"));
                 wi->setForeground(1, QBrush(QColor(0x77, 0x7f, 0x88)));
             }
@@ -735,8 +892,7 @@ void StructurePanel::refreshGraph()
             for (const auto& g : s.groups)
                 for (const auto& w : g.wells) {
                     nodes << w;
-                    kinds[w] = s.injectors.contains(w) ? GraphView::KindInjector
-                                                       : GraphView::KindProducer;
+                    kinds[w] = wellKind(s, w);
                     edges.push_back({ w, g.name, {} });
                 }
         graph_->setGraph(nodes, edges,

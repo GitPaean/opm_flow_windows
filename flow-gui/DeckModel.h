@@ -21,6 +21,10 @@
 
 #include <QDateTime>
 #include <QHash>
+#include <QColor>
+#include <QFont>
+#include <QPointF>
+#include <QMap>
 #include <QRectF>
 #include <QString>
 #include <QStringList>
@@ -33,6 +37,8 @@ class QCheckBox;
 class QComboBox;
 class QLabel;
 class QProgressBar;
+class QFontMetricsF;
+class QMouseEvent;
 class QPainter;
 class QPushButton;
 class QThread;
@@ -41,6 +47,13 @@ class QTreeWidget;
 class QLineEdit;
 
 namespace flowgui {
+
+// What an injector puts back into the reservoir.
+enum class Inject { Water = 0, Gas, Oil, Multi };
+
+// Spelled out for the tree, which has room to be precise where the key on the
+// drawing groups oil and multi-phase together as "other".
+QString injectName(Inject d);
 
 struct GroupNode {
     QString     name;
@@ -59,10 +72,12 @@ struct Structure {
     QDateTime         when;
     int               step = 0;      // schedule step it was first seen at
     QVector<GroupNode> groups;
-    // Which of the wells inject. Kept per moment rather than once for the run,
-    // because a well can be converted, and the drawing should say what it was
-    // doing at the date being looked at rather than what it ends up doing.
-    QStringList        injectors;
+    // Which of the wells inject, and what they put back. Kept per moment
+    // rather than once for the run, because a well can be converted - and
+    // converted from one phase to another - and the drawing should say what it
+    // was doing at the date being looked at, not what it ends up doing.
+    // Producers are simply absent. Ordered, so fingerprint() is stable.
+    QMap<QString, Inject> injectors;
     QVector<NetBranch> branches;
     QStringList        netNodes;
     bool               netActive = false;
@@ -108,8 +123,9 @@ public:
     // What a node IS, which decides how it is drawn. A group that only holds
     // wells is the bottom of the management hierarchy and reads differently
     // from one that holds groups, so it is worth telling apart at a glance.
-    enum Kind { KindGroup = 0, KindWellGroup, KindProducer, KindInjector,
-                KindNetwork };
+    // In the order the key lists them: the hierarchy, then what hangs off it.
+    enum Kind { KindGroup = 0, KindWellGroup, KindProducer,
+                KindInjWater, KindInjGas, KindInjOther, KindNetwork };
 
     explicit GraphView(QWidget* parent = nullptr);
     // `from` points at its parent/uptree node, so edges run child -> parent.
@@ -121,15 +137,36 @@ public:
     void render(QPainter& p, const QRectF& area) const;
     bool isEmpty() const { return placed_.isEmpty(); }
 
+    // Put the key back in its default corner.
+    void resetKey();
+
 protected:
     void paintEvent(QPaintEvent* ev) override;
+    void mousePressEvent(QMouseEvent* ev) override;
+    void mouseMoveEvent(QMouseEvent* ev) override;
+    void mouseReleaseEvent(QMouseEvent* ev) override;
+    void mouseDoubleClickEvent(QMouseEvent* ev) override;
     QSize minimumSizeHint() const override;
 
 private:
     void relayout();
     void paintNode(QPainter& p, const QRectF& r, const QString& text,
                    int kind, bool root, bool hot) const;
+    // Which kinds are on screen, in the order the key lists them; empty when
+    // there is only one and so nothing to tell apart.
+    QVector<int> keyKinds() const;
+    // Where the key sits for a drawing of this size, default corner included.
+    QRectF keyRect(const QRectF& area, const QFontMetricsF& fm) const;
+    QFont  keyFont() const;
     static QString kindName(int kind);
+    static bool    isWellKind(int kind);
+
+public:
+    // The palette, shared with the tree pane so the two cannot drift apart.
+    static void   kindColours(int kind, QColor& fill, QColor& line, QColor& ink);
+    static QColor kindInk(int kind);
+
+private:
 
     struct Placed { QString name; int depth = 0; double x = 0; };
     QHash<QString, int> kinds_;
@@ -139,6 +176,11 @@ private:
     QString         empty_;
     QString         highlight_;
     int             maxDepth_ = 0;
+    // Normalised to the drawing area so it survives a resize and comes out of
+    // the export where it went on screen. Negative x = the default corner.
+    QPointF         keyPos_{ -1.0, -1.0 };
+    bool            keyDrag_ = false;
+    QPointF         keyGrab_;
 };
 
 // ---------------------------------------------------------------------------
