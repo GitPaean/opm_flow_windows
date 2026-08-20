@@ -8,6 +8,9 @@
 
 #include "GuiPaths.h"
 
+#include <QApplication>
+
+#include <QCheckBox>
 #include <QComboBox>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -39,6 +42,7 @@
 #include <opm/input/eclipse/Schedule/Network/ExtNetwork.hpp>
 #include <opm/input/eclipse/Schedule/Network/Node.hpp>
 #include <opm/input/eclipse/Schedule/Schedule.hpp>
+#include <opm/utility/GroupStructureViz.hpp>
 
 #include <algorithm>
 #include <exception>
@@ -76,6 +80,21 @@ QString Structure::fingerprint() const
 
 namespace {
 
+// The relaxations opm-common's own wellgraph example uses, named one by one
+// rather than waving PARSE_* through wholesale. Norne trips the strict reader
+// on a stray '/' - PARSE_RANDOM_SLASH, the first of these - and runs perfectly
+// well; but a blanket downgrade would also swallow the errors that do mean a
+// deck is broken, and this view is often what is being used to find that out.
+Opm::ParseContext relaxedContext()
+{
+    return Opm::ParseContext({
+        { Opm::ParseContext::PARSE_RANDOM_SLASH,         Opm::InputErrorAction::IGNORE },
+        { Opm::ParseContext::PARSE_MISSING_DIMS_KEYWORD, Opm::InputErrorAction::WARN },
+        { Opm::ParseContext::SUMMARY_UNKNOWN_WELL,       Opm::InputErrorAction::WARN },
+        { Opm::ParseContext::SUMMARY_UNKNOWN_GROUP,      Opm::InputErrorAction::WARN },
+    });
+}
+
 Structure snapshotAt(const Opm::Schedule& sched, std::size_t step)
 {
     Structure s;
@@ -101,7 +120,8 @@ Structure snapshotAt(const Opm::Schedule& sched, std::size_t step)
         for (const auto* b : net.branches()) {
             if (!b) continue;
             NetBranch nb{ QString::fromStdString(b->downtree_node()),
-                          QString::fromStdString(b->uptree_node()) };
+                          QString::fromStdString(b->uptree_node()),
+                          b->vfp_table().value_or(-1) };
             s.branches.push_back(nb);
             if (!s.netNodes.contains(nb.down)) s.netNodes << nb.down;
             if (!s.netNodes.contains(nb.up))   s.netNodes << nb.up;
@@ -123,13 +143,7 @@ DeckStructure readDeckStructure(const QString& dataFile,
     tick(1);
 
     try {
-        // Permissive, as flow itself is. A deck that runs perfectly well can
-        // still trip the strict reader - Norne does, on a TUNING record - and
-        // refusing to draw its structure over that would be no use to anyone.
-        Opm::ParseContext ctx(Opm::InputErrorAction::WARN);
-        ctx.update("PARSE_*",       Opm::InputErrorAction::WARN);
-        ctx.update("UNSUPPORTED_*", Opm::InputErrorAction::WARN);
-        ctx.update("SUMMARY_*",     Opm::InputErrorAction::IGNORE);
+        Opm::ParseContext ctx = relaxedContext();
         Opm::ErrorGuard guard;
 
         Opm::Parser parser;
@@ -253,12 +267,22 @@ void NetworkView::paintEvent(QPaintEvent*)
         return nullptr;
     };
 
-    p.setPen(QPen(QColor(0x7a, 0x86, 0x92), 1.6));
+    QFont bf = p.font(); bf.setPointSizeF(7.5);
     for (const auto& b : s_->branches) {
         const Placed* d = at(b.down);
         const Placed* u = at(b.up);
         if (!d || !u) continue;
-        p.drawLine(QPointF(px(*d), py(*d)), QPointF(px(*u), py(*u)));
+        const QPointF a(px(*d), py(*d)), c(px(*u), py(*u));
+        p.setPen(QPen(QColor(0x7a, 0x86, 0x92), 1.6));
+        p.drawLine(a, c);
+        // Which VFP table the branch lifts through: the one number that says
+        // what a branch actually does, and it is free to carry.
+        if (b.vfp > 0) {
+            p.setFont(bf);
+            p.setPen(QColor(0x8a, 0x6d, 0x3b));
+            p.drawText(QRectF((a.x() + c.x()) / 2 - 30, (a.y() + c.y()) / 2 - 8, 60, 14),
+                       Qt::AlignCenter, QStringLiteral("VFP %1").arg(b.vfp));
+        }
     }
     QFont f = p.font(); f.setPointSizeF(8.5); p.setFont(f);
     for (const auto& q : placed_) {
@@ -294,6 +318,20 @@ StructurePanel::StructurePanel(QWidget* parent) : QWidget(parent)
         "when the structure changed. GRUPTREE lives in SCHEDULE and is free to "
         "change, so this lists the dates where it did - not every report step, "
         "most of which repeat what came before."));
+    // opm-common's own wellgraph tool warns that a field with many wells makes
+    // an unreadable graph and offers --separate-well-groups for it. Same
+    // problem here: Norne's 36 wells are fine inline, a few hundred are not.
+    showWells_ = new QCheckBox(QStringLiteral("wells"));
+    showWells_->setChecked(true);
+    showWells_->setToolTip(QStringLiteral(
+        "list the wells under their group. Turn off on a field with many of "
+        "them to read the group hierarchy on its own."));
+    exportBtn_ = new QPushButton(QStringLiteral("Export Graphviz..."));
+    exportBtn_->setEnabled(false);
+    exportBtn_->setToolTip(QStringLiteral(
+        "write the group structure as Graphviz .gv, through opm-common's own "
+        "writer - the same files the wellgraph tool produces.\n\n"
+        "Render with:  dot -Tpdf <file> -o out.pdf"));
     filter_ = new QLineEdit;
     filter_->setPlaceholderText(QStringLiteral("filter groups and wells..."));
     filter_->setClearButtonEnabled(true);
@@ -304,6 +342,8 @@ StructurePanel::StructurePanel(QWidget* parent) : QWidget(parent)
     row->addWidget(openBtn_);
     row->addWidget(new QLabel(QStringLiteral("Structure at:")));
     row->addWidget(shapeBox_);
+    row->addWidget(showWells_);
+    row->addWidget(exportBtn_);
     row->addWidget(bar_);
     row->addWidget(filter_, 1);
 
@@ -350,6 +390,9 @@ StructurePanel::StructurePanel(QWidget* parent) : QWidget(parent)
             [this](int i) { showShape(i); });
     connect(filter_, &QLineEdit::textChanged, this,
             [this](const QString& t) { applyFilter(t.trimmed()); });
+    connect(showWells_, &QCheckBox::toggled, this,
+            [this](bool) { showShape(shapeBox_->currentIndex()); });
+    connect(exportBtn_, &QPushButton::clicked, this, [this] { exportGraphviz(); });
 
     poll_ = new QTimer(this);
     poll_->setInterval(120);
@@ -410,11 +453,13 @@ void StructurePanel::finishLoad()
         status_->setText(QStringLiteral("could not read %1: %2")
                              .arg(QFileInfo(model_.deckPath).fileName(), model_.problem));
         status_->setStyleSheet(QStringLiteral("color:#8a1f1f;"));
+        exportBtn_->setEnabled(false);
         tree_->clear();
         net_->setStructure(nullptr);
         return;
     }
     status_->setStyleSheet(QString());
+    exportBtn_->setEnabled(true);
     const auto& first = model_.shapes.first();
     status_->setText(QStringLiteral(
         "%1: %2 group(s), %3 well(s) over %4 schedule step(s); the structure "
@@ -453,6 +498,7 @@ void StructurePanel::showShape(int index)
             it->setText(1, what.join(QStringLiteral(", ")));
             QFont f = it->font(0); f.setBold(true); it->setFont(0, f);
             for (const auto& c : g->childGroups) add(c, it);
+            if (!showWells_->isChecked()) return;
             for (const auto& w : g->wells) {
                 auto* wi = new QTreeWidgetItem(it);
                 wi->setText(0, w);
@@ -473,6 +519,58 @@ void StructurePanel::showShape(int index)
                                  : QStringLiteral("extended (BRANPROP)"))
               .arg(s.netNodes.size()).arg(s.branches.size()));
     applyFilter(filter_->text().trimmed());
+}
+
+// Hand the deck to opm-common's own writer, so what comes out is the same
+// artefact its wellgraph tool produces - the same files, renderable the same
+// way, comparable with anyone else's. Graphviz does a layout job no hand-rolled
+// painter here is going to match on a field with hundreds of groups.
+//
+// It needs a Schedule, which the extraction does not keep: holding an
+// EclipseState open for the life of a tab to save half a second on a rare
+// action is a poor trade. So it parses again, on this thread, behind a wait
+// cursor.
+void StructurePanel::exportGraphviz()
+{
+    if (model_.deckPath.isEmpty()) return;
+    const QString suggested = QFileInfo(model_.deckPath).absolutePath()
+                              + QLatin1Char('/')
+                              + QFileInfo(model_.deckPath).completeBaseName();
+    QString base = QFileDialog::getSaveFileName(
+        this, QStringLiteral("Write Graphviz files (a base name)"), suggested,
+        QStringLiteral("Graphviz (*.gv);;All files (*)"));
+    if (base.isEmpty()) return;
+    // The writer appends its own "_well_groups.gv" / "_group_structure.gv".
+    if (base.endsWith(QStringLiteral(".gv"), Qt::CaseInsensitive)) base.chop(3);
+
+    status_->setText(QStringLiteral("writing Graphviz for %1 ...")
+                         .arg(QFileInfo(model_.deckPath).fileName()));
+    QApplication::setOverrideCursor(Qt::WaitCursor);
+    QString problem;
+    try {
+        auto ctx = relaxedContext();
+        Opm::ErrorGuard guard;
+        Opm::Parser parser;
+        const auto deck = parser.parseFile(model_.deckPath.toStdString(), ctx, guard);
+        Opm::EclipseState es(deck);
+        auto python = std::make_shared<Opm::Python>();
+        Opm::Schedule sched(deck, es, ctx, guard, python);
+        // Separate files when the wells are hidden here: that is the same
+        // judgement, and the tool's own help gives the same advice for a field
+        // with many of them.
+        Opm::writeWellGroupGraph(sched, base.toStdString(), !showWells_->isChecked());
+    } catch (const std::exception& e) {
+        problem = QString::fromLocal8Bit(e.what());
+    } catch (...) {
+        problem = QStringLiteral("unknown error");
+    }
+    QApplication::restoreOverrideCursor();
+    status_->setText(problem.isEmpty()
+        ? QStringLiteral("wrote %1_*.gv   -   render with:  dot -Tpdf %1_well_groups.gv "
+                         "-o out.pdf").arg(base)
+        : QStringLiteral("could not write Graphviz: %1").arg(problem));
+    status_->setStyleSheet(problem.isEmpty() ? QString()
+                                             : QStringLiteral("color:#8a1f1f;"));
 }
 
 void StructurePanel::applyFilter(const QString& needle)

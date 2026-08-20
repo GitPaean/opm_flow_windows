@@ -27,6 +27,7 @@
 
 #include <atomic>
 
+class QCheckBox;
 class QComboBox;
 class QLabel;
 class QProgressBar;
@@ -47,6 +48,7 @@ struct GroupNode {
 
 struct NetBranch {
     QString down, up;            // downtree node -> uptree node
+    int     vfp = -1;            // VFP table the branch is lifted through, or -1
 };
 
 // The field's shape at one moment.
@@ -121,8 +123,11 @@ private:
     void finishLoad();
     void showShape(int index);
     void applyFilter(const QString& needle);
+    void exportGraphviz();
 
     QPushButton*  openBtn_ = nullptr;
+    QPushButton*  exportBtn_ = nullptr;
+    QCheckBox*    showWells_ = nullptr;
     QComboBox*    shapeBox_ = nullptr;
     QLineEdit*    filter_ = nullptr;
     QProgressBar* bar_ = nullptr;
