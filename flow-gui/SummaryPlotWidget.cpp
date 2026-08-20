@@ -72,6 +72,8 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <memory>
+#include <limits>
 #include <exception>
 #include <functional>
 #include <string>
@@ -105,6 +107,245 @@ namespace {
 // past the point where a date axis fits on a 1920 screen (the tick count
 // thins to suit, see plotChart), and the far end is for a wall of screen or a
 // deliberately small-multiples look. It is not our business to say no.
+// ---------------------------------------------------------------------------
+// Arithmetic over summary vectors: WBP:B-1H - WBHP:B-1H for a drawdown,
+// FOPT/FGPT for a ratio, WWCT*100 for a percentage.
+//
+// A recursive-descent parser over + - * / and brackets, with summary keys and
+// numbers as the leaves. It is re-parsed on every use rather than kept as a
+// compiled form: the expressions are a line long and the cost next to reading
+// a UNSMRY is nothing, and it saves handing ownership of a tree around.
+//
+// The lexer's treatment of '-' is the part worth spelling out, because a well
+// is called B-1H and a difference is also written with a minus. A hyphen is
+// part of the name when it sits INSIDE the item of a key with no space around
+// it, and is the operator everywhere else. So "WBP:B-1H - WBHP:B-1H" is a
+// difference of two wells and "FOPR-FWPR" a difference of two field vectors;
+// the only thing that cannot be written without spaces is a difference of two
+// hyphenated names, and that is what the error message says.
+namespace expr {
+
+struct Node {
+    enum Kind { Num, Key, Bin, Neg } kind = Num;
+    double  num = 0.0;
+    QString key;
+    QChar   op;
+    std::unique_ptr<Node> a, b;
+};
+using Ptr = std::unique_ptr<Node>;
+
+class Parser
+{
+public:
+    Parser(const QString& t) : s_(t) {}
+
+    Ptr parse(QString* err)
+    {
+        skip();
+        Ptr r = expression();
+        if (!r) { *err = err_; return nullptr; }
+        skip();
+        if (i_ < s_.size()) {
+            *err = QStringLiteral("unexpected '%1' at position %2")
+                       .arg(s_.mid(i_, 8)).arg(i_ + 1);
+            return nullptr;
+        }
+        return r;
+    }
+
+private:
+    void skip() { while (i_ < s_.size() && s_[i_].isSpace()) ++i_; }
+    QChar peek() const { return i_ < s_.size() ? s_[i_] : QChar(); }
+
+    static bool nameChar(QChar c) { return c.isLetterOrNumber() || c == u'_'; }
+    static bool itemChar(QChar c)
+    {
+        return nameChar(c) || c == u',' || c == u'.' || c == u'+';
+    }
+
+    Ptr expression()
+    {
+        Ptr a = term();
+        if (!a) return nullptr;
+        for (;;) {
+            skip();
+            const QChar c = peek();
+            if (c != u'+' && c != u'-') return a;
+            ++i_;
+            Ptr b = term();
+            if (!b) return nullptr;
+            auto n = std::make_unique<Node>();
+            n->kind = Node::Bin; n->op = c;
+            n->a = std::move(a); n->b = std::move(b);
+            a = std::move(n);
+        }
+    }
+
+    Ptr term()
+    {
+        Ptr a = unary();
+        if (!a) return nullptr;
+        for (;;) {
+            skip();
+            const QChar c = peek();
+            if (c != u'*' && c != u'/') return a;
+            ++i_;
+            Ptr b = unary();
+            if (!b) return nullptr;
+            auto n = std::make_unique<Node>();
+            n->kind = Node::Bin; n->op = c;
+            n->a = std::move(a); n->b = std::move(b);
+            a = std::move(n);
+        }
+    }
+
+    Ptr unary()
+    {
+        skip();
+        if (peek() == u'-') {
+            ++i_;
+            Ptr a = unary();
+            if (!a) return nullptr;
+            auto n = std::make_unique<Node>();
+            n->kind = Node::Neg; n->a = std::move(a);
+            return n;
+        }
+        return primary();
+    }
+
+    Ptr primary()
+    {
+        skip();
+        if (i_ >= s_.size()) { err_ = QStringLiteral("the expression ends early"); return nullptr; }
+        const QChar c = s_[i_];
+        if (c == u'(') {
+            ++i_;
+            Ptr a = expression();
+            if (!a) return nullptr;
+            skip();
+            if (peek() != u')') { err_ = QStringLiteral("a '(' is never closed"); return nullptr; }
+            ++i_;
+            return a;
+        }
+        if (c.isDigit() || c == u'.') return number();
+        if (c.isLetter()) return key();
+        err_ = QStringLiteral("'%1' is not a number, a summary key or a bracket").arg(c);
+        return nullptr;
+    }
+
+    Ptr number()
+    {
+        const int start = i_;
+        while (i_ < s_.size() && (s_[i_].isDigit() || s_[i_] == u'.')) ++i_;
+        if (i_ < s_.size() && (s_[i_] == u'e' || s_[i_] == u'E')) {
+            const int save = i_;
+            ++i_;
+            if (i_ < s_.size() && (s_[i_] == u'+' || s_[i_] == u'-')) ++i_;
+            if (i_ < s_.size() && s_[i_].isDigit()) { while (i_ < s_.size() && s_[i_].isDigit()) ++i_; }
+            else i_ = save;
+        }
+        bool ok = false;
+        const double d = s_.mid(start, i_ - start).toDouble(&ok);
+        if (!ok) { err_ = QStringLiteral("'%1' is not a number").arg(s_.mid(start, i_ - start)); return nullptr; }
+        auto n = std::make_unique<Node>();
+        n->kind = Node::Num; n->num = d;
+        return n;
+    }
+
+    Ptr key()
+    {
+        const int start = i_;
+        while (i_ < s_.size() && nameChar(s_[i_])) ++i_;
+        if (i_ < s_.size() && s_[i_] == u':') {
+            ++i_;
+            // The item. A hyphen belongs to the name only when a name character
+            // follows it, so a trailing "B-1H- WBHP" ends the item at the H.
+            while (i_ < s_.size()
+                   && (itemChar(s_[i_])
+                       || (s_[i_] == u'-' && i_ + 1 < s_.size() && nameChar(s_[i_ + 1]))))
+                ++i_;
+        }
+        auto n = std::make_unique<Node>();
+        n->kind = Node::Key;
+        n->key  = s_.mid(start, i_ - start).toUpper();
+        return n;
+    }
+
+    const QString s_;
+    int     i_ = 0;
+    QString err_ = QStringLiteral("the expression is empty");
+};
+
+inline Ptr parse(const QString& text, QString* err)
+{
+    QString local;
+    return Parser(text).parse(err ? err : &local);
+}
+
+inline void keysIn(const Node& n, QStringList& out)
+{
+    switch (n.kind) {
+        case Node::Key: if (!out.contains(n.key)) out << n.key; break;
+        case Node::Neg: keysIn(*n.a, out); break;
+        case Node::Bin: keysIn(*n.a, out); keysIn(*n.b, out); break;
+        default: break;
+    }
+}
+
+// Elementwise over n samples; a number broadcasts.
+inline double at(const Node& n, const QHash<QString, const std::vector<float>*>& data,
+                 std::size_t k)
+{
+    switch (n.kind) {
+        case Node::Num: return n.num;
+        case Node::Key: {
+            const auto it = data.constFind(n.key);
+            return it != data.constEnd() && k < (*it)->size() ? double((**it)[k]) : 0.0;
+        }
+        case Node::Neg: return -at(*n.a, data, k);
+        case Node::Bin: {
+            const double x = at(*n.a, data, k), y = at(*n.b, data, k);
+            switch (n.op.unicode()) {
+                case u'+': return x + y;
+                case u'-': return x - y;
+                case u'*': return x * y;
+                // A division by zero would put an inf on the plot and take the
+                // axis with it; it reads better as a gap in the curve.
+                default:   return y == 0.0 ? std::numeric_limits<double>::quiet_NaN() : x / y;
+            }
+        }
+    }
+    return 0.0;
+}
+
+// What the result is measured in, as far as it can be worked out. A difference
+// of like things keeps their unit; a ratio of like things has none; anything
+// else is written out as the combination it is.
+inline QString unitOf(const Node& n, const std::function<QString(const QString&)>& unit)
+{
+    switch (n.kind) {
+        case Node::Num: return {};
+        case Node::Key: return unit(n.key);
+        case Node::Neg: return unitOf(*n.a, unit);
+        case Node::Bin: {
+            const QString x = unitOf(*n.a, unit), y = unitOf(*n.b, unit);
+            if (n.op == u'+' || n.op == u'-') return x == y ? x : QString();
+            if (n.op == u'*') {
+                if (x.isEmpty()) return y;
+                if (y.isEmpty()) return x;
+                return x + QLatin1Char('*') + y;
+            }
+            if (x == y) return {};                       // a ratio of like things
+            if (y.isEmpty()) return x;
+            if (x.isEmpty()) return QStringLiteral("1/") + y;
+            return x + QLatin1Char('/') + y;
+        }
+    }
+    return {};
+}
+
+} // namespace expr
+
 constexpr int kMaxRows = 6;
 constexpr int kMaxCols = 8;
 constexpr int kMaxCharts = kMaxRows * kMaxCols;
@@ -929,6 +1170,36 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
         // But a pattern like W*PR is usually meant as "these are the curves I
         // want", and going on to click each leaf is the boring half of that -
         // so offer the whole listed set in one press.
+        // Arithmetic over the vectors, for the quantities a run does not write
+        // but everyone wants: a drawdown is WBP minus WBHP and nothing in the
+        // SMSPEC is going to say so.
+        row->addWidget(new QLabel(QStringLiteral("f(x):")));
+        exprBox_ = new QComboBox;
+        exprBox_->setEditable(true);
+        exprBox_->setInsertPolicy(QComboBox::NoInsert);
+        exprBox_->setMinimumWidth(230);
+        exprBox_->lineEdit()->setPlaceholderText(
+            QStringLiteral("e.g.  WBP:B-1H - WBHP:B-1H"));
+        exprBox_->setToolTip(QStringLiteral(
+            "plot arithmetic over summary vectors: + - * / and brackets, with "
+            "keys and numbers as the terms.\n"
+            "  WBP:B-1H - WBHP:B-1H      drawdown\n"
+            "  FOPT/FGPT                 a ratio\n"
+            "  WWCT:C-2H*100             as a percentage\n\n"
+            "A '-' inside a name belongs to the name, so put spaces around the "
+            "operator when both sides are hyphenated."));
+        row->addWidget(exprBox_);
+        auto* exprAdd = new QPushButton(QStringLiteral("Add"));
+        exprAdd->setToolTip(QStringLiteral("plot this expression on the focused subplot"));
+        row->addWidget(exprAdd);
+        auto* exprDel = new QPushButton(QStringLiteral("Drop"));
+        exprDel->setToolTip(QStringLiteral("forget the expression shown in the box"));
+        row->addWidget(exprDel);
+        connect(exprAdd, &QPushButton::clicked, this, [this] { addExpression(); });
+        connect(exprDel, &QPushButton::clicked, this, [this] { removeExpression(); });
+        connect(exprBox_->lineEdit(), &QLineEdit::returnPressed,
+                this, [this] { addExpression(); });
+
         auto* plotAll = new QPushButton(QStringLiteral("Plot all listed"));
         plotAll->setToolTip(QStringLiteral(
             "select every vector the list currently shows, so the filter's "
@@ -1406,6 +1677,11 @@ QJsonObject SummaryPlotWidget::uiState() const
         e[QStringLiteral("checked")] = it->checkState() == Qt::Checked;
         cases.append(e);
     }
+    if (!exprs_.isEmpty()) {
+        QJsonArray ex;
+        for (const QString& e : exprs_) ex.append(e);
+        o[QStringLiteral("expressions")] = ex;
+    }
     o[QStringLiteral("cases")]  = cases;
     o[QStringLiteral("active")] = QDir::fromNativeSeparators(activePath());
 
@@ -1491,6 +1767,18 @@ void SummaryPlotWidget::restoreUiState(const QJsonObject& state)
     if (legendBox_ && has("legend")) {
         const int i = val("legend").toInt(0);
         if (i >= 0 && i < legendBox_->count()) legendBox_->setCurrentIndex(i);
+    }
+
+    // Expressions before the cases, so the load that follows already builds
+    // their Vecs and the restored subplot selections find them.
+    if (has("expressions")) {
+        exprs_.clear();
+        const QJsonArray ex = val("expressions").toArray();
+        for (const auto& e : ex) {
+            const QString t = e.toString().trimmed();
+            if (!t.isEmpty() && !exprs_.contains(t)) exprs_ << t;
+        }
+        syncExprBox();
     }
 
     // Cases: skip the ones whose files are gone, and make the same one active
@@ -1819,6 +2107,7 @@ void SummaryPlotWidget::reload(bool keepSelection)
         seenKeys.insert(v.key);
         vecs_.push_back(v);
     }
+    appendDerivedVecs();
 
     rebuildFilters();
     rebuildTree(reselect);
@@ -1836,6 +2125,153 @@ void SummaryPlotWidget::reload(bool keepSelection)
         loaded += QStringLiteral("  (%1 declared twice in SUMMARY, shown once)")
                       .arg(duplicateNodes);
     setStatus(loaded);
+}
+
+// Take what is in the box, check it against the active case, and plot it.
+void SummaryPlotWidget::addExpression()
+{
+    const QString text = exprBox_->currentText().trimmed();
+    if (text.isEmpty()) return;
+    if (!smry_) { setStatus(QStringLiteral("open a case first")); return; }
+
+    QString err;
+    const expr::Ptr e = expr::parse(text, &err);
+    if (!e) { setStatus(QStringLiteral("%1: %2").arg(text, err)); return; }
+
+    // Checked against the case now rather than left to fail quietly at plot
+    // time as a curve that never appears. A '-' that was meant as an operator
+    // and got swallowed by a well name shows up here as an unknown key, so say
+    // what to do about it.
+    QStringList keys;
+    expr::keysIn(*e, keys);
+    if (keys.isEmpty()) {
+        setStatus(QStringLiteral("%1: names no summary vector").arg(text));
+        return;
+    }
+    QStringList missing;
+    for (const QString& k : std::as_const(keys)) {
+        bool have = false;
+        try { have = smry_->hasKey(k.toStdString()); } catch (...) {}
+        if (!have) missing << k;
+    }
+    if (!missing.isEmpty()) {
+        QString why = QStringLiteral("%1: %2 not in this case")
+                          .arg(text, missing.join(QStringLiteral(", ")));
+        for (const QString& m : std::as_const(missing))
+            if (m.contains(QLatin1Char('-'))) {
+                why += QStringLiteral("  -  put spaces around the '-' if it was "
+                                      "meant as a subtraction");
+                break;
+            }
+        setStatus(why);
+        return;
+    }
+
+    if (!exprs_.contains(text)) exprs_ << text;
+    syncExprBox();
+    refreshDerived();
+    if (focusChart_ >= 0 && focusChart_ < chartSel_.size()
+        && !chartSel_[focusChart_].contains(text)) {
+        chartSel_[focusChart_] << text;
+    }
+    rebuildTree(chartSel_.value(focusChart_));
+    replot();
+    setStatus(QStringLiteral("plotting %1%2").arg(text,
+        vecs_.isEmpty() || vecs_.last().unit.isEmpty()
+            ? QString() : QStringLiteral("  [%1]").arg(vecs_.last().unit)));
+}
+
+void SummaryPlotWidget::removeExpression()
+{
+    const QString text = exprBox_->currentText().trimmed();
+    if (text.isEmpty() || !exprs_.removeAll(text)) return;
+    for (auto& sel : chartSel_) sel.removeAll(text);
+    syncExprBox();
+    refreshDerived();
+    rebuildTree(chartSel_.value(focusChart_));
+    replot();
+}
+
+void SummaryPlotWidget::syncExprBox()
+{
+    const QString text = exprBox_->currentText();
+    QSignalBlocker block(exprBox_);
+    exprBox_->clear();
+    exprBox_->addItems(exprs_);
+    exprBox_->setCurrentText(text);
+}
+
+bool SummaryPlotWidget::seriesData(const Vec& v, Opm::EclIO::ESmry* smry,
+                                   bool isActive, std::vector<float>& out) const
+{
+    out.clear();
+    if (!smry) return false;
+
+    if (v.expr.isEmpty()) {
+        try {
+            const std::string key = v.key.toStdString();
+            if (smry->hasKey(key)) out = smry->get(key);
+            else if (isActive)     out = smry->get(v.node);
+            else                   return false;   // vector absent in this case
+        } catch (...) { return false; }
+        return !out.empty();
+    }
+
+    const expr::Ptr e = expr::parse(v.expr, nullptr);
+    if (!e) return false;
+    QStringList keys;
+    expr::keysIn(*e, keys);
+    if (keys.isEmpty()) return false;              // arithmetic on no vector
+
+    // get() hands back a reference into the reader's own cache, which outlives
+    // this call, so the pointers stay good while the samples are read off.
+    QHash<QString, const std::vector<float>*> data;
+    std::size_t n = std::numeric_limits<std::size_t>::max();
+    for (const QString& k : std::as_const(keys)) {
+        try {
+            const std::string key = k.toStdString();
+            if (!smry->hasKey(key)) return false;
+            const std::vector<float>& d = smry->get(key);
+            data.insert(k, &d);
+            n = std::min(n, d.size());
+        } catch (...) { return false; }
+    }
+    if (n == 0 || n == std::numeric_limits<std::size_t>::max()) return false;
+
+    out.resize(n);
+    for (std::size_t k = 0; k < n; ++k) out[k] = float(expr::at(*e, data, k));
+    return true;
+}
+
+// Drop the derived Vecs and build them again. Adding an expression must not go
+// through reload(): that re-reads the case, and skips the work entirely when
+// the file has not changed since the last read - which it has not, since the
+// expression is the only thing that moved.
+void SummaryPlotWidget::refreshDerived()
+{
+    for (int i = vecs_.size() - 1; i >= 0; --i)
+        if (!vecs_[i].expr.isEmpty()) vecs_.remove(i);
+    appendDerivedVecs();
+}
+
+void SummaryPlotWidget::appendDerivedVecs()
+{
+    if (!smry_) return;
+    for (const QString& text : std::as_const(exprs_)) {
+        const expr::Ptr e = expr::parse(text, nullptr);
+        if (!e) continue;
+        Vec v;
+        v.expr    = text;
+        v.key     = text;
+        v.keyword = QStringLiteral("expression");
+        v.item    = text;
+        v.itemMain = text;
+        v.unit = expr::unitOf(*e, [this](const QString& k) -> QString {
+            try { return QString::fromStdString(smry_->get_unit(k.toStdString())).trimmed(); }
+            catch (...) { return {}; }
+        });
+        vecs_.push_back(v);
+    }
 }
 
 void SummaryPlotWidget::rebuildFilters()
@@ -1998,10 +2434,14 @@ void SummaryPlotWidget::rebuildTree(const QStringList& reselect)
     QStringList keywordOrder;
     for (int i = 0; i < vecs_.size(); ++i) {
         const Vec& v = vecs_[i];
-        if (selCat  >= 0 && int(v.cat)  != selCat)  continue;
-        if (selType >= 0 && int(v.type) != selType) continue;
-        if (!selItem.isEmpty() && v.itemMain != selItem) continue;
-        if (!selSub.isEmpty()  && v.itemSub  != selSub)  continue;
+        // An expression belongs to no category, type or item, so those boxes
+        // would hide it whatever they were set to. Only the search narrows it.
+        if (v.expr.isEmpty()) {
+            if (selCat  >= 0 && int(v.cat)  != selCat)  continue;
+            if (selType >= 0 && int(v.type) != selType) continue;
+            if (!selItem.isEmpty() && v.itemMain != selItem) continue;
+            if (!selSub.isEmpty()  && v.itemSub  != selSub)  continue;
+        }
         if (!wilds.isEmpty() || !substrings.isEmpty()) {
             bool hit = false;
             for (const auto& re : wilds)
@@ -2843,7 +3283,11 @@ int SummaryPlotWidget::plotChart(QChart* chart, const QList<int>& sel,
         const int a = axisFor(vecs_[i].unit);
         if (a < 0) continue;
         QStringList& k = (a == 0) ? kwL : kwR;
-        if (!k.contains(vecs_[i].keyword)) k << vecs_[i].keyword;
+        // An expression's keyword is the word "expression", which names
+        // nothing; what it is called is what it says.
+        const QString name = vecs_[i].expr.isEmpty() ? vecs_[i].keyword
+                                                     : vecs_[i].expr;
+        if (!k.contains(name)) k << name;
     }
     auto axisTitle = [&kNoUnit](const QString& u, const QStringList& kw) {
         const QString unit = (u == kNoUnit) ? QString() : u;
@@ -2970,12 +3414,7 @@ int SummaryPlotWidget::plotChart(QChart* chart, const QList<int>& sel,
             if (side < 0) { if (isActive) ++skipped; continue; }
 
             std::vector<float> data;
-            try {
-                const std::string key = v.key.toStdString();
-                if (pc.second->hasKey(key))     data = pc.second->get(key);
-                else if (isActive)              data = pc.second->get(v.node);
-                else                            continue;   // vector absent in this case
-            } catch (...) { continue; }
+            if (!seriesData(v, pc.second, isActive, data)) continue;
 
             auto* s = new QLineSeries;
             s->setName(multi ? pc.first + QStringLiteral(" | ") + v.key : v.key);
@@ -3265,12 +3704,7 @@ void SummaryPlotWidget::saveCsv()
         for (int i : sel) {
             const Vec& v = vecs_[i];
             std::vector<float> data;
-            try {
-                const std::string key = v.key.toStdString();
-                if (pc.second->hasKey(key)) data = pc.second->get(key);
-                else if (isActive)          data = pc.second->get(v.node);
-                else                        continue;   // absent in this case
-            } catch (...) { continue; }
+            if (!seriesData(v, pc.second, isActive, data)) continue;
             QString h = QStringLiteral("%1 (%2)").arg(v.key, pc.first);
             if (!v.unit.isEmpty()) h += QStringLiteral(" [%1]").arg(v.unit);
             cols.push_back({ h, std::move(data) });

@@ -108,7 +108,24 @@ private:
         QString unit;                               // e.g. SM3/DAY
         Opm::EclIO::SummaryNode::Category cat{};
         Opm::EclIO::SummaryNode::Type     type{};
+        // Set when this is not a vector in the file but arithmetic over ones
+        // that are - "WBP:B-1H - WBHP:B-1H". `node` is then unused and the
+        // values are worked out per case at plot time.
+        QString expr;
     };
+
+    // A curve's values in one case: the vector itself, or the expression
+    // evaluated over the vectors it names. False when the case does not carry
+    // everything the curve needs.
+    bool seriesData(const Vec& v, Opm::EclIO::ESmry* smry, bool isActive,
+                    std::vector<float>& out) const;
+    // Add one Vec per stored expression, after the file's own vectors. Called
+    // on every load, since vecs_ is rebuilt from the case each time.
+    void appendDerivedVecs();
+    void refreshDerived();
+    void addExpression();
+    void removeExpression();
+    void syncExprBox();
 
     QListWidget* caseList_   = nullptr;   // checkable: checked = plotted;
                                           // highlighted row = active case
@@ -118,6 +135,8 @@ private:
     QLabel*      subLabel_   = nullptr;
     QComboBox*   subItemBox_ = nullptr;
     QLineEdit*   filter_    = nullptr;
+    QComboBox*   exprBox_   = nullptr;   // editable: the expression being written
+    QStringList  exprs_;                 // ... and the ones already plotted
     QTreeWidget* tree_      = nullptr;
     QToolButton* layoutBtn_ = nullptr;   // the subplot grid, picked as a shape
     QSplitter*   caseSplit_ = nullptr;   // case list over vector tree
