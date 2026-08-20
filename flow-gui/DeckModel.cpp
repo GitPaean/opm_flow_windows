@@ -270,14 +270,38 @@ QSize GraphView::minimumSizeHint() const { return { 280, 160 }; }
 // cheap half of what a real graph layout does, and on these graphs - a dozen
 // nodes, mostly tree-shaped - it removes essentially all the crossings that
 // the arbitrary input order produced.
+QFont GraphView::nodeFont() const
+{
+    QFont f = font();
+    f.setPointSizeF(9.0);
+    f.setBold(true);
+    return f;
+}
+
+// The layout, in units of its own rather than fractions of the pane. Spreading
+// each layer evenly across the whole width is what put two children of one node
+// at opposite edges of the window: the drawing has a natural size, and render()
+// fits that into whatever space there is instead of stretching it.
+//
+// Layers come from longest-path depth, their ORDER from barycentre sweeps, and
+// then x is settled by alternating pulls - a node under the middle of its
+// parents, a parent over the middle of what it holds - with each layer packed
+// afterwards so nothing overlaps. That is the cheap half of what dot does, and
+// it produces the same shape: children clustered under their parent, growing
+// outwards from the centre.
 void GraphView::relayout()
 {
     placed_.clear();
     maxDepth_ = 0;
+    natW_ = natH_ = 0;
     if (nodes_.isEmpty()) return;
 
-    QHash<QString, QStringList> parents;   // node -> the nodes it points at
-    for (const auto& e : edges_) parents[e.from] << e.to;
+    QHash<QString, QStringList> parents;    // node -> the nodes it points at
+    QHash<QString, QStringList> children;   // ... and the ones pointing at it
+    for (const auto& e : edges_) {
+        parents[e.from] << e.to;
+        children[e.to]  << e.from;
+    }
 
     QHash<QString, int> depth;
     std::function<int(const QString&, int)> deep = [&](const QString& n, int guard) -> int {
@@ -293,35 +317,85 @@ void GraphView::relayout()
     QVector<QStringList> layers(maxDepth_ + 1);
     for (const auto& n : nodes_) layers[depth.value(n)] << n;
 
-    QHash<QString, double> xs;
+    // Order within each layer, by barycentre, on evenly spaced positions - this
+    // pass decides who is left of whom and nothing else.
+    QHash<QString, double> ord;
     for (auto& layer : layers)
         for (int i = 0; i < layer.size(); ++i)
-            xs[layer[i]] = layer.size() > 1 ? double(i) / (layer.size() - 1) : 0.5;
-
+            ord[layer[i]] = layer.size() > 1 ? double(i) / (layer.size() - 1) : 0.5;
     for (int sweep = 0; sweep < 4; ++sweep) {
         for (int d = 1; d <= maxDepth_; ++d) {
             QStringList& layer = layers[d];
             QHash<QString, double> bary;
             for (const auto& n : layer) {
                 const QStringList ups = parents.value(n);
-                if (ups.isEmpty()) { bary[n] = xs.value(n); continue; }
+                if (ups.isEmpty()) { bary[n] = ord.value(n); continue; }
                 double sum = 0; int cnt = 0;
-                for (const auto& u : ups) { sum += xs.value(u, 0.5); ++cnt; }
-                bary[n] = cnt ? sum / cnt : xs.value(n);
+                for (const auto& u : ups) { sum += ord.value(u, 0.5); ++cnt; }
+                bary[n] = cnt ? sum / cnt : ord.value(n);
             }
             std::sort(layer.begin(), layer.end(),
                       [&bary](const QString& a, const QString& b) { return bary[a] < bary[b]; });
             for (int i = 0; i < layer.size(); ++i)
-                xs[layer[i]] = layer.size() > 1 ? double(i) / (layer.size() - 1) : 0.5;
+                ord[layer[i]] = layer.size() > 1 ? double(i) / (layer.size() - 1) : 0.5;
         }
     }
 
+    // How wide each node actually is, which is what the packing has to respect.
+    const QFontMetricsF fm(nodeFont());
+    natBoxH_   = fm.height() + 10;
+    natRowGap_ = natBoxH_ * 2.7;
+    QHash<QString, double> W;
     for (const auto& n : nodes_) {
-        Placed p;
-        p.name = n;
-        p.depth = depth.value(n);
-        p.x = xs.value(n, 0.5);
-        placed_.push_back(p);
+        const bool well = isWellKind(kinds_.value(n, KindGroup));
+        W[n] = std::max(54.0, fm.horizontalAdvance(n) + (well ? 20.0 : 34.0));
+    }
+
+    const double gap = 24.0;
+    QHash<QString, double> X;
+    for (const auto& layer : layers) {          // start packed left to right
+        double x = 0;
+        for (const auto& n : layer) { X[n] = x + W[n] / 2; x += W[n] + gap; }
+    }
+    auto pack = [&](const QStringList& layer) {
+        for (int i = 1; i < layer.size(); ++i)
+            X[layer[i]] = std::max(X[layer[i]],
+                                   X[layer[i - 1]]
+                                       + (W[layer[i - 1]] + W[layer[i]]) / 2 + gap);
+    };
+    auto meanOf = [&](const QStringList& ns) {
+        double sum = 0; int cnt = 0;
+        for (const auto& n : ns) if (X.contains(n)) { sum += X[n]; ++cnt; }
+        return cnt ? sum / cnt : 0.0;
+    };
+    for (int it = 0; it < 8; ++it) {
+        for (int d = 1; d <= maxDepth_; ++d) {          // under their parents
+            for (const auto& n : layers[d])
+                if (!parents.value(n).isEmpty()) X[n] = meanOf(parents.value(n));
+            pack(layers[d]);
+        }
+        for (int d = maxDepth_ - 1; d >= 0; --d) {      // over what they hold
+            for (const auto& n : layers[d])
+                if (!children.value(n).isEmpty()) X[n] = meanOf(children.value(n));
+            pack(layers[d]);
+        }
+    }
+
+    double lo = 1e18, hi = -1e18;
+    for (const auto& n : nodes_) {
+        lo = std::min(lo, X[n] - W[n] / 2);
+        hi = std::max(hi, X[n] + W[n] / 2);
+    }
+    natW_ = std::max(1.0, hi - lo);
+    natH_ = maxDepth_ * natRowGap_ + natBoxH_;
+
+    for (const auto& n : nodes_) {
+        Placed q;
+        q.name  = n;
+        q.depth = depth.value(n);
+        q.x     = X[n] - lo;
+        q.w     = W[n];
+        placed_.push_back(q);
     }
 }
 
@@ -330,9 +404,8 @@ void GraphView::relayout()
 // which matters on a projector, in a black-and-white print, and to a reader
 // who does not see colour the way the person who chose it does.
 void GraphView::paintNode(QPainter& p, const QRectF& r, const QString& text,
-                          int kind, bool root, bool hot) const
+                          int kind, double thin, bool hot) const
 {
-    Q_UNUSED(root);   // its place at the top of the drawing already says so
     QColor fill, line, ink;
     kindColours(kind, fill, line, ink);
 
@@ -346,7 +419,7 @@ void GraphView::paintNode(QPainter& p, const QRectF& r, const QString& text,
         if (isWellKind(kind)) p.drawRect(halo); else p.drawEllipse(halo);
     }
 
-    p.setPen(QPen(line, isWellKind(kind) ? 1.6 : 1.1));
+    p.setPen(QPen(line, (isWellKind(kind) ? 1.6 : 1.1) * thin));
     p.setBrush(fill);
     if (isWellKind(kind)) p.drawRect(r); else p.drawEllipse(r);
 
@@ -455,29 +528,36 @@ void GraphView::render(QPainter& p, const QRectF& area) const
     }
     p.setRenderHint(QPainter::Antialiasing);
 
-    QFont nf = p.font(); nf.setPointSizeF(9.0); nf.setBold(true);
-    const QFontMetricsF fm(nf);
-    const double boxH = fm.height() + 10;
+    // Fit the natural drawing into the space, keeping its proportions, and put
+    // it in the middle - shrinking it when it does not fit, but never blowing
+    // it up past its own size. A seven-node network stretched to fill a wide
+    // pane stops looking like a diagram, and capping at 1:1 also means every
+    // deck is drawn at the same type size instead of one per graph.
+    const double margin = 18.0;
+    double sc = std::min((area.width()  - 2 * margin) / natW_,
+                         (area.height() - 2 * margin) / natH_);
+    sc = std::clamp(sc, 0.02, 1.0);
+    // Lines and arrowheads scale with everything else, but not all the way
+    // down: at the size a whole field needs they would vanish.
+    const double thin = 1.0 / std::clamp(sc, 0.35, 1.0);
 
-    const QVector<int> kk = keyKinds();
-    const QRectF plot = area;
+    p.save();
+    p.translate(area.center().x() - natW_ * sc / 2,
+                area.center().y() - natH_ * sc / 2);
+    p.scale(sc, sc);
 
-    const double rowGap = maxDepth_ > 0
-        ? (plot.height() - boxH - 24) / maxDepth_ : 0.0;
+    const QFont nf = nodeFont();
+    p.setFont(nf);
 
-    // A group sits in an ellipse, which needs a good deal more width than a
-    // box does to hold the same text without the curve eating its ends.
     auto isWell = [&](const QString& n) {
         return isWellKind(kinds_.value(n, KindGroup));
     };
     auto boxOf = [&](const Placed& q) {
         const bool well = isWell(q.name);
-        const double pad = well ? 20.0 : 34.0;
-        const double w = std::max(54.0, fm.horizontalAdvance(q.name) + pad);
-        const double h = well ? boxH - 3 : boxH;
-        const double cx = plot.left() + 20 + q.x * std::max(1.0, plot.width() - 40 - w) + w / 2;
-        const double cy = plot.top() + 12 + q.depth * rowGap + boxH / 2;
-        return QRectF(cx - w / 2, cy - h / 2, w, h);
+        const double h = well ? natBoxH_ - 3 : natBoxH_;
+        return QRectF(q.x - q.w / 2,
+                      q.depth * natRowGap_ + (natBoxH_ - h) / 2,
+                      q.w, h);
     };
     auto find = [&](const QString& n) -> const Placed* {
         for (const auto& q : placed_) if (q.name == n) return &q;
@@ -485,7 +565,7 @@ void GraphView::render(QPainter& p, const QRectF& area) const
     };
 
     // Edges first, so a node always sits on top of the lines that reach it.
-    QFont ef = p.font(); ef.setPointSizeF(7.5); ef.setBold(false);
+    QFont ef = nf; ef.setPointSizeF(7.5); ef.setBold(false);
     for (const auto& e : edges_) {
         const Placed* a = find(e.from);
         const Placed* b = find(e.to);
@@ -496,32 +576,39 @@ void GraphView::render(QPainter& p, const QRectF& area) const
         // the corner of the rectangle around it.
         const QPointF from = edgePoint(rb, isWell(e.to), ra.center() - rb.center());
         const QPointF to   = edgePoint(ra, isWell(e.from), rb.center() - ra.center());
-        p.setPen(QPen(QColor(0x33, 0x33, 0x33), 1.1));
+        p.setPen(QPen(QColor(0x33, 0x33, 0x33), 1.1 * thin));
         p.setBrush(Qt::NoBrush);
         p.drawLine(from, to);
         // The arrow points the way the eye reads the tree: down from a node to
         // the things it holds.
-        drawArrow(p, to, from, 9.0);
+        drawArrow(p, to, from, 9.0 * thin);
         if (!e.label.isEmpty()) {
             p.setFont(ef);
-            p.setPen(QColor(0x8a, 0x6d, 0x3b));
             const QPointF mid = (from + to) / 2;
-            p.drawText(QRectF(mid.x() - 34, mid.y() - 15, 68, 14),
-                       Qt::AlignCenter, e.label);
+            const QFontMetricsF efm(ef);
+            QRectF lr(0, 0, efm.horizontalAdvance(e.label) + 6, efm.height());
+            lr.moveCenter(mid);
+            // On a patch of background, or the line it labels runs through it.
+            p.setPen(Qt::NoPen);
+            p.setBrush(Qt::white);
+            p.drawRect(lr);
+            p.setPen(QColor(0x8a, 0x6d, 0x3b));
+            p.drawText(lr, Qt::AlignCenter, e.label);
             p.setFont(nf);
         }
     }
 
-    p.setFont(nf);
     for (const auto& q : placed_)
-        paintNode(p, boxOf(q), q.name, kinds_.value(q.name, KindGroup),
-                  q.depth == 0, !highlight_.isEmpty() && q.name == highlight_);
+        paintNode(p, boxOf(q), q.name, kinds_.value(q.name, KindGroup), thin,
+                  !highlight_.isEmpty() && q.name == highlight_);
+    p.restore();
 
+    // The key stays the size it is: it is there to be read, not to be part of
+    // the picture's scale. It floats over the drawing rather than taking a
+    // strip off it, and where it should sit depends on the graph - so it is
+    // draggable, and drag beats guessing.
+    const QVector<int> kk = keyKinds();
     if (kk.isEmpty()) return;
-
-    // The key floats over the drawing rather than taking a strip off it: it is
-    // small, the corner it starts in is usually empty, and where it should go
-    // depends on the graph - so it is draggable, and drag beats guessing.
     const QFont kf = keyFont();
     p.setFont(kf);
     const QFontMetricsF kfm(kf);
@@ -535,7 +622,7 @@ void GraphView::render(QPainter& p, const QRectF& area) const
     double ky = kr.top() + 7;
     for (int k : kk) {
         paintNode(p, QRectF(kr.left() + 10, ky + (rowH - 14) / 2, 26, 14),
-                  QString(), k, false, false);
+                  QString(), k, 1.0, false);
         p.setPen(QColor(0x33, 0x38, 0x3d));
         p.drawText(QRectF(kr.left() + 44, ky, kr.width() - 52, rowH),
                    Qt::AlignVCenter | Qt::AlignLeft, kindName(k));

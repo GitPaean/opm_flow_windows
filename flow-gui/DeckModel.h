@@ -150,14 +150,17 @@ protected:
 
 private:
     void relayout();
+    // `thin` scales pen widths up when the drawing is scaled down, so lines
+    // do not vanish on a field that has to be fitted into a small pane.
     void paintNode(QPainter& p, const QRectF& r, const QString& text,
-                   int kind, bool root, bool hot) const;
+                   int kind, double thin, bool hot) const;
     // Which kinds are on screen, in the order the key lists them; empty when
     // there is only one and so nothing to tell apart.
     QVector<int> keyKinds() const;
     // Where the key sits for a drawing of this size, default corner included.
     QRectF keyRect(const QRectF& area, const QFontMetricsF& fm) const;
     QFont  keyFont() const;
+    QFont  nodeFont() const;
     static QString kindName(int kind);
     static bool    isWellKind(int kind);
     static QPointF edgePoint(const QRectF& r, bool rect, const QPointF& towards);
@@ -171,7 +174,8 @@ public:
 
 private:
 
-    struct Placed { QString name; int depth = 0; double x = 0; };
+    // In the layout's own units: x is the node's centre, w its width.
+    struct Placed { QString name; int depth = 0; double x = 0; double w = 0; };
     QHash<QString, int> kinds_;
     QStringList     nodes_;
     QVector<Edge>   edges_;
@@ -179,6 +183,8 @@ private:
     QString         empty_;
     QString         highlight_;
     int             maxDepth_ = 0;
+    // The drawing's natural size, which render() fits into the pane.
+    double          natW_ = 0, natH_ = 0, natBoxH_ = 0, natRowGap_ = 0;
     // Normalised to the drawing area so it survives a resize and comes out of
     // the export where it went on screen. Negative x = the default corner.
     QPointF         keyPos_{ -1.0, -1.0 };
