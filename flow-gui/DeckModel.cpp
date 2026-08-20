@@ -826,7 +826,7 @@ StructurePanel::StructurePanel(QWidget* parent) : QWidget(parent)
     // Deep trees indent a long way, and resizeColumnToContents() then makes
     // column 0 wider than a narrow pane - at which point the rows that matter
     // most show nothing but their own indentation. Give it a floor.
-    tree_->setMinimumWidth(340);
+    tree_->setMinimumWidth(250);
     tree_->setColumnCount(2);
     tree_->setHeaderLabels({ QStringLiteral("Group / well"), QStringLiteral("Contents") });
     tree_->header()->setStretchLastSection(true);
@@ -842,11 +842,16 @@ StructurePanel::StructurePanel(QWidget* parent) : QWidget(parent)
     auto* split = new QSplitter(Qt::Horizontal);
     split->addWidget(tree_);
     split->addWidget(right);
-    split->setStretchFactor(0, 2);
-    split->setStretchFactor(1, 3);
+    // Every pixel the window gains goes to the drawing. The names in the tree
+    // are as long as they are going to get, so a wider window only adds empty
+    // column to it, while the drawing can always use the room.
+    split->setStretchFactor(0, 0);
+    split->setStretchFactor(1, 1);
     // After the first layout, not during it: sizes set on a splitter that has
     // no size yet are rescaled out of all recognition once it gets one.
-    QTimer::singleShot(0, this, [split] { split->setSizes({ 420, 780 }); });
+    QTimer::singleShot(0, this, [split] {
+        split->setSizes({ 330, std::max(400, split->width() - 330) });
+    });
 
     auto* lay = new QVBoxLayout(this);
     lay->addLayout(row);
