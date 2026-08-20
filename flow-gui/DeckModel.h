@@ -160,6 +160,9 @@ private:
     // Where the key sits for a drawing of this size, default corner included.
     QRectF keyRect(const QRectF& area, const QFontMetricsF& fm) const;
     QFont  keyFont() const;
+    // What scale the drawing is shown at, and where it lands.
+    double fitScale(const QRectF& area) const;
+    QRectF drawnRect(const QRectF& area) const;
     QFont  nodeFont() const;
     static QString kindName(int kind);
     static bool    isWellKind(int kind);

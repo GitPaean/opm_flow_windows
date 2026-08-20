@@ -528,22 +528,14 @@ void GraphView::render(QPainter& p, const QRectF& area) const
     }
     p.setRenderHint(QPainter::Antialiasing);
 
-    // Fit the natural drawing into the space, keeping its proportions, and put
-    // it in the middle - shrinking it when it does not fit, but never blowing
-    // it up past its own size. A seven-node network stretched to fill a wide
-    // pane stops looking like a diagram, and capping at 1:1 also means every
-    // deck is drawn at the same type size instead of one per graph.
-    const double margin = 18.0;
-    double sc = std::min((area.width()  - 2 * margin) / natW_,
-                         (area.height() - 2 * margin) / natH_);
-    sc = std::clamp(sc, 0.02, 1.0);
+    const double sc = fitScale(area);
+    const QRectF drawn = drawnRect(area);
     // Lines and arrowheads scale with everything else, but not all the way
     // down: at the size a whole field needs they would vanish.
     const double thin = 1.0 / std::clamp(sc, 0.35, 1.0);
 
     p.save();
-    p.translate(area.center().x() - natW_ * sc / 2,
-                area.center().y() - natH_ * sc / 2);
+    p.translate(drawn.topLeft());
     p.scale(sc, sc);
 
     const QFont nf = nodeFont();
@@ -630,6 +622,31 @@ void GraphView::render(QPainter& p, const QRectF& area) const
     }
 }
 
+// How much of its natural size the drawing is shown at. It shrinks to fit
+// without argument; growing is deliberately damped - a big window should make
+// the picture comfortably bigger, not stretch eight nodes across a metre of
+// screen - and stops at twice size, past which the type stops looking like
+// type and starts looking like a poster.
+double GraphView::fitScale(const QRectF& area) const
+{
+    if (natW_ <= 0 || natH_ <= 0) return 1.0;
+    const double margin = 18.0;
+    double fit = std::min((area.width()  - 2 * margin) / natW_,
+                          (area.height() - 2 * margin) / natH_);
+    if (fit > 1.0) fit = 1.0 + (fit - 1.0) * 0.5;
+    return std::clamp(fit, 0.02, 2.0);
+}
+
+// Where the drawing actually lands: centred, at its fitted size.
+QRectF GraphView::drawnRect(const QRectF& area) const
+{
+    const double sc = fitScale(area);
+    const QSizeF sz(natW_ * sc, natH_ * sc);
+    return QRectF(area.center().x() - sz.width() / 2,
+                  area.center().y() - sz.height() / 2,
+                  sz.width(), sz.height());
+}
+
 QFont GraphView::keyFont() const
 {
     QFont f = font();
@@ -661,9 +678,14 @@ QRectF GraphView::keyRect(const QRectF& area, const QFontMetricsF& fm) const
     const double h = 7 + kk.size() * rowH + 7;
 
     double x, y;
-    if (keyPos_.x() < 0) {                       // the default corner
-        x = area.right() - w - 12;
-        y = area.top() + 12;
+    if (keyPos_.x() < 0) {
+        // The drawing's top-right corner, not the pane's: in a window much
+        // bigger than the graph the pane corner is half a screen away from
+        // what it explains. The top row is usually one root in the middle, so
+        // the corner it lands in is free.
+        const QRectF drawn = drawnRect(area);
+        x = drawn.right() - w;
+        y = drawn.top();
     } else {
         x = area.left() + keyPos_.x() * area.width();
         y = area.top()  + keyPos_.y() * area.height();
