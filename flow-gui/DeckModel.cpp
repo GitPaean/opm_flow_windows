@@ -9,6 +9,8 @@
 #include "GuiPaths.h"
 
 #include <QApplication>
+#include <QPageSize>
+#include <QPdfWriter>
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -185,124 +187,173 @@ DeckStructure readDeckStructure(const QString& dataFile,
 }
 
 // ===========================================================================
-// NetworkView
+// GraphView
 // ===========================================================================
 
-NetworkView::NetworkView(QWidget* parent) : QWidget(parent)
+GraphView::GraphView(QWidget* parent) : QWidget(parent)
 {
-    setMinimumHeight(140);
+    setMinimumHeight(160);
+    setAutoFillBackground(true);
+    QPalette pal = palette();
+    pal.setColor(QPalette::Window, Qt::white);
+    setPalette(pal);
 }
 
-void NetworkView::setStructure(const Structure* s)
+void GraphView::setGraph(const QStringList& nodes, const QVector<Edge>& edges,
+                         const QString& emptyText)
 {
-    s_ = s;
-    layoutNodes();
+    nodes_ = nodes; edges_ = edges; empty_ = emptyText;
+    relayout();
     update();
 }
 
-// Depth is distance to a root, following branches uptree. Nodes at the same
-// depth share a row, which is enough structure to read the plumbing without
-// a graph library.
-void NetworkView::layoutNodes()
+void GraphView::setHighlight(const QString& node)
+{
+    highlight_ = node;
+    update();
+}
+
+QSize GraphView::minimumSizeHint() const { return { 280, 160 }; }
+
+// Layered, with the roots on top. Depth is the longest path to a root, so a
+// node always sits below everything that feeds it - shortest-path would let an
+// edge run sideways or backwards and the picture stops reading as a flow.
+//
+// Order within a layer is then swept by barycentre: repeatedly put each node
+// at the average x of its neighbours in the layer above and re-sort. It is the
+// cheap half of what a real graph layout does, and on these graphs - a dozen
+// nodes, mostly tree-shaped - it removes essentially all the crossings that
+// the arbitrary input order produced.
+void GraphView::relayout()
 {
     placed_.clear();
     maxDepth_ = 0;
-    if (!s_ || !s_->netActive || s_->netNodes.isEmpty()) return;
+    if (nodes_.isEmpty()) return;
 
-    auto uptreeOf = [this](const QString& n) -> QString {
-        for (const auto& b : s_->branches) if (b.down == n) return b.up;
-        return {};
-    };
-    QVector<int> depth(s_->netNodes.size(), 0);
-    for (int i = 0; i < s_->netNodes.size(); ++i) {
-        QString cur = s_->netNodes[i];
+    QHash<QString, QStringList> parents;   // node -> the nodes it points at
+    for (const auto& e : edges_) parents[e.from] << e.to;
+
+    QHash<QString, int> depth;
+    std::function<int(const QString&, int)> deep = [&](const QString& n, int guard) -> int {
+        if (guard > 64) return 0;                    // a cycle is not worth hanging over
+        if (depth.contains(n)) return depth[n];
         int d = 0;
-        // Bounded: a cycle would otherwise walk forever, and a malformed
-        // network is not worth hanging the window over.
-        for (int guard = 0; guard < 64; ++guard) {
-            const QString up = uptreeOf(cur);
-            if (up.isEmpty()) break;
-            cur = up; ++d;
+        for (const auto& up : parents.value(n)) d = std::max(d, deep(up, guard + 1) + 1);
+        depth[n] = d;
+        return d;
+    };
+    for (const auto& n : nodes_) maxDepth_ = std::max(maxDepth_, deep(n, 0));
+
+    QVector<QStringList> layers(maxDepth_ + 1);
+    for (const auto& n : nodes_) layers[depth.value(n)] << n;
+
+    QHash<QString, double> xs;
+    for (auto& layer : layers)
+        for (int i = 0; i < layer.size(); ++i)
+            xs[layer[i]] = layer.size() > 1 ? double(i) / (layer.size() - 1) : 0.5;
+
+    for (int sweep = 0; sweep < 4; ++sweep) {
+        for (int d = 1; d <= maxDepth_; ++d) {
+            QStringList& layer = layers[d];
+            QHash<QString, double> bary;
+            for (const auto& n : layer) {
+                const QStringList ups = parents.value(n);
+                if (ups.isEmpty()) { bary[n] = xs.value(n); continue; }
+                double sum = 0; int cnt = 0;
+                for (const auto& u : ups) { sum += xs.value(u, 0.5); ++cnt; }
+                bary[n] = cnt ? sum / cnt : xs.value(n);
+            }
+            std::sort(layer.begin(), layer.end(),
+                      [&bary](const QString& a, const QString& b) { return bary[a] < bary[b]; });
+            for (int i = 0; i < layer.size(); ++i)
+                xs[layer[i]] = layer.size() > 1 ? double(i) / (layer.size() - 1) : 0.5;
         }
-        depth[i] = d;
-        maxDepth_ = std::max(maxDepth_, d);
     }
-    QVector<int> perRow(maxDepth_ + 1, 0);
-    for (int d : depth) ++perRow[d];
-    QVector<int> seen(maxDepth_ + 1, 0);
-    for (int i = 0; i < s_->netNodes.size(); ++i) {
+
+    for (const auto& n : nodes_) {
         Placed p;
-        p.name = s_->netNodes[i];
-        p.depth = depth[i];
-        const int n = std::max(1, perRow[depth[i]]);
-        p.x = (seen[depth[i]] + 0.5) / n;
-        p.y = maxDepth_ > 0 ? double(depth[i]) / maxDepth_ : 0.5;
-        ++seen[depth[i]];
+        p.name = n;
+        p.depth = depth.value(n);
+        p.x = xs.value(n, 0.5);
         placed_.push_back(p);
     }
 }
 
-QSize NetworkView::minimumSizeHint() const { return { 260, 140 }; }
-
-void NetworkView::paintEvent(QPaintEvent*)
+void GraphView::render(QPainter& p, const QRectF& area) const
 {
-    QPainter p(this);
-    p.fillRect(rect(), Qt::white);
-    p.setRenderHint(QPainter::Antialiasing);
-    if (!s_ || !s_->netActive || placed_.isEmpty()) {
+    p.fillRect(area, Qt::white);
+    if (placed_.isEmpty()) {
         p.setPen(QColor(0x88, 0x8e, 0x94));
-        p.drawText(rect(), Qt::AlignCenter,
-                   s_ ? QStringLiteral("this deck defines no network")
-                      : QStringLiteral("no deck loaded"));
+        p.drawText(area, Qt::AlignCenter, empty_);
         return;
     }
-    const double mx = 60, my = 30;
-    auto px = [&](const Placed& q) { return mx + q.x * (width() - 2 * mx); };
-    // Depth 0 is a root - the node everything drains towards - and it goes at
-    // the TOP, so the diagram reads the same way down as the group tree beside
-    // it. y is already depth/maxDepth, so it needs no flipping.
-    auto py = [&](const Placed& q) { return my + q.y * (height() - 2 * my); };
-    auto at = [&](const QString& n) -> const Placed* {
+    p.setRenderHint(QPainter::Antialiasing);
+
+    QFont nf = p.font(); nf.setPointSizeF(9.0); nf.setBold(true);
+    const QFontMetricsF fm(nf);
+    const double boxH = fm.height() + 10;
+    const double rowGap = maxDepth_ > 0
+        ? (area.height() - boxH - 24) / maxDepth_ : 0.0;
+
+    auto boxOf = [&](const Placed& q) {
+        const double w = std::max(54.0, fm.horizontalAdvance(q.name) + 18);
+        const double cx = area.left() + 20 + q.x * std::max(1.0, area.width() - 40 - w) + w / 2;
+        const double cy = area.top() + 12 + q.depth * rowGap + boxH / 2;
+        return QRectF(cx - w / 2, cy - boxH / 2, w, boxH);
+    };
+    auto find = [&](const QString& n) -> const Placed* {
         for (const auto& q : placed_) if (q.name == n) return &q;
         return nullptr;
     };
 
-    QFont bf = p.font(); bf.setPointSizeF(7.5);
-    for (const auto& b : s_->branches) {
-        const Placed* d = at(b.down);
-        const Placed* u = at(b.up);
-        if (!d || !u) continue;
-        const QPointF a(px(*d), py(*d)), c(px(*u), py(*u));
-        p.setPen(QPen(QColor(0x7a, 0x86, 0x92), 1.6));
-        p.drawLine(a, c);
-        // Which VFP table the branch lifts through: the one number that says
-        // what a branch actually does, and it is free to carry.
-        if (b.vfp > 0) {
-            p.setFont(bf);
+    // Edges first, so a box always sits on top of the lines that reach it.
+    QFont ef = p.font(); ef.setPointSizeF(7.5); ef.setBold(false);
+    for (const auto& e : edges_) {
+        const Placed* a = find(e.from);
+        const Placed* b = find(e.to);
+        if (!a || !b) continue;
+        const QRectF ra = boxOf(*a), rb = boxOf(*b);
+        const QPointF from(ra.center().x(), ra.top());
+        const QPointF to(rb.center().x(), rb.bottom());
+        p.setPen(QPen(QColor(0x9a, 0xa3, 0xac), 1.4));
+        // A gentle S rather than a straight line: with several children meeting
+        // one parent, straight lines converge into an unreadable star.
+        QPainterPath path(from);
+        const double midY = (from.y() + to.y()) / 2;
+        path.cubicTo(QPointF(from.x(), midY), QPointF(to.x(), midY), to);
+        p.drawPath(path);
+        if (!e.label.isEmpty()) {
+            p.setFont(ef);
             p.setPen(QColor(0x8a, 0x6d, 0x3b));
-            p.drawText(QRectF((a.x() + c.x()) / 2 - 30, (a.y() + c.y()) / 2 - 8, 60, 14),
-                       Qt::AlignCenter, QStringLiteral("VFP %1").arg(b.vfp));
+            p.drawText(QRectF((from.x() + to.x()) / 2 - 34, midY - 8, 68, 14),
+                       Qt::AlignCenter, e.label);
         }
     }
-    QFont f = p.font(); f.setPointSizeF(8.5); p.setFont(f);
+
+    p.setFont(nf);
     for (const auto& q : placed_) {
-        const QPointF c(px(q), py(q));
-        const bool root = (q.depth == 0);   // a terminal node, not a leaf
-        p.setBrush(root ? QColor(0x00, 0x3c, 0x65) : QColor(0x14, 0xb9, 0x78));
-        p.setPen(Qt::NoPen);
-        p.drawEllipse(c, 6, 6);
-        p.setPen(QColor(0x22, 0x26, 0x2b));
-        p.drawText(QRectF(c.x() - 60, c.y() - 22, 120, 16),
-                   Qt::AlignCenter, q.name);
+        const QRectF r = boxOf(q);
+        const bool root = (q.depth == 0);
+        const bool hot  = (!highlight_.isEmpty() && q.name == highlight_);
+        p.setPen(QPen(hot ? QColor(0xd5, 0x5e, 0x00) : QColor(0x7a, 0x86, 0x92),
+                      hot ? 2.0 : 1.2));
+        p.setBrush(root ? QColor(0x00, 0x3c, 0x65)
+                        : hot ? QColor(0xff, 0xf1, 0xdd) : QColor(0xe8, 0xf6, 0xef));
+        p.drawRoundedRect(r, 4, 4);
+        p.setPen(root ? Qt::white : QColor(0x22, 0x26, 0x2b));
+        p.drawText(r, Qt::AlignCenter, q.name);
     }
 }
 
-} // namespace flowgui
+void GraphView::paintEvent(QPaintEvent*)
+{
+    QPainter p(this);
+    render(p, QRectF(rect()));
+}
 
 // ===========================================================================
 // StructurePanel
 // ===========================================================================
-namespace flowgui {
 
 StructurePanel::StructurePanel(QWidget* parent) : QWidget(parent)
 {
@@ -326,8 +377,20 @@ StructurePanel::StructurePanel(QWidget* parent) : QWidget(parent)
     showWells_->setToolTip(QStringLiteral(
         "list the wells under their group. Turn off on a field with many of "
         "them to read the group hierarchy on its own."));
+    viewBox_ = new QComboBox;
+    viewBox_->addItem(QStringLiteral("group tree"));
+    viewBox_->addItem(QStringLiteral("network"));
+    viewBox_->setToolTip(QStringLiteral(
+        "which graph to draw. The tree on the left is always the group "
+        "hierarchy; this is what the picture beside it shows."));
     exportBtn_ = new QPushButton(QStringLiteral("Export Graphviz..."));
     exportBtn_->setEnabled(false);
+    picBtn_ = new QPushButton(QStringLiteral("Save picture..."));
+    picBtn_->setEnabled(false);
+    picBtn_->setToolTip(QStringLiteral(
+        "write the drawing as it stands to PNG or PDF. The same painting code "
+        "draws the screen and the file, so the file is what you are looking "
+        "at - vector in the PDF, at whatever size you ask for in the PNG."));
     exportBtn_->setToolTip(QStringLiteral(
         "write the group structure as Graphviz .gv, through opm-common's own "
         "writer - the same files the wellgraph tool produces.\n\n"
@@ -343,6 +406,9 @@ StructurePanel::StructurePanel(QWidget* parent) : QWidget(parent)
     row->addWidget(new QLabel(QStringLiteral("Structure at:")));
     row->addWidget(shapeBox_);
     row->addWidget(showWells_);
+    row->addWidget(new QLabel(QStringLiteral("Draw:")));
+    row->addWidget(viewBox_);
+    row->addWidget(picBtn_);
     row->addWidget(exportBtn_);
     row->addWidget(bar_);
     row->addWidget(filter_, 1);
@@ -353,24 +419,30 @@ StructurePanel::StructurePanel(QWidget* parent) : QWidget(parent)
     netInfo_->setStyleSheet(QStringLiteral("color:#555b61;"));
 
     tree_ = new QTreeWidget;
+    // Deep trees indent a long way, and resizeColumnToContents() then makes
+    // column 0 wider than a narrow pane - at which point the rows that matter
+    // most show nothing but their own indentation. Give it a floor.
+    tree_->setMinimumWidth(340);
     tree_->setColumnCount(2);
     tree_->setHeaderLabels({ QStringLiteral("Group / well"), QStringLiteral("Contents") });
     tree_->header()->setStretchLastSection(true);
 
-    net_ = new NetworkView;
+    graph_ = new GraphView;
 
     auto* right = new QWidget;
     auto* rl = new QVBoxLayout(right);
     rl->setContentsMargins(0, 0, 0, 0);
     rl->addWidget(netInfo_);
-    rl->addWidget(net_, 1);
+    rl->addWidget(graph_, 1);
 
     auto* split = new QSplitter(Qt::Horizontal);
     split->addWidget(tree_);
     split->addWidget(right);
-    split->setStretchFactor(0, 3);
-    split->setStretchFactor(1, 2);
-    split->setSizes({ 600, 420 });
+    split->setStretchFactor(0, 2);
+    split->setStretchFactor(1, 3);
+    // After the first layout, not during it: sizes set on a splitter that has
+    // no size yet are rescaled out of all recognition once it gets one.
+    QTimer::singleShot(0, this, [split] { split->setSizes({ 420, 780 }); });
 
     auto* lay = new QVBoxLayout(this);
     lay->addLayout(row);
@@ -393,6 +465,14 @@ StructurePanel::StructurePanel(QWidget* parent) : QWidget(parent)
     connect(showWells_, &QCheckBox::toggled, this,
             [this](bool) { showShape(shapeBox_->currentIndex()); });
     connect(exportBtn_, &QPushButton::clicked, this, [this] { exportGraphviz(); });
+    connect(picBtn_, &QPushButton::clicked, this, [this] { exportPicture(); });
+    connect(viewBox_, &QComboBox::currentIndexChanged, this, [this](int) { refreshGraph(); });
+    // Selecting in the tree marks the same node in the drawing, which is the
+    // cheapest way to tie a name in a list to a box in a picture.
+    connect(tree_, &QTreeWidget::itemSelectionChanged, this, [this] {
+        auto* it = tree_->currentItem();
+        graph_->setHighlight(it ? it->text(0) : QString());
+    });
 
     poll_ = new QTimer(this);
     poll_->setInterval(120);
@@ -454,12 +534,14 @@ void StructurePanel::finishLoad()
                              .arg(QFileInfo(model_.deckPath).fileName(), model_.problem));
         status_->setStyleSheet(QStringLiteral("color:#8a1f1f;"));
         exportBtn_->setEnabled(false);
+        picBtn_->setEnabled(false);
         tree_->clear();
-        net_->setStructure(nullptr);
+        graph_->setGraph({}, {}, QStringLiteral("no deck loaded"));
         return;
     }
     status_->setStyleSheet(QString());
     exportBtn_->setEnabled(true);
+    picBtn_->setEnabled(true);
     const auto& first = model_.shapes.first();
     status_->setText(QStringLiteral(
         "%1: %2 group(s), %3 well(s) over %4 schedule step(s); the structure "
@@ -476,7 +558,10 @@ void StructurePanel::finishLoad()
 void StructurePanel::showShape(int index)
 {
     tree_->clear();
-    if (index < 0 || index >= model_.shapes.size()) { net_->setStructure(nullptr); return; }
+    if (index < 0 || index >= model_.shapes.size()) {
+        graph_->setGraph({}, {}, QStringLiteral("no deck loaded"));
+        return;
+    }
     const Structure& s = model_.shapes[index];
 
     // Depth-first from the roots, so the tree on screen is the tree in the
@@ -511,7 +596,7 @@ void StructurePanel::showShape(int index)
     tree_->expandToDepth(1);
     tree_->resizeColumnToContents(0);
 
-    net_->setStructure(&s);
+    refreshGraph();
     netInfo_->setText(!s.netActive
         ? QStringLiteral("no network defined at this date")
         : QStringLiteral("%1 network: %2 node(s), %3 branch(es)")
@@ -530,6 +615,94 @@ void StructurePanel::showShape(int index)
 // EclipseState open for the life of a tab to save half a second on a rare
 // action is a poor trade. So it parses again, on this thread, behind a wait
 // cursor.
+// Feed the drawing from whichever graph is asked for. Both come out of the
+// same Structure, and both are edges pointing from a node to the one above it.
+void StructurePanel::refreshGraph()
+{
+    const int i = shapeBox_->currentIndex();
+    if (i < 0 || i >= model_.shapes.size()) {
+        graph_->setGraph({}, {}, QStringLiteral("no deck loaded"));
+        return;
+    }
+    const Structure& s = model_.shapes[i];
+    QStringList nodes;
+    QVector<GraphView::Edge> edges;
+
+    if (viewBox_->currentIndex() == 0) {          // the group hierarchy
+        for (const auto& g : s.groups) {
+            nodes << g.name;
+            if (!g.parent.isEmpty() && s.find(g.parent))
+                edges.push_back({ g.name, g.parent, {} });
+        }
+        // Wells only when they are wanted: a field with hundreds of them makes
+        // a picture nobody can read, which is the warning opm-common's own
+        // wellgraph tool gives about exactly this.
+        if (showWells_->isChecked())
+            for (const auto& g : s.groups)
+                for (const auto& w : g.wells) {
+                    nodes << w;
+                    edges.push_back({ w, g.name, {} });
+                }
+        graph_->setGraph(nodes, edges, QStringLiteral("this deck defines no groups"));
+    } else {                                       // the network
+        nodes = s.netNodes;
+        for (const auto& b : s.branches)
+            edges.push_back({ b.down, b.up,
+                              b.vfp > 0 ? QStringLiteral("VFP %1").arg(b.vfp) : QString() });
+        graph_->setGraph(nodes, edges,
+                         QStringLiteral("this deck defines no network"));
+    }
+}
+
+// Straight to PNG or PDF, from the painter that draws the screen - so the file
+// is the picture, not a second rendering of it that can drift from it. The PDF
+// is vector, which is what a report wants; the PNG is drawn at three times the
+// on-screen size so it survives being scaled.
+void StructurePanel::exportPicture()
+{
+    if (graph_->isEmpty()) {
+        status_->setText(QStringLiteral("nothing drawn to save"));
+        return;
+    }
+    const QString base = QFileInfo(model_.deckPath).completeBaseName()
+                         + (viewBox_->currentIndex() == 0 ? QStringLiteral("_groups")
+                                                          : QStringLiteral("_network"));
+    QString sel;
+    QString f = QFileDialog::getSaveFileName(
+        this, QStringLiteral("Save picture"),
+        QFileInfo(model_.deckPath).absolutePath() + QLatin1Char('/') + base,
+        QStringLiteral("PDF (*.pdf);;PNG image (*.png)"), &sel);
+    if (f.isEmpty()) return;
+
+    const bool pdf = sel.startsWith(QStringLiteral("PDF"))
+                     || f.endsWith(QStringLiteral(".pdf"), Qt::CaseInsensitive);
+    if (pdf && !f.endsWith(QStringLiteral(".pdf"), Qt::CaseInsensitive)) f += QStringLiteral(".pdf");
+    if (!pdf && !f.endsWith(QStringLiteral(".png"), Qt::CaseInsensitive)) f += QStringLiteral(".png");
+
+    const QSize on = graph_->size();
+    bool ok = false;
+    if (pdf) {
+        QPdfWriter w(f);
+        w.setPageSize(QPageSize(QSizeF(11.0, 11.0 * double(on.height()) / std::max(1, on.width())),
+                                QPageSize::Inch, QStringLiteral("graph")));
+        w.setPageMargins(QMarginsF(0, 0, 0, 0));
+        w.setResolution(300);
+        QPainter p(&w);
+        ok = p.isActive();
+        if (ok) graph_->render(p, QRectF(0, 0, w.width(), w.height()));
+    } else {
+        QImage img(on * 3, QImage::Format_ARGB32_Premultiplied);
+        img.fill(Qt::white);
+        QPainter p(&img);
+        graph_->render(p, QRectF(0, 0, img.width(), img.height()));
+        p.end();
+        ok = img.save(f);
+    }
+    status_->setText(ok ? QStringLiteral("wrote %1").arg(f)
+                        : QStringLiteral("could not write %1").arg(f));
+    status_->setStyleSheet(ok ? QString() : QStringLiteral("color:#8a1f1f;"));
+}
+
 void StructurePanel::exportGraphviz()
 {
     if (model_.deckPath.isEmpty()) return;

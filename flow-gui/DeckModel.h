@@ -31,6 +31,7 @@ class QCheckBox;
 class QComboBox;
 class QLabel;
 class QProgressBar;
+class QPainter;
 class QPushButton;
 class QThread;
 class QTimer;
@@ -85,26 +86,43 @@ DeckStructure readDeckStructure(const QString& dataFile,
                                 std::atomic<int>* progress = nullptr);
 
 // ---------------------------------------------------------------------------
-// Node-link drawing of the network. A network is not a tree - it can have
-// several roots, and GRUPNET and BRANPROP describe different things - so it
-// gets a diagram of its own rather than another indented list.
-class NetworkView : public QWidget
+// Node-link drawing, for the group tree and for the network alike. Both are
+// directed graphs over named nodes, and neither is reliably a tree - a network
+// can have several roots - so one widget draws both.
+//
+// The layout is done here rather than handed to Graphviz: keeping it in-process
+// is what makes the drawing adjustable, and it is the same painting code that
+// then writes the PNG and the PDF, so what is exported is exactly what is on
+// screen.
+class GraphView : public QWidget
 {
     Q_OBJECT
 public:
-    explicit NetworkView(QWidget* parent = nullptr);
-    void setStructure(const Structure* s);
+    struct Edge { QString from, to; QString label; };
+
+    explicit GraphView(QWidget* parent = nullptr);
+    // `from` points at its parent/uptree node, so edges run child -> parent.
+    void setGraph(const QStringList& nodes, const QVector<Edge>& edges,
+                  const QString& emptyText);
+    void setHighlight(const QString& node);
+    // Paint at an arbitrary size, for export as well as for the screen.
+    void render(QPainter& p, const QRectF& area) const;
+    bool isEmpty() const { return placed_.isEmpty(); }
 
 protected:
     void paintEvent(QPaintEvent* ev) override;
     QSize minimumSizeHint() const override;
 
 private:
-    void layoutNodes();
-    const Structure* s_ = nullptr;
-    struct Placed { QString name; int depth = 0; double x = 0, y = 0; };
+    void relayout();
+
+    struct Placed { QString name; int depth = 0; double x = 0; };
+    QStringList     nodes_;
+    QVector<Edge>   edges_;
     QVector<Placed> placed_;
-    int maxDepth_ = 0;
+    QString         empty_;
+    QString         highlight_;
+    int             maxDepth_ = 0;
 };
 
 // ---------------------------------------------------------------------------
@@ -124,9 +142,12 @@ private:
     void showShape(int index);
     void applyFilter(const QString& needle);
     void exportGraphviz();
+    void exportPicture();      // PNG or PDF, straight from the painter
+    void refreshGraph();
 
     QPushButton*  openBtn_ = nullptr;
     QPushButton*  exportBtn_ = nullptr;
+    QPushButton*  picBtn_ = nullptr;
     QCheckBox*    showWells_ = nullptr;
     QComboBox*    shapeBox_ = nullptr;
     QLineEdit*    filter_ = nullptr;
@@ -134,7 +155,8 @@ private:
     QLabel*       status_ = nullptr;
     QLabel*       netInfo_ = nullptr;
     QTreeWidget*  tree_ = nullptr;
-    NetworkView*  net_ = nullptr;
+    GraphView*    graph_ = nullptr;
+    QComboBox*    viewBox_ = nullptr;   // group tree, or network
     QTimer*       poll_ = nullptr;
     QThread*      worker_ = nullptr;
 
