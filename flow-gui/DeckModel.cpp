@@ -44,7 +44,6 @@
 #include <opm/input/eclipse/Schedule/Network/ExtNetwork.hpp>
 #include <opm/input/eclipse/Schedule/Network/Node.hpp>
 #include <opm/input/eclipse/Schedule/Schedule.hpp>
-#include <opm/utility/GroupStructureViz.hpp>
 
 #include <algorithm>
 #include <exception>
@@ -76,7 +75,13 @@ QString Structure::fingerprint() const
     QStringList nb;
     for (const auto& b : branches) nb << b.down + QStringLiteral("->") + b.up;
     nb.sort();
+    // Injectors count towards identity: converting a producer changes nothing
+    // about the hierarchy but everything about what the picture says, and a
+    // step that only did that would otherwise collapse into the one before it.
+    QStringList inj = injectors;
+    inj.sort();
     return bits.join(QLatin1Char(';')) + QStringLiteral("|") + nb.join(QLatin1Char(';'))
+           + QStringLiteral("|") + inj.join(QLatin1Char(','))
            + QStringLiteral("|%1%2").arg(int(netActive)).arg(int(netStandard));
 }
 
@@ -111,7 +116,13 @@ Structure snapshotAt(const Opm::Schedule& sched, std::size_t step)
         n.name   = QString::fromStdString(g.name());
         n.parent = QString::fromStdString(g.parent());
         for (const auto& c : g.groups()) n.childGroups << QString::fromStdString(c);
-        for (const auto& w : g.wells())  n.wells       << QString::fromStdString(w);
+        for (const auto& w : g.wells()) {
+            const QString wn = QString::fromStdString(w);
+            n.wells << wn;
+            if (st.wells.has(w) && st.wells.get(w).isInjector()
+                && !s.injectors.contains(wn))
+                s.injectors << wn;
+        }
         s.groups.push_back(n);
     }
 
@@ -200,9 +211,10 @@ GraphView::GraphView(QWidget* parent) : QWidget(parent)
 }
 
 void GraphView::setGraph(const QStringList& nodes, const QVector<Edge>& edges,
-                         const QString& emptyText)
+                         const QString& emptyText,
+                         const QHash<QString, int>& kinds)
 {
-    nodes_ = nodes; edges_ = edges; empty_ = emptyText;
+    nodes_ = nodes; edges_ = edges; empty_ = emptyText; kinds_ = kinds;
     relayout();
     update();
 }
@@ -279,6 +291,56 @@ void GraphView::relayout()
     }
 }
 
+// One node, drawn according to what it is. Groups are rectangles and wells are
+// ellipses, so the two are told apart by shape before colour comes into it -
+// which matters on a projector, in a black-and-white print, and to a reader
+// who does not see colour the way the person who chose it does.
+void GraphView::paintNode(QPainter& p, const QRectF& r, const QString& text,
+                          int kind, bool root, bool hot) const
+{
+    QColor fill, line, ink(0x22, 0x26, 0x2b);
+    switch (kind) {
+        case KindProducer:  fill = QColor(0xdc, 0xef, 0xd8); line = QColor(0x2e, 0x7d, 0x32);
+                            ink  = QColor(0x1b, 0x5e, 0x20); break;
+        case KindInjector:  fill = QColor(0xd8, 0xe6, 0xfa); line = QColor(0x15, 0x65, 0xc0);
+                            ink  = QColor(0x0d, 0x47, 0xa1); break;
+        case KindWellGroup: fill = QColor(0xfa, 0xef, 0xd6); line = QColor(0xa8, 0x7a, 0x2c);
+                            ink  = QColor(0x6b, 0x4a, 0x0f); break;
+        default:            fill = QColor(0xe8, 0xf6, 0xef); line = QColor(0x7a, 0x86, 0x92);
+                            break;
+    }
+    if (root) { fill = QColor(0x00, 0x3c, 0x65); ink = Qt::white; line = fill.darker(115); }
+    if (hot)  { fill = QColor(0xff, 0xf1, 0xdd); line = QColor(0xd5, 0x5e, 0x00);
+                ink  = QColor(0x22, 0x26, 0x2b); }
+
+    p.setPen(QPen(line, hot ? 2.0 : 1.2));
+    p.setBrush(fill);
+    if (kind == KindProducer || kind == KindInjector) {
+        p.drawEllipse(r);
+    } else {
+        p.drawRoundedRect(r, 4, 4);
+        // A well group carries a second, inset outline: it is the bottom of
+        // the management hierarchy, the level the wells actually hang from.
+        if (kind == KindWellGroup && !root) {
+            p.setBrush(Qt::NoBrush);
+            p.setPen(QPen(line, 0.8));
+            p.drawRoundedRect(r.adjusted(2.5, 2.5, -2.5, -2.5), 2, 2);
+        }
+    }
+    p.setPen(ink);
+    p.drawText(r, Qt::AlignCenter, text);
+}
+
+QString GraphView::kindName(int kind)
+{
+    switch (kind) {
+        case KindProducer:  return QStringLiteral("producer");
+        case KindInjector:  return QStringLiteral("injector");
+        case KindWellGroup: return QStringLiteral("well group");
+        default:            return QStringLiteral("group");
+    }
+}
+
 void GraphView::render(QPainter& p, const QRectF& area) const
 {
     p.fillRect(area, Qt::white);
@@ -292,13 +354,35 @@ void GraphView::render(QPainter& p, const QRectF& area) const
     QFont nf = p.font(); nf.setPointSizeF(9.0); nf.setBold(true);
     const QFontMetricsF fm(nf);
     const double boxH = fm.height() + 10;
-    const double rowGap = maxDepth_ > 0
-        ? (area.height() - boxH - 24) / maxDepth_ : 0.0;
 
+    // A key, when there is more than one kind of thing on screen. Colour the
+    // reader has to guess at is worse than no colour, and an exported picture
+    // travels away from whoever made it - so the key belongs in the drawing,
+    // not in the window around it.
+    QVector<int> keyKinds;
+    for (const auto& q : placed_) {
+        const int k = kinds_.value(q.name, KindGroup);
+        if (k != KindNetwork && !keyKinds.contains(k)) keyKinds << k;
+    }
+    if (keyKinds.size() < 2) keyKinds.clear();
+    std::sort(keyKinds.begin(), keyKinds.end());
+    const double keyH = keyKinds.isEmpty() ? 0.0 : boxH + 10;
+    const QRectF plot = area.adjusted(0, 0, 0, -keyH);
+
+    const double rowGap = maxDepth_ > 0
+        ? (plot.height() - boxH - 24) / maxDepth_ : 0.0;
+
+    // A well sits in an ellipse, which needs more width than a rectangle does
+    // to hold the same text without the curve eating its ends.
+    auto isWell = [&](const QString& n) {
+        const int k = kinds_.value(n, KindGroup);
+        return k == KindProducer || k == KindInjector;
+    };
     auto boxOf = [&](const Placed& q) {
-        const double w = std::max(54.0, fm.horizontalAdvance(q.name) + 18);
-        const double cx = area.left() + 20 + q.x * std::max(1.0, area.width() - 40 - w) + w / 2;
-        const double cy = area.top() + 12 + q.depth * rowGap + boxH / 2;
+        const double pad = isWell(q.name) ? 28.0 : 18.0;
+        const double w = std::max(54.0, fm.horizontalAdvance(q.name) + pad);
+        const double cx = plot.left() + 20 + q.x * std::max(1.0, plot.width() - 40 - w) + w / 2;
+        const double cy = plot.top() + 12 + q.depth * rowGap + boxH / 2;
         return QRectF(cx - w / 2, cy - boxH / 2, w, boxH);
     };
     auto find = [&](const QString& n) -> const Placed* {
@@ -331,17 +415,21 @@ void GraphView::render(QPainter& p, const QRectF& area) const
     }
 
     p.setFont(nf);
-    for (const auto& q : placed_) {
-        const QRectF r = boxOf(q);
-        const bool root = (q.depth == 0);
-        const bool hot  = (!highlight_.isEmpty() && q.name == highlight_);
-        p.setPen(QPen(hot ? QColor(0xd5, 0x5e, 0x00) : QColor(0x7a, 0x86, 0x92),
-                      hot ? 2.0 : 1.2));
-        p.setBrush(root ? QColor(0x00, 0x3c, 0x65)
-                        : hot ? QColor(0xff, 0xf1, 0xdd) : QColor(0xe8, 0xf6, 0xef));
-        p.drawRoundedRect(r, 4, 4);
-        p.setPen(root ? Qt::white : QColor(0x22, 0x26, 0x2b));
-        p.drawText(r, Qt::AlignCenter, q.name);
+    for (const auto& q : placed_)
+        paintNode(p, boxOf(q), q.name, kinds_.value(q.name, KindGroup),
+                  q.depth == 0, !highlight_.isEmpty() && q.name == highlight_);
+
+    if (keyKinds.isEmpty()) return;
+    QFont kf = p.font(); kf.setPointSizeF(8.0); kf.setBold(false);
+    p.setFont(kf);
+    const QFontMetricsF kfm(kf);
+    double x = area.left() + 20;
+    const double y = area.bottom() - keyH + 5;
+    for (int k : keyKinds) {
+        const QString lbl = kindName(k);
+        const double w = std::max(46.0, kfm.horizontalAdvance(lbl) + 22);
+        paintNode(p, QRectF(x, y, w, boxH - 2), lbl, k, false, false);
+        x += w + 10;
     }
 }
 
@@ -383,18 +471,12 @@ StructurePanel::StructurePanel(QWidget* parent) : QWidget(parent)
     viewBox_->setToolTip(QStringLiteral(
         "which graph to draw. The tree on the left is always the group "
         "hierarchy; this is what the picture beside it shows."));
-    exportBtn_ = new QPushButton(QStringLiteral("Export Graphviz..."));
-    exportBtn_->setEnabled(false);
     picBtn_ = new QPushButton(QStringLiteral("Save picture..."));
     picBtn_->setEnabled(false);
     picBtn_->setToolTip(QStringLiteral(
         "write the drawing as it stands to PNG or PDF. The same painting code "
         "draws the screen and the file, so the file is what you are looking "
         "at - vector in the PDF, at whatever size you ask for in the PNG."));
-    exportBtn_->setToolTip(QStringLiteral(
-        "write the group structure as Graphviz .gv, through opm-common's own "
-        "writer - the same files the wellgraph tool produces.\n\n"
-        "Render with:  dot -Tpdf <file> -o out.pdf"));
     filter_ = new QLineEdit;
     filter_->setPlaceholderText(QStringLiteral("filter groups and wells..."));
     filter_->setClearButtonEnabled(true);
@@ -409,7 +491,6 @@ StructurePanel::StructurePanel(QWidget* parent) : QWidget(parent)
     row->addWidget(new QLabel(QStringLiteral("Draw:")));
     row->addWidget(viewBox_);
     row->addWidget(picBtn_);
-    row->addWidget(exportBtn_);
     row->addWidget(bar_);
     row->addWidget(filter_, 1);
 
@@ -464,7 +545,6 @@ StructurePanel::StructurePanel(QWidget* parent) : QWidget(parent)
             [this](const QString& t) { applyFilter(t.trimmed()); });
     connect(showWells_, &QCheckBox::toggled, this,
             [this](bool) { showShape(shapeBox_->currentIndex()); });
-    connect(exportBtn_, &QPushButton::clicked, this, [this] { exportGraphviz(); });
     connect(picBtn_, &QPushButton::clicked, this, [this] { exportPicture(); });
     connect(viewBox_, &QComboBox::currentIndexChanged, this, [this](int) { refreshGraph(); });
     // Selecting in the tree marks the same node in the drawing, which is the
@@ -533,14 +613,12 @@ void StructurePanel::finishLoad()
         status_->setText(QStringLiteral("could not read %1: %2")
                              .arg(QFileInfo(model_.deckPath).fileName(), model_.problem));
         status_->setStyleSheet(QStringLiteral("color:#8a1f1f;"));
-        exportBtn_->setEnabled(false);
         picBtn_->setEnabled(false);
         tree_->clear();
         graph_->setGraph({}, {}, QStringLiteral("no deck loaded"));
         return;
     }
     status_->setStyleSheet(QString());
-    exportBtn_->setEnabled(true);
     picBtn_->setEnabled(true);
     const auto& first = model_.shapes.first();
     status_->setText(QStringLiteral(
@@ -582,12 +660,20 @@ void StructurePanel::showShape(int index)
                 what << QStringLiteral("%1 well(s)").arg(g->wells.size());
             it->setText(1, what.join(QStringLiteral(", ")));
             QFont f = it->font(0); f.setBold(true); it->setFont(0, f);
+            // Same colours as the drawing, so the two panes read as one thing.
+            if (!g->wells.isEmpty())
+                it->setForeground(0, QBrush(QColor(0x6b, 0x4a, 0x0f)));
             for (const auto& c : g->childGroups) add(c, it);
             if (!showWells_->isChecked()) return;
             for (const auto& w : g->wells) {
                 auto* wi = new QTreeWidgetItem(it);
                 wi->setText(0, w);
-                wi->setForeground(0, QBrush(QColor(0x24, 0x35, 0x8a)));
+                const bool inj = s.injectors.contains(w);
+                wi->setForeground(0, QBrush(inj ? QColor(0x0d, 0x47, 0xa1)
+                                                : QColor(0x1b, 0x5e, 0x20)));
+                wi->setText(1, inj ? QStringLiteral("injector")
+                                   : QStringLiteral("producer"));
+                wi->setForeground(1, QBrush(QColor(0x77, 0x7f, 0x88)));
             }
         };
     for (const auto& g : s.groups)
@@ -614,15 +700,6 @@ void StructurePanel::showShape(int index)
     applyFilter(filter_->text().trimmed());
 }
 
-// Hand the deck to opm-common's own writer, so what comes out is the same
-// artefact its wellgraph tool produces - the same files, renderable the same
-// way, comparable with anyone else's. Graphviz does a layout job no hand-rolled
-// painter here is going to match on a field with hundreds of groups.
-//
-// It needs a Schedule, which the extraction does not keep: holding an
-// EclipseState open for the life of a tab to save half a second on a rare
-// action is a poor trade. So it parses again, on this thread, behind a wait
-// cursor.
 // Feed the drawing from whichever graph is asked for. Both come out of the
 // same Structure, and both are edges pointing from a node to the one above it.
 void StructurePanel::refreshGraph()
@@ -636,9 +713,18 @@ void StructurePanel::refreshGraph()
     QStringList nodes;
     QVector<GraphView::Edge> edges;
 
+    QHash<QString, int> kinds;
+
     if (viewBox_->currentIndex() == 0) {          // the group hierarchy
         for (const auto& g : s.groups) {
             nodes << g.name;
+            // A group that holds wells is where the hierarchy stops and the
+            // field begins - worth telling apart from one that only routes
+            // other groups, whether or not the wells themselves are drawn.
+            // On having wells, not on being a leaf: a group that holds neither
+            // wells nor groups yet is not a well group, it is an empty one.
+            kinds[g.name] = g.wells.isEmpty() ? GraphView::KindGroup
+                                              : GraphView::KindWellGroup;
             if (!g.parent.isEmpty() && s.find(g.parent))
                 edges.push_back({ g.name, g.parent, {} });
         }
@@ -649,16 +735,20 @@ void StructurePanel::refreshGraph()
             for (const auto& g : s.groups)
                 for (const auto& w : g.wells) {
                     nodes << w;
+                    kinds[w] = s.injectors.contains(w) ? GraphView::KindInjector
+                                                       : GraphView::KindProducer;
                     edges.push_back({ w, g.name, {} });
                 }
-        graph_->setGraph(nodes, edges, QStringLiteral("this deck defines no groups"));
+        graph_->setGraph(nodes, edges,
+                         QStringLiteral("this deck defines no groups"), kinds);
     } else {                                       // the network
         nodes = s.netNodes;
+        for (const auto& n : nodes) kinds[n] = GraphView::KindNetwork;
         for (const auto& b : s.branches)
             edges.push_back({ b.down, b.up,
                               b.vfp > 0 ? QStringLiteral("VFP %1").arg(b.vfp) : QString() });
         graph_->setGraph(nodes, edges,
-                         QStringLiteral("this deck defines no network"));
+                         QStringLiteral("this deck defines no network"), kinds);
     }
 }
 
@@ -709,49 +799,6 @@ void StructurePanel::exportPicture()
     status_->setText(ok ? QStringLiteral("wrote %1").arg(f)
                         : QStringLiteral("could not write %1").arg(f));
     status_->setStyleSheet(ok ? QString() : QStringLiteral("color:#8a1f1f;"));
-}
-
-void StructurePanel::exportGraphviz()
-{
-    if (model_.deckPath.isEmpty()) return;
-    const QString suggested = QFileInfo(model_.deckPath).absolutePath()
-                              + QLatin1Char('/')
-                              + QFileInfo(model_.deckPath).completeBaseName();
-    QString base = QFileDialog::getSaveFileName(
-        this, QStringLiteral("Write Graphviz files (a base name)"), suggested,
-        QStringLiteral("Graphviz (*.gv);;All files (*)"));
-    if (base.isEmpty()) return;
-    // The writer appends its own "_well_groups.gv" / "_group_structure.gv".
-    if (base.endsWith(QStringLiteral(".gv"), Qt::CaseInsensitive)) base.chop(3);
-
-    status_->setText(QStringLiteral("writing Graphviz for %1 ...")
-                         .arg(QFileInfo(model_.deckPath).fileName()));
-    QApplication::setOverrideCursor(Qt::WaitCursor);
-    QString problem;
-    try {
-        auto ctx = relaxedContext();
-        Opm::ErrorGuard guard;
-        Opm::Parser parser;
-        const auto deck = parser.parseFile(model_.deckPath.toStdString(), ctx, guard);
-        Opm::EclipseState es(deck);
-        auto python = std::make_shared<Opm::Python>();
-        Opm::Schedule sched(deck, es, ctx, guard, python);
-        // Separate files when the wells are hidden here: that is the same
-        // judgement, and the tool's own help gives the same advice for a field
-        // with many of them.
-        Opm::writeWellGroupGraph(sched, base.toStdString(), !showWells_->isChecked());
-    } catch (const std::exception& e) {
-        problem = QString::fromLocal8Bit(e.what());
-    } catch (...) {
-        problem = QStringLiteral("unknown error");
-    }
-    QApplication::restoreOverrideCursor();
-    status_->setText(problem.isEmpty()
-        ? QStringLiteral("wrote %1_*.gv   -   render with:  dot -Tpdf %1_well_groups.gv "
-                         "-o out.pdf").arg(base)
-        : QStringLiteral("could not write Graphviz: %1").arg(problem));
-    status_->setStyleSheet(problem.isEmpty() ? QString()
-                                             : QStringLiteral("color:#8a1f1f;"));
 }
 
 void StructurePanel::applyFilter(const QString& needle)

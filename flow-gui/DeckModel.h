@@ -20,6 +20,8 @@
 #pragma once
 
 #include <QDateTime>
+#include <QHash>
+#include <QRectF>
 #include <QString>
 #include <QStringList>
 #include <QVector>
@@ -57,6 +59,10 @@ struct Structure {
     QDateTime         when;
     int               step = 0;      // schedule step it was first seen at
     QVector<GroupNode> groups;
+    // Which of the wells inject. Kept per moment rather than once for the run,
+    // because a well can be converted, and the drawing should say what it was
+    // doing at the date being looked at rather than what it ends up doing.
+    QStringList        injectors;
     QVector<NetBranch> branches;
     QStringList        netNodes;
     bool               netActive = false;
@@ -99,11 +105,17 @@ class GraphView : public QWidget
     Q_OBJECT
 public:
     struct Edge { QString from, to; QString label; };
+    // What a node IS, which decides how it is drawn. A group that only holds
+    // wells is the bottom of the management hierarchy and reads differently
+    // from one that holds groups, so it is worth telling apart at a glance.
+    enum Kind { KindGroup = 0, KindWellGroup, KindProducer, KindInjector,
+                KindNetwork };
 
     explicit GraphView(QWidget* parent = nullptr);
     // `from` points at its parent/uptree node, so edges run child -> parent.
     void setGraph(const QStringList& nodes, const QVector<Edge>& edges,
-                  const QString& emptyText);
+                  const QString& emptyText,
+                  const QHash<QString, int>& kinds = {});
     void setHighlight(const QString& node);
     // Paint at an arbitrary size, for export as well as for the screen.
     void render(QPainter& p, const QRectF& area) const;
@@ -115,8 +127,12 @@ protected:
 
 private:
     void relayout();
+    void paintNode(QPainter& p, const QRectF& r, const QString& text,
+                   int kind, bool root, bool hot) const;
+    static QString kindName(int kind);
 
     struct Placed { QString name; int depth = 0; double x = 0; };
+    QHash<QString, int> kinds_;
     QStringList     nodes_;
     QVector<Edge>   edges_;
     QVector<Placed> placed_;
@@ -141,12 +157,10 @@ private:
     void finishLoad();
     void showShape(int index);
     void applyFilter(const QString& needle);
-    void exportGraphviz();
     void exportPicture();      // PNG or PDF, straight from the painter
     void refreshGraph();
 
     QPushButton*  openBtn_ = nullptr;
-    QPushButton*  exportBtn_ = nullptr;
     QPushButton*  picBtn_ = nullptr;
     QCheckBox*    showWells_ = nullptr;
     QComboBox*    shapeBox_ = nullptr;
