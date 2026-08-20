@@ -593,7 +593,15 @@ void StructurePanel::showShape(int index)
     for (const auto& g : s.groups)
         if (g.parent.isEmpty() || !s.find(g.parent)) add(g.name, nullptr);
     for (const auto& g : s.groups) add(g.name, nullptr);   // orphans, if any
-    tree_->expandToDepth(1);
+    // Open it if it fits. A collapsed tree is the same as no tree when what
+    // you came to see - the wells - hangs four levels down, and most decks are
+    // small enough to show whole. Past that it is a wall of names, so only the
+    // groups near the top are opened and the rest is there to be asked for.
+    int rows = s.groups.size();
+    if (showWells_->isChecked())
+        for (const auto& g : s.groups) rows += g.wells.size();
+    if (rows <= 80) tree_->expandAll();
+    else            tree_->expandToDepth(1);
     tree_->resizeColumnToContents(0);
 
     refreshGraph();
