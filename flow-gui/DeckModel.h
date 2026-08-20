@@ -160,11 +160,14 @@ private:
     QFont  keyFont() const;
     static QString kindName(int kind);
     static bool    isWellKind(int kind);
+    static QPointF edgePoint(const QRectF& r, bool rect, const QPointF& towards);
+    static void    drawArrow(QPainter& p, const QPointF& tip, const QPointF& from,
+                             double size);
 
 public:
     // The palette, shared with the tree pane so the two cannot drift apart.
     static void   kindColours(int kind, QColor& fill, QColor& line, QColor& ink);
-    static QColor kindInk(int kind);
+    static QColor kindText(int kind);
 
 private:
 

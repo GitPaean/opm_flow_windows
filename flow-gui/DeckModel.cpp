@@ -22,7 +22,6 @@
 #include <QLineEdit>
 #include <QPainter>
 #include <QMouseEvent>
-#include <QPainterPath>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QSplitter>
@@ -333,56 +332,99 @@ void GraphView::relayout()
 void GraphView::paintNode(QPainter& p, const QRectF& r, const QString& text,
                           int kind, bool root, bool hot) const
 {
+    Q_UNUSED(root);   // its place at the top of the drawing already says so
     QColor fill, line, ink;
     kindColours(kind, fill, line, ink);
-    if (root) { fill = QColor(0x00, 0x3c, 0x65); ink = Qt::white; line = fill.darker(115); }
-    if (hot)  { fill = QColor(0xff, 0xf1, 0xdd); line = QColor(0xd5, 0x5e, 0x00);
-                ink  = QColor(0x22, 0x26, 0x2b); }
 
-    p.setPen(QPen(line, hot ? 2.0 : 1.2));
-    p.setBrush(fill);
-    if (isWellKind(kind)) {
-        p.drawEllipse(r);
-    } else {
-        p.drawRoundedRect(r, 4, 4);
-        // A well group carries a second, inset outline: it is the bottom of
-        // the management hierarchy, the level the wells actually hang from.
-        if (kind == KindWellGroup && !root) {
-            p.setBrush(Qt::NoBrush);
-            p.setPen(QPen(line, 0.8));
-            p.drawRoundedRect(r.adjusted(2.5, 2.5, -2.5, -2.5), 2, 2);
-        }
+    // Selection is a halo rather than a recolour: every colour in the palette
+    // already means something, so borrowing one to mean "selected" would make
+    // a selected producer look like an injector.
+    if (hot) {
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(0xff, 0xd0, 0x4a));
+        const QRectF halo = r.adjusted(-5, -5, 5, 5);
+        if (isWellKind(kind)) p.drawRect(halo); else p.drawEllipse(halo);
     }
+
+    p.setPen(QPen(line, isWellKind(kind) ? 1.6 : 1.1));
+    p.setBrush(fill);
+    if (isWellKind(kind)) p.drawRect(r); else p.drawEllipse(r);
+
     p.setPen(ink);
     p.drawText(r, Qt::AlignCenter, text);
 }
 
+// Where a line from `towards` meets this node's outline. An ellipse is cut
+// back along the ray; a rectangle at whichever edge the ray leaves through.
+QPointF GraphView::edgePoint(const QRectF& r, bool rect, const QPointF& towards)
+{
+    const double dx = towards.x(), dy = towards.y();
+    if (qFuzzyIsNull(dx) && qFuzzyIsNull(dy)) return r.center();
+    const double a = r.width() / 2, b = r.height() / 2;
+    double s;
+    if (rect) {
+        s = std::min(qFuzzyIsNull(dx) ? 1e18 : a / std::abs(dx),
+                     qFuzzyIsNull(dy) ? 1e18 : b / std::abs(dy));
+    } else {
+        s = 1.0 / std::sqrt((dx / a) * (dx / a) + (dy / b) * (dy / b));
+    }
+    return r.center() + QPointF(dx * s, dy * s);
+}
+
+void GraphView::drawArrow(QPainter& p, const QPointF& tip, const QPointF& from,
+                          double size)
+{
+    QPointF d = tip - from;
+    const double len = std::hypot(d.x(), d.y());
+    if (len < 1e-6) return;
+    d /= len;
+    const QPointF n(-d.y(), d.x());
+    QPolygonF head;
+    head << tip
+         << tip - d * size + n * (size * 0.40)
+         << tip - d * size - n * (size * 0.40);
+    p.setPen(Qt::NoPen);
+    p.setBrush(QColor(0x33, 0x33, 0x33));
+    p.drawPolygon(head);
+}
+
 // The one place the palette lives. The tree pane reads its text colours from
 // here too, so the two panes cannot drift apart into two colour schemes.
+//
+// These are the colours opm-common's own well/group graphs use - orange for
+// the groups that hold wells, red for producers, blue for injectors - so a
+// picture from this tab sits beside one from the wellgraph tool and reads the
+// same way. Splitting the injectors by phase needs colours dot's convention
+// does not have: gas takes green and the rare oil and multi-phase cases purple,
+// since red is already spoken for by the producers.
 void GraphView::kindColours(int kind, QColor& fill, QColor& line, QColor& ink)
 {
-    ink = QColor(0x22, 0x26, 0x2b);
+    fill = Qt::white;
+    line = QColor(0x22, 0x22, 0x22);
+    ink  = QColor(0x11, 0x11, 0x11);
     switch (kind) {
-        case KindProducer:  fill = QColor(0xdc, 0xef, 0xd8); line = QColor(0x2e, 0x7d, 0x32);
-                            ink  = QColor(0x1b, 0x5e, 0x20); break;
-        case KindInjWater:  fill = QColor(0xd8, 0xe6, 0xfa); line = QColor(0x15, 0x65, 0xc0);
-                            ink  = QColor(0x0d, 0x47, 0xa1); break;
-        case KindInjGas:    fill = QColor(0xfa, 0xdc, 0xdc); line = QColor(0xc6, 0x28, 0x28);
-                            ink  = QColor(0x8e, 0x1c, 0x1c); break;
-        case KindInjOther:  fill = QColor(0xec, 0xe0, 0xf5); line = QColor(0x6a, 0x3d, 0x9a);
-                            ink  = QColor(0x4a, 0x2a, 0x6b); break;
-        case KindWellGroup: fill = QColor(0xfa, 0xef, 0xd6); line = QColor(0xa8, 0x7a, 0x2c);
-                            ink  = QColor(0x6b, 0x4a, 0x0f); break;
-        default:            fill = QColor(0xe8, 0xf6, 0xef); line = QColor(0x7a, 0x86, 0x92);
-                            break;
+        case KindWellGroup: fill = QColor(0xff, 0xa5, 0x00); break;
+        case KindProducer:  line = QColor(0xd4, 0x00, 0x00); break;
+        case KindInjWater:  line = QColor(0x00, 0x00, 0xd8); break;
+        case KindInjGas:    line = QColor(0x00, 0x77, 0x2b); break;
+        case KindInjOther:  line = QColor(0x7a, 0x1f, 0xa2); break;
+        default: break;
     }
 }
 
-QColor GraphView::kindInk(int kind)
+// The same meaning as the outline colour in the drawing, but readable as text
+// on white - which orange is not, so a well group takes a darker amber of the
+// same hue. Used by the tree pane, so both panes say the same thing.
+QColor GraphView::kindText(int kind)
 {
-    QColor fill, line, ink;
-    kindColours(kind, fill, line, ink);
-    return ink;
+    switch (kind) {
+        case KindWellGroup: return QColor(0xa8, 0x6a, 0x00);
+        case KindProducer:  return QColor(0xc4, 0x00, 0x00);
+        case KindInjWater:  return QColor(0x00, 0x00, 0xc8);
+        case KindInjGas:    return QColor(0x00, 0x6b, 0x27);
+        case KindInjOther:  return QColor(0x7a, 0x1f, 0xa2);
+        default:            return QColor(0x22, 0x26, 0x2b);
+    }
 }
 
 bool GraphView::isWellKind(int kind)
@@ -423,44 +465,50 @@ void GraphView::render(QPainter& p, const QRectF& area) const
     const double rowGap = maxDepth_ > 0
         ? (plot.height() - boxH - 24) / maxDepth_ : 0.0;
 
-    // A well sits in an ellipse, which needs more width than a rectangle does
-    // to hold the same text without the curve eating its ends.
+    // A group sits in an ellipse, which needs a good deal more width than a
+    // box does to hold the same text without the curve eating its ends.
     auto isWell = [&](const QString& n) {
         return isWellKind(kinds_.value(n, KindGroup));
     };
     auto boxOf = [&](const Placed& q) {
-        const double pad = isWell(q.name) ? 28.0 : 18.0;
+        const bool well = isWell(q.name);
+        const double pad = well ? 20.0 : 34.0;
         const double w = std::max(54.0, fm.horizontalAdvance(q.name) + pad);
+        const double h = well ? boxH - 3 : boxH;
         const double cx = plot.left() + 20 + q.x * std::max(1.0, plot.width() - 40 - w) + w / 2;
         const double cy = plot.top() + 12 + q.depth * rowGap + boxH / 2;
-        return QRectF(cx - w / 2, cy - boxH / 2, w, boxH);
+        return QRectF(cx - w / 2, cy - h / 2, w, h);
     };
     auto find = [&](const QString& n) -> const Placed* {
         for (const auto& q : placed_) if (q.name == n) return &q;
         return nullptr;
     };
 
-    // Edges first, so a box always sits on top of the lines that reach it.
+    // Edges first, so a node always sits on top of the lines that reach it.
     QFont ef = p.font(); ef.setPointSizeF(7.5); ef.setBold(false);
     for (const auto& e : edges_) {
         const Placed* a = find(e.from);
         const Placed* b = find(e.to);
         if (!a || !b) continue;
         const QRectF ra = boxOf(*a), rb = boxOf(*b);
-        const QPointF from(ra.center().x(), ra.top());
-        const QPointF to(rb.center().x(), rb.bottom());
-        p.setPen(QPen(QColor(0x9a, 0xa3, 0xac), 1.4));
-        // A gentle S rather than a straight line: with several children meeting
-        // one parent, straight lines converge into an unreadable star.
-        QPainterPath path(from);
-        const double midY = (from.y() + to.y()) / 2;
-        path.cubicTo(QPointF(from.x(), midY), QPointF(to.x(), midY), to);
-        p.drawPath(path);
+        // Centre to centre, then cut back to each shape's own boundary, so a
+        // line meets an ellipse where the ellipse actually is rather than at
+        // the corner of the rectangle around it.
+        const QPointF from = edgePoint(rb, isWell(e.to), ra.center() - rb.center());
+        const QPointF to   = edgePoint(ra, isWell(e.from), rb.center() - ra.center());
+        p.setPen(QPen(QColor(0x33, 0x33, 0x33), 1.1));
+        p.setBrush(Qt::NoBrush);
+        p.drawLine(from, to);
+        // The arrow points the way the eye reads the tree: down from a node to
+        // the things it holds.
+        drawArrow(p, to, from, 9.0);
         if (!e.label.isEmpty()) {
             p.setFont(ef);
             p.setPen(QColor(0x8a, 0x6d, 0x3b));
-            p.drawText(QRectF((from.x() + to.x()) / 2 - 34, midY - 8, 68, 14),
+            const QPointF mid = (from + to) / 2;
+            p.drawText(QRectF(mid.x() - 34, mid.y() - 15, 68, 14),
                        Qt::AlignCenter, e.label);
+            p.setFont(nf);
         }
     }
 
@@ -819,14 +867,14 @@ void StructurePanel::showShape(int index)
             QFont f = it->font(0); f.setBold(true); it->setFont(0, f);
             // Same colours as the drawing, so the two panes read as one thing.
             if (!g->wells.isEmpty())
-                it->setForeground(0, QBrush(QColor(0x6b, 0x4a, 0x0f)));
+                it->setForeground(0, QBrush(GraphView::kindText(GraphView::KindWellGroup)));
             for (const auto& c : g->childGroups) add(c, it);
             if (!showWells_->isChecked()) return;
             for (const auto& w : g->wells) {
                 auto* wi = new QTreeWidgetItem(it);
                 wi->setText(0, w);
                 const int k = wellKind(s, w);
-                wi->setForeground(0, QBrush(GraphView::kindInk(k)));
+                wi->setForeground(0, QBrush(GraphView::kindText(k)));
                 wi->setText(1, s.injectors.contains(w)
                                    ? injectName(s.injectors.value(w))
                                    : QStringLiteral("producer"));
