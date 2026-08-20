@@ -2817,10 +2817,6 @@ int SummaryPlotWidget::plotChart(QChart* chart, const QList<int>& sel,
     auto unitKey = [&kNoUnit](const QString& u) {
         return u.isEmpty() ? kNoUnit : u;
     };
-    auto axisTitle = [&kNoUnit](const QString& u) {
-        return u == kNoUnit ? QStringLiteral("value") : u;
-    };
-
     QString unitL, unitR;
     bool haveL = false, haveR = false;
     for (int i : sel) {
@@ -2833,6 +2829,30 @@ int SummaryPlotWidget::plotChart(QChart* chart, const QList<int>& sel,
         if (u == unitL) return 0;
         if (haveR && u == unitR) return 1;
         return -1;
+    };
+
+    // An axis labelled "SM3/DAY" says how the numbers were measured but not
+    // what they are, leaving the reader to work that out from the legend - and
+    // when the legend is off, or the curve is one of a dozen, not at all. Name
+    // the quantities that ended up on the axis: they are what the axis is FOR,
+    // and there are usually one or two of them however many curves there are,
+    // since every well's WBHP is still WBHP. Past three the name would be
+    // longer than the axis, so the unit alone has to carry it.
+    QStringList kwL, kwR;
+    for (int i : sel) {
+        const int a = axisFor(vecs_[i].unit);
+        if (a < 0) continue;
+        QStringList& k = (a == 0) ? kwL : kwR;
+        if (!k.contains(vecs_[i].keyword)) k << vecs_[i].keyword;
+    }
+    auto axisTitle = [&kNoUnit](const QString& u, const QStringList& kw) {
+        const QString unit = (u == kNoUnit) ? QString() : u;
+        const QString name = (!kw.isEmpty() && kw.size() <= 3)
+                                 ? kw.join(QStringLiteral(", ")) : QString();
+        if (name.isEmpty())
+            return unit.isEmpty() ? QStringLiteral("value") : unit;
+        return unit.isEmpty() ? name
+                              : QStringLiteral("%1 [%2]").arg(name, unit);
     };
 
     const bool useDates = dateAxis_ && dateAxis_->isChecked();
@@ -2897,11 +2917,11 @@ int SummaryPlotWidget::plotChart(QChart* chart, const QList<int>& sel,
     }
     chart->addAxis(ax, Qt::AlignBottom);
     QValueAxis* ayL = new QValueAxis;
-    ayL->setTitleText(axisTitle(unitL));
+    ayL->setTitleText(axisTitle(unitL, kwL));
     chart->addAxis(ayL, Qt::AlignLeft);
     QValueAxis* ayR = nullptr;
     if (haveR) {
-        ayR = new QValueAxis; ayR->setTitleText(axisTitle(unitR));
+        ayR = new QValueAxis; ayR->setTitleText(axisTitle(unitR, kwR));
         chart->addAxis(ayR, Qt::AlignRight);
     }
     styleAxis(ax); styleAxis(ayL); styleAxis(ayR);
