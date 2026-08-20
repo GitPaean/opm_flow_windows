@@ -601,11 +601,13 @@ void GraphView::render(QPainter& p, const QRectF& area) const
     // draggable, and drag beats guessing.
     const QVector<int> kk = keyKinds();
     if (kk.isEmpty()) return;
-    const QFont kf = keyFont();
+    const QFont kf = keyFont(sc);
     p.setFont(kf);
     const QFontMetricsF kfm(kf);
     const QRectF kr = keyRect(area, kfm);
     const double rowH = kfm.height() + 6;
+    const double sw   = kfm.height() * 1.9;
+    const double sh   = kfm.height() * 0.95;
 
     p.setPen(QPen(QColor(0xb6, 0xbe, 0xc6), 1.0));
     p.setBrush(QColor(255, 255, 255, 235));
@@ -613,10 +615,10 @@ void GraphView::render(QPainter& p, const QRectF& area) const
 
     double ky = kr.top() + 7;
     for (int k : kk) {
-        paintNode(p, QRectF(kr.left() + 10, ky + (rowH - 14) / 2, 26, 14),
-                  QString(), k, 1.0, false);
+        paintNode(p, QRectF(kr.left() + 10, ky + (rowH - sh) / 2, sw, sh),
+                  QString(), k, std::clamp(sc, 1.0, 1.6), false);
         p.setPen(QColor(0x33, 0x38, 0x3d));
-        p.drawText(QRectF(kr.left() + 44, ky, kr.width() - 52, rowH),
+        p.drawText(QRectF(kr.left() + 10 + sw + 9, ky, kr.width() - sw - 29, rowH),
                    Qt::AlignVCenter | Qt::AlignLeft, kindName(k));
         ky += rowH;
     }
@@ -647,10 +649,14 @@ QRectF GraphView::drawnRect(const QRectF& area) const
                   sz.width(), sz.height());
 }
 
-QFont GraphView::keyFont() const
+// The key grows with the drawing, since it is read at the same distance and on
+// the same page. Not all the way down, though: on a field squeezed into a small
+// pane the node labels become unreadable long before the key needs to, and the
+// key is the one thing still worth reading there.
+QFont GraphView::keyFont(double sc) const
 {
     QFont f = font();
-    f.setPointSizeF(8.0);
+    f.setPointSizeF(std::clamp(8.5 * sc, 8.0, 14.0));
     f.setBold(false);
     return f;
 }
@@ -672,9 +678,10 @@ QRectF GraphView::keyRect(const QRectF& area, const QFontMetricsF& fm) const
     const QVector<int> kk = keyKinds();
     if (kk.isEmpty()) return {};
     const double rowH = fm.height() + 6;
+    const double sw   = fm.height() * 1.9;      // the swatch, sized to the text
     double tw = 0;
     for (int k : kk) tw = std::max(tw, fm.horizontalAdvance(kindName(k)));
-    const double w = 10 + 26 + 8 + tw + 10;
+    const double w = 10 + sw + 9 + tw + 10;
     const double h = 7 + kk.size() * rowH + 7;
 
     double x, y;
@@ -704,7 +711,8 @@ void GraphView::resetKey()
 
 void GraphView::mousePressEvent(QMouseEvent* ev)
 {
-    const QRectF kr = keyRect(QRectF(rect()), QFontMetricsF(keyFont()));
+    const QRectF area(rect());
+    const QRectF kr = keyRect(area, QFontMetricsF(keyFont(fitScale(area))));
     if (ev->button() == Qt::LeftButton && !kr.isEmpty()
         && kr.contains(ev->position())) {
         keyDrag_ = true;
@@ -742,7 +750,8 @@ void GraphView::mouseReleaseEvent(QMouseEvent* ev)
 // Put it back where it started, for anyone who dragged it somewhere unhelpful.
 void GraphView::mouseDoubleClickEvent(QMouseEvent* ev)
 {
-    const QRectF kr = keyRect(QRectF(rect()), QFontMetricsF(keyFont()));
+    const QRectF area(rect());
+    const QRectF kr = keyRect(area, QFontMetricsF(keyFont(fitScale(area))));
     if (!kr.isEmpty() && kr.contains(ev->position())) { resetKey(); ev->accept(); return; }
     QWidget::mouseDoubleClickEvent(ev);
 }

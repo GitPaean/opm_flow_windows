@@ -159,7 +159,7 @@ private:
     QVector<int> keyKinds() const;
     // Where the key sits for a drawing of this size, default corner included.
     QRectF keyRect(const QRectF& area, const QFontMetricsF& fm) const;
-    QFont  keyFont() const;
+    QFont  keyFont(double sc) const;
     // What scale the drawing is shown at, and where it lands.
     double fitScale(const QRectF& area) const;
     QRectF drawnRect(const QRectF& area) const;
