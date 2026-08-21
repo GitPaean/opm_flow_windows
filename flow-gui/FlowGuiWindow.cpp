@@ -304,6 +304,7 @@ FlowGuiWindow::FlowGuiWindow()
         jobTable_->horizontalHeader()->setSectionResizeMode(ColProgress, QHeaderView::Fixed);
         jobTable_->setColumnWidth(ColProgress, 140);
         jobTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
+        jobTable_->setSelectionMode(QAbstractItemView::ExtendedSelection);
         jobTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
         jobTable_->verticalHeader()->setVisible(false);
         row->addWidget(jobTable_, 1);
@@ -321,13 +322,34 @@ FlowGuiWindow::FlowGuiWindow()
         bopen->setToolTip(QStringLiteral("open the run's output directory in the file manager"));
         connect(badd, &QPushButton::clicked, this, [this] { onAddDecks(); });
         connect(brem, &QPushButton::clicked, this, [this] {
-            const int r = jobTable_->currentRow();
-            if (r < 0 || r >= jobs_.size()) return;
-            if (r == current_) { QMessageBox::information(this, QLatin1String(kAppName),
-                QStringLiteral("Stop the job before removing it.")); return; }
-            jobs_.remove(r);
-            if (current_ > r) --current_;
-            jobTable_->removeRow(r);
+            // Bottom up, so the rows still to be taken keep the indices they
+            // have; jobs_ and the table are removed from in step.
+            QList<int> rows;
+            for (auto* it : jobTable_->selectedItems())
+                if (!rows.contains(it->row())) rows << it->row();
+            if (rows.isEmpty() && jobTable_->currentRow() >= 0)
+                rows << jobTable_->currentRow();
+            std::sort(rows.begin(), rows.end(), std::greater<int>());
+
+            // The running job is not removable, but that is no reason to drop
+            // the rest of the selection on the floor: take everything else and
+            // say what was left behind.
+            bool skippedRunning = false;
+            int removed = 0;
+            for (int r : std::as_const(rows)) {
+                if (r < 0 || r >= jobs_.size()) continue;
+                if (r == current_) { skippedRunning = true; continue; }
+                jobs_.remove(r);
+                if (current_ > r) --current_;
+                jobTable_->removeRow(r);
+                ++removed;
+            }
+            if (skippedRunning)
+                QMessageBox::information(this, QLatin1String(kAppName),
+                    removed > 0
+                        ? QStringLiteral("Removed %1 deck(s). The running job was "
+                                         "left in the queue - stop it first.").arg(removed)
+                        : QStringLiteral("Stop the job before removing it."));
         });
         connect(bclr, &QPushButton::clicked, this, [this] {
             if (proc_) { QMessageBox::information(this, QLatin1String(kAppName),

@@ -1296,13 +1296,19 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
             "legend shows (double-click the case, or F2)"));
         crow->addWidget(brename);
         auto* bremove = new QPushButton(QStringLiteral("Remove"));
-        bremove->setToolTip(QStringLiteral("remove the highlighted case from the list"));
+        bremove->setToolTip(QStringLiteral(
+            "remove the selected cases from the list (Ctrl or Shift to pick "
+            "several); the files themselves are untouched"));
         crow->addWidget(bremove);
         ll->addLayout(crow);
 
         caseList_ = new QListWidget;
         caseList_->setMinimumHeight(64);
-        caseList_->setSelectionMode(QAbstractItemView::SingleSelection);
+        // Several at once, because removing cases is the thing people do in
+        // bulk after a batch of runs. The ACTIVE case - the one whose vectors
+        // fill the tree - stays the current item, not the selection, so
+        // picking a range to delete does not silently swap what is listed.
+        caseList_->setSelectionMode(QAbstractItemView::ExtendedSelection);
         // Drag a case to where you want it in the plot; the buttons above do
         // the same for anyone who would rather click.
         caseList_->setDragDropMode(QAbstractItemView::InternalMove);
@@ -1930,19 +1936,34 @@ void SummaryPlotWidget::syncRefreshTimer()
 
 void SummaryPlotWidget::removeCurrentCase()
 {
-    const int row = caseList_->currentRow();
-    if (row < 0) return;
-    QListWidgetItem* it = caseList_->takeItem(row);   // fires currentItemChanged
-    if (it) {
+    // Bottom up, so the rows still to be taken keep the indices they had.
+    QList<int> rows;
+    for (auto* it : caseList_->selectedItems()) rows << caseList_->row(it);
+    if (rows.isEmpty() && caseList_->currentRow() >= 0) rows << caseList_->currentRow();
+    if (rows.isEmpty()) return;
+    std::sort(rows.begin(), rows.end(), std::greater<int>());
+
+    QStringList gone;
+    for (int row : std::as_const(rows)) {
+        QListWidgetItem* it = caseList_->takeItem(row);   // fires currentItemChanged
+        if (!it) continue;
         const QString path = it->data(Qt::UserRole).toString();
         others_.erase(path);
         delete it;
-        emit caseRemoved(path);
+        gone << path;
     }
+    // Told afterwards rather than one at a time during: the mirrors in the
+    // other tabs rebuild on each of these, and there is no reason to make them
+    // do it half way through a list that is still shrinking.
+    for (const QString& path : std::as_const(gone)) emit caseRemoved(path);
+
     if (caseList_->count() == 0) { clearActiveCase(); return; }
     relabelCases();    // a case left alone with its name drops the tag again
     replot();          // plotted set may have changed even if active did not
+    if (gone.size() > 1)
+        setStatus(QStringLiteral("removed %1 cases").arg(gone.size()));
 }
+
 
 void SummaryPlotWidget::clearActiveCase()
 {
