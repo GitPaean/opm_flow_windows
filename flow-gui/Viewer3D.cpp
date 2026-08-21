@@ -507,6 +507,9 @@ Viewer3DWidget::Viewer3DWidget(QWidget* parent)
         caseBox_->setMinimumWidth(240);
         row->addWidget(caseBox_);
         auto* bopen = new QPushButton(QStringLiteral("Open EGRID..."));
+        bopen->setToolTip(QStringLiteral(
+            "open one or more grids; each joins the case list shared with the "
+            "Summary Plots and Compare tabs"));
         row->addWidget(bopen);
         auto* bremove = new QPushButton(QStringLiteral("Remove"));
         bremove->setToolTip(QStringLiteral(
@@ -590,23 +593,26 @@ Viewer3DWidget::Viewer3DWidget(QWidget* parent)
 
         connect(bopen, &QPushButton::clicked, this, [this] {
             const int cur = caseBox_->currentIndex();
-            const QString f = QFileDialog::getOpenFileName(
-                this, QStringLiteral("Open grid file"),
+            const QStringList files = QFileDialog::getOpenFileNames(
+                this, QStringLiteral("Open grid files"),
                 flowgui::startDir(QStringLiteral("grid"),
                                   cur >= 0 && cur < cases_.size() ? cases_[cur].egrid
                                                                   : QString()),
                 QStringLiteral("Eclipse grid (*.EGRID);;All files (*)"));
-            if (f.isEmpty()) return;
-            flowgui::rememberDir(QStringLiteral("grid"), f);
-            QString base = f; base.chop(6);   // ".EGRID"
+            if (files.isEmpty()) return;
+            flowgui::rememberDir(QStringLiteral("grid"), files.first());
             // Handed to whoever owns the case list rather than added here: two
             // grids with the same file name in different folders would both
             // come out called the same thing, and this tab has no way to tell
-            // them apart. It comes back through addCase(), tagged.
-            emit openCaseRequested(base + QStringLiteral(".SMSPEC"));
+            // them apart. They come back through addCase(), tagged.
+            for (const QString& f : files) {
+                QString base = f; base.chop(6);   // ".EGRID"
+                emit openCaseRequested(base + QStringLiteral(".SMSPEC"));
+            }
+            QString first = files.first(); first.chop(6);
             for (int i = 0; i < caseBox_->count(); ++i)
                 if (flowgui::sameCasePath(caseBox_->itemData(i).toString(),
-                                          base + QStringLiteral(".EGRID"))) {
+                                          first + QStringLiteral(".EGRID"))) {
                     caseBox_->setCurrentIndex(i);
                     break;
                 }

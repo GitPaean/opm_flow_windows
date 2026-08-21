@@ -329,6 +329,9 @@ DeckEditorWidget::DeckEditorWidget(QWidget* parent)
         });
 
         connect(bopen, &QPushButton::clicked, this, [this] {
+            // One at a time on purpose: the tabs here are the INCLUDEs of one
+            // deck and the tree beside them is that deck's sections, so a
+            // second root would leave one deck's files under another's tree.
             const QString f = QFileDialog::getOpenFileName(
                 this, QStringLiteral("Open input deck"),
                 flowgui::startDir(QStringLiteral("deck"), rootDeck_),

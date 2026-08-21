@@ -921,6 +921,9 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
         FlowLayout* row = nullptr;
         top->addWidget(FlowLayout::host(&row));
         auto* bbrowse  = new QPushButton(QStringLiteral("Open SMSPEC..."));
+        bbrowse->setToolTip(QStringLiteral(
+            "open one or more runs; each joins the case list shared with the "
+            "3D View and Compare tabs, and the first becomes the active one"));
         auto* brefresh = new QPushButton(QStringLiteral("Refresh"));
         autoRef_ = new QCheckBox(QStringLiteral("auto-refresh"));
         autoRef_->setToolTip(QStringLiteral(
@@ -1978,15 +1981,18 @@ void SummaryPlotWidget::clearActiveCase()
 
 void SummaryPlotWidget::browseCase()
 {
-    const QString f = QFileDialog::getOpenFileName(
-        this, QStringLiteral("Open summary specification"),
+    const QStringList files = QFileDialog::getOpenFileNames(
+        this, QStringLiteral("Open summary specifications"),
         flowgui::startDir(QStringLiteral("smspec"), activePath()),
         QStringLiteral("Summary spec (*.SMSPEC);;All files (*)"));
-    if (!f.isEmpty()) {
-        flowgui::rememberDir(QStringLiteral("smspec"), f);
+    if (files.isEmpty()) return;
+    flowgui::rememberDir(QStringLiteral("smspec"), files.first());
+    for (const QString& f : files)
         addCase(QFileInfo(f).completeBaseName(), f);
-        activateCase(f);
-    }
+    // The first of them, not the last: opening a folder full of runs should
+    // land somewhere predictable, and the top of the list is what was asked
+    // for first.
+    activateCase(files.first());
 }
 
 // ---------------------------------------------------------------------------

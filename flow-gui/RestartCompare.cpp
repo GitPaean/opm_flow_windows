@@ -538,8 +538,8 @@ RestartComparePanel::RestartComparePanel(QWidget* parent)
     // the tab you happen to open first.
     addBtn_ = new QPushButton(QStringLiteral("Add case..."));
     addBtn_->setToolTip(QStringLiteral(
-        "open a run's SMSPEC (or EGRID) and add it to the case list shared "
-        "with the Summary Plots and 3D View tabs"));
+        "open one or more runs' SMSPEC (or EGRID) and add them to the case "
+        "list shared with the Summary Plots and 3D View tabs"));
     runBtn_ = new QPushButton(QStringLiteral("Compare"));
     bar_ = new QProgressBar; bar_->setRange(0, 100); bar_->setValue(0);
     bar_->setVisible(false);
@@ -660,14 +660,15 @@ RestartComparePanel::RestartComparePanel(QWidget* parent)
     connect(addBtn_, &QPushButton::clicked, this, [this] {
         const QString start = cases_.isEmpty()
             ? QString() : QFileInfo(cases_.last().smspec).absolutePath();
-        const QString f = QFileDialog::getOpenFileName(
-            this, QStringLiteral("Add a case"), start,
+        const QStringList files = QFileDialog::getOpenFileNames(
+            this, QStringLiteral("Add cases"), start,
             QStringLiteral("Eclipse case (*.SMSPEC *.EGRID);;All files (*)"));
-        if (f.isEmpty()) return;
-        QString base = f;
-        if (base.endsWith(QStringLiteral(".EGRID"), Qt::CaseInsensitive)) base.chop(6);
-        else if (base.endsWith(QStringLiteral(".SMSPEC"), Qt::CaseInsensitive)) base.chop(7);
-        emit openCaseRequested(base + QStringLiteral(".SMSPEC"));
+        for (const QString& f : files) {
+            QString base = f;
+            if (base.endsWith(QStringLiteral(".EGRID"), Qt::CaseInsensitive)) base.chop(6);
+            else if (base.endsWith(QStringLiteral(".SMSPEC"), Qt::CaseInsensitive)) base.chop(7);
+            emit openCaseRequested(base + QStringLiteral(".SMSPEC"));
+        }
     });
     connect(runBtn_, &QPushButton::clicked, this, [this] { startCompare(); });
     connect(metric_, &QComboBox::currentIndexChanged, this, [this](int) { replot(); });
