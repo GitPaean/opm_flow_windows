@@ -159,6 +159,22 @@ results, animate them in 3D, and edit decks — all in one window.
   press *Reload*. Since flow re-reads the decks from disk on every run,
   *Run*/*Validate* offer to save pending editor changes first, so what runs
   is always what you last edited.
+- **Well Hierarchy tab** (when built with opm-common) — the shape of the
+  field, read from the deck itself rather than from any output: FIELD down
+  through the groups to the wells, or the extended network (`BRANPROP`) /
+  standard network (`GRUPNET`) when the deck has one. A schedule is mostly
+  repetition, so the date picker lists only the moments something actually
+  changed. Wells are coloured by what they do (producer, water / gas / other
+  injector), the tree pane and the drawing share those colours, and the
+  drawing is exported to PNG or PDF exactly as it appears — no Graphviz
+  needed. Double-click a well, in either pane, to open **how that well is put
+  together**: the segments of a multisegment well with the branch each is on
+  and any valve / SICD / AICD it carries, and the connections that reach the
+  grid, labelled with the deck's 1-based `(i,j,k)` and hanging off the segment
+  they belong to. The conventions follow opm-common's own `writeWellStructure`
+  (`plot_ms_wells`), so the two pictures read alike. Decks already in the
+  queue are one press away: *Well hierarchy* on the Run tab reads the selected
+  deck here and comes to this tab.
 - **Simulator** — by default the `flow`(`.exe`) shipped next to the GUI (in a
   development checkout it falls back to the harness build tree); the resolved
   path is shown in the log at startup. `flow` contains every model variant,

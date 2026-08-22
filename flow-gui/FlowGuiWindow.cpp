@@ -315,10 +315,11 @@ FlowGuiWindow::FlowGuiWindow()
         auto* bclr  = new QPushButton(QStringLiteral("Clear"));
         auto* bopen = new QPushButton(QStringLiteral("Open result folder"));
         auto* bedit = new QPushButton(QStringLiteral("View/Edit deck"));
-        auto* bstru = new QPushButton(QStringLiteral("Deck structure"));
+        auto* bstru = new QPushButton(QStringLiteral("Well hierarchy"));
         bstru->setToolTip(QStringLiteral(
-            "read the selected deck in the Structure tab: its group tree, its "
-            "network, and the wells in it"));
+            "read the selected deck in the Well Hierarchy tab: FIELD down "
+            "through the groups to the wells, the network, and how each well "
+            "is put together"));
         auto* bprt  = new QPushButton(QStringLiteral("View PRT"));
         auto* bdbg  = new QPushButton(QStringLiteral("View DBG"));
         bprt->setToolTip(QStringLiteral("the run's print file (results, warnings, errors)"));
@@ -407,7 +408,7 @@ FlowGuiWindow::FlowGuiWindow()
             deckEd_->openDeck(jobs_[r].deck);
             tabs_->setCurrentWidget(deckEd_);
         });
-        // The same jump for the Structure tab. A deck reaches the queue by
+        // The same jump for the Well Hierarchy tab. A deck reaches the queue by
         // being browsed to, dropped on the window or restored with a project,
         // and having to find it a second time through the tab's own file
         // dialog is the sort of errand a queue exists to save.
@@ -579,13 +580,13 @@ FlowGuiWindow::FlowGuiWindow()
             [this](const QString& smspec) { openCaseEverywhere(smspec); });
 #endif
 
-    // ================= Structure tab ========================================
+    // ================= Well Hierarchy tab ===================================
     // What the field looks like: which groups feed which, where the wells
     // hang, and how the network is plumbed. Read from the deck, so it answers
     // before a run rather than after one.
 #ifdef FLOWGUI_HAVE_DECKMODEL
     structure_ = new flowgui::StructurePanel;
-    tabs_->addTab(structure_, QStringLiteral("Structure"));
+    tabs_->addTab(structure_, QStringLiteral("Well Hierarchy"));
 #endif
 
     // ================= Deck editor tab ======================================

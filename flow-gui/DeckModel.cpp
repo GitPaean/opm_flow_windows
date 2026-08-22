@@ -915,7 +915,7 @@ StructurePanel::StructurePanel(QWidget* parent) : QWidget(parent)
 
     auto* row = new QHBoxLayout;
     row->addWidget(openBtn_);
-    row->addWidget(new QLabel(QStringLiteral("Structure at:")));
+    row->addWidget(new QLabel(QStringLiteral("Hierarchy at:")));
     row->addWidget(shapeBox_);
     row->addWidget(showWells_);
     row->addWidget(new QLabel(QStringLiteral("Draw:")));
