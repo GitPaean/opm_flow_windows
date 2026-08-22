@@ -28,13 +28,17 @@
 #include <QRectF>
 #include <QString>
 #include <QStringList>
+#include <QHash>
 #include <QVector>
+
+#include <memory>
 #include <QWidget>
 
 #include <atomic>
 
 class QCheckBox;
 class QComboBox;
+class QDialog;
 class QLabel;
 class QProgressBar;
 class QFontMetricsF;
@@ -90,6 +94,35 @@ struct Structure {
     QString fingerprint() const;
 };
 
+// One segment of a multisegment well. `outlet` is the segment this one flows
+// into, 0 meaning the wellhead - the same direction opm-common's own
+// WellStructureViz draws, so the two pictures read the same way.
+struct WellSeg {
+    int    nr = 0, outlet = 0, branch = 0;
+    double length = 0, depth = 0, diam = 0;
+    QString device;              // valve / SICD / AICD; empty when plain tubing
+};
+
+// One connection to the grid. `segment` is the segment it hangs off, or 0 for
+// a well that is not segmented. Indices are 1-based, as a deck writes them.
+struct WellConn {
+    int  i = 0, j = 0, k = 0, segment = 0;
+    bool open = true;
+};
+
+// A well's plumbing at one moment.
+struct WellShape {
+    QString name, problem;
+    bool ok = false, msw = false, injector = false;
+    QVector<WellSeg>  segs;
+    QVector<WellConn> conns;
+};
+
+// The parsed deck, kept alive behind the structure it produced. Defined in the
+// .cpp: a well's segments and connections are far too much to copy out for
+// every well at every step, so clicking one asks the Schedule instead.
+struct DeckHold;
+
 struct DeckStructure {
     bool    ok = false;
     QString problem;
@@ -97,7 +130,12 @@ struct DeckStructure {
     QVector<Structure> shapes;       // only where something changed
     int     scheduleSteps = 0;
     QStringList warnings;            // what the permissive parse let through
+    std::shared_ptr<const DeckHold> hold;   // keeps the parse alive; see above
 };
+
+// One well as it stands at a schedule step. Cheap - it reads the Schedule the
+// parse already built. Not ok() when the deck is gone or has no such well.
+WellShape wellShapeAt(const DeckStructure& ds, int step, const QString& well);
 
 // Parse a deck and extract its structure over time. Slow enough to want a
 // thread (about half a second for Norne, longer for a big deck), so `cancel`
@@ -125,14 +163,27 @@ public:
     // from one that holds groups, so it is worth telling apart at a glance.
     // In the order the key lists them: the hierarchy, then what hangs off it.
     enum Kind { KindGroup = 0, KindWellGroup, KindProducer,
-                KindInjWater, KindInjGas, KindInjOther, KindNetwork };
+                KindInjWater, KindInjGas, KindInjOther, KindNetwork,
+                // ... and inside one well: its segments, the ones carrying a
+                // device, and the connections that reach the grid.
+                KindSegment, KindSegDevice, KindConnection };
 
     explicit GraphView(QWidget* parent = nullptr);
+
+signals:
+    // A node was double-clicked. The panel decides what that means - a well
+    // opens its own structure, everything else is left alone.
+    void nodeActivated(const QString& name);
+
+public:
     // `from` points at its parent/uptree node, so edges run child -> parent.
     void setGraph(const QStringList& nodes, const QVector<Edge>& edges,
                   const QString& emptyText,
                   const QHash<QString, int>& kinds = {});
     void setHighlight(const QString& node);
+    // Which node is under a point in widget coordinates, or empty. The drawing
+    // is scaled to fit, so this undoes that rather than testing raw geometry.
+    QString nodeAt(const QPointF& pos) const;
     // Paint at an arbitrary size, for export as well as for the screen.
     void render(QPainter& p, const QRectF& area) const;
     bool isEmpty() const { return placed_.isEmpty(); }
@@ -213,9 +264,12 @@ private:
     void applyFilter(const QString& needle);
     void exportPicture();      // PNG or PDF, straight from the painter
     void refreshGraph();
+    // Pop up (or raise) the drawing of one well's own structure.
+    void showWellStructure(const QString& well);
 
     QPushButton*  openBtn_ = nullptr;
     QPushButton*  picBtn_ = nullptr;
+    QPushButton*  wellBtn_ = nullptr;   // draw the selected well's structure
     QCheckBox*    showWells_ = nullptr;
     QComboBox*    shapeBox_ = nullptr;
     QLineEdit*    filter_ = nullptr;
@@ -229,6 +283,9 @@ private:
     QThread*      worker_ = nullptr;
 
     DeckStructure     model_;
+    // Open well drawings by well name, so asking twice raises the one that is
+    // already up rather than stacking another on it.
+    QHash<QString, QDialog*> wellWindows_;
     QString           pending_;
     std::atomic<int>  progress_{0};
     std::atomic<bool> cancel_{false};

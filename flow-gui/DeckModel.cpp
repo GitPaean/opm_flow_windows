@@ -19,6 +19,7 @@
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QLabel>
+#include <QMessageBox>
 #include <QLineEdit>
 #include <QPainter>
 #include <QMouseEvent>
@@ -29,6 +30,7 @@
 #include <QTimeZone>
 #include <QTimer>
 #include <QTreeWidget>
+#include <QDialog>
 #include <QTreeWidgetItem>
 #include <QVBoxLayout>
 
@@ -43,7 +45,12 @@
 #include <opm/input/eclipse/Schedule/Network/Branch.hpp>
 #include <opm/input/eclipse/Schedule/Network/ExtNetwork.hpp>
 #include <opm/input/eclipse/Schedule/Network/Node.hpp>
+#include <opm/input/eclipse/Schedule/MSW/Segment.hpp>
+#include <opm/input/eclipse/Schedule/MSW/WellSegments.hpp>
 #include <opm/input/eclipse/Schedule/Schedule.hpp>
+#include <opm/input/eclipse/Schedule/Well/Connection.hpp>
+#include <opm/input/eclipse/Schedule/Well/Well.hpp>
+#include <opm/input/eclipse/Schedule/Well/WellConnections.hpp>
 
 #include <algorithm>
 #include <exception>
@@ -177,6 +184,67 @@ Structure snapshotAt(const Opm::Schedule& sched, std::size_t step)
 
 } // namespace
 
+// The parsed deck, alive for as long as the structure read out of it. Clicking
+// a well then costs a lookup rather than another half-second parse, and no
+// segment or connection has to be copied out of the Schedule in advance.
+struct DeckHold {
+    std::shared_ptr<Opm::Python>       python;
+    std::unique_ptr<Opm::EclipseState> es;
+    std::unique_ptr<Opm::Schedule>     sched;
+};
+
+WellShape wellShapeAt(const DeckStructure& ds, int step, const QString& well)
+{
+    WellShape ws;
+    ws.name = well;
+    if (!ds.hold || !ds.hold->sched) {
+        ws.problem = QStringLiteral("the deck is no longer loaded");
+        return ws;
+    }
+    const auto& sched = *ds.hold->sched;
+    if (sched.size() == 0) { ws.problem = QStringLiteral("empty schedule"); return ws; }
+    const std::size_t st = std::size_t(std::clamp(step, 0, int(sched.size()) - 1));
+    const std::string nm = well.toStdString();
+    if (!sched[st].wells.has(nm)) {
+        ws.problem = QStringLiteral("%1 is not in the schedule at this date").arg(well);
+        return ws;
+    }
+    const auto& w = sched[st].wells.get(nm);
+    ws.injector = w.isInjector();
+    ws.msw      = w.isMultiSegment();
+    if (ws.msw) {
+        const auto& segs = w.getSegments();
+        for (std::size_t i = 0; i < segs.size(); ++i) {
+            const auto& sg = segs[i];
+            WellSeg out;
+            out.nr     = sg.segmentNumber();
+            out.outlet = sg.outletSegment();
+            out.branch = sg.branchNumber();
+            out.length = sg.totalLength();
+            out.depth  = sg.depth();
+            out.diam   = sg.internalDiameter();
+            // What opm-common's own drawing tells apart by colour and shape.
+            if      (sg.isValve())     out.device = QStringLiteral("valve");
+            else if (sg.isSpiralICD()) out.device = QStringLiteral("SICD");
+            else if (sg.isAICD())      out.device = QStringLiteral("AICD");
+            ws.segs.push_back(out);
+        }
+    }
+    const auto& cs = w.getConnections();
+    for (std::size_t i = 0; i < cs.size(); ++i) {
+        const auto& c = cs[i];
+        WellConn out;
+        out.i = c.getI() + 1;          // the deck's own 1-based numbering
+        out.j = c.getJ() + 1;
+        out.k = c.getK() + 1;
+        out.segment = c.attachedToSegment() ? c.segment() : 0;
+        out.open = c.state() == Opm::Connection::State::OPEN;
+        ws.conns.push_back(out);
+    }
+    ws.ok = true;
+    return ws;
+}
+
 DeckStructure readDeckStructure(const QString& dataFile,
                                 std::atomic<bool>* cancel,
                                 std::atomic<int>* progress)
@@ -196,12 +264,16 @@ DeckStructure readDeckStructure(const QString& dataFile,
         if (stop()) { out.problem = QStringLiteral("cancelled"); return out; }
         tick(35);
 
-        Opm::EclipseState es(deck);
+        auto hold = std::make_shared<DeckHold>();
+        hold->es = std::make_unique<Opm::EclipseState>(deck);
         if (stop()) { out.problem = QStringLiteral("cancelled"); return out; }
         tick(55);
 
-        auto python = std::make_shared<Opm::Python>();
-        Opm::Schedule sched(deck, es, ctx, guard, python);
+        hold->python = std::make_shared<Opm::Python>();
+        hold->sched  = std::make_unique<Opm::Schedule>(deck, *hold->es, ctx, guard,
+                                                      hold->python);
+        const Opm::Schedule& sched = *hold->sched;
+        out.hold = hold;         // kept, so a well can be looked at on demand
         tick(75);
 
         out.scheduleSteps = int(sched.size());
@@ -481,6 +553,13 @@ void GraphView::kindColours(int kind, QColor& fill, QColor& line, QColor& ink)
         case KindInjWater:  line = QColor(0x00, 0x00, 0xd8); break;
         case KindInjGas:    line = QColor(0x00, 0x77, 0x2b); break;
         case KindInjOther:  line = QColor(0x7a, 0x1f, 0xa2); break;
+        // Inside a well. The connection colour is opm-common's lightgreen, so
+        // a picture drawn here and one drawn by plot_ms_wells read alike.
+        case KindSegment:    fill = QColor(0xff, 0xff, 0xf0); break;
+        case KindSegDevice:  fill = QColor(0xff, 0xd7, 0x00);
+                             line = QColor(0x8a, 0x6d, 0x00); break;
+        case KindConnection: fill = QColor(0x90, 0xee, 0x90);
+                             line = QColor(0x2e, 0x6b, 0x2e); break;
         default: break;
     }
 }
@@ -502,8 +581,12 @@ QColor GraphView::kindText(int kind)
 
 bool GraphView::isWellKind(int kind)
 {
+    // Really "drawn as a rectangle rather than an ellipse": wells are, groups
+    // are not. Segments join them, and connections do not, which is the way
+    // round opm-common's own well drawing has it.
     return kind == KindProducer || kind == KindInjWater
-        || kind == KindInjGas   || kind == KindInjOther;
+        || kind == KindInjGas   || kind == KindInjOther
+        || kind == KindSegment  || kind == KindSegDevice;
 }
 
 QString GraphView::kindName(int kind)
@@ -514,6 +597,9 @@ QString GraphView::kindName(int kind)
         case KindInjGas:    return QStringLiteral("gas injector");
         case KindInjOther:  return QStringLiteral("other injector");
         case KindWellGroup: return QStringLiteral("well group");
+        case KindSegment:    return QStringLiteral("segment");
+        case KindSegDevice:  return QStringLiteral("segment with a device");
+        case KindConnection: return QStringLiteral("connection");
         default:            return QStringLiteral("group");
     }
 }
@@ -748,11 +834,31 @@ void GraphView::mouseReleaseEvent(QMouseEvent* ev)
 }
 
 // Put it back where it started, for anyone who dragged it somewhere unhelpful.
+// The inverse of what render() does to place a node: undo the fit-to-pane
+// scale and the centring, then test the boxes in the layout's own units.
+QString GraphView::nodeAt(const QPointF& pos) const
+{
+    if (placed_.isEmpty() || natW_ <= 0) return {};
+    const QRectF area(rect());
+    const double sc = fitScale(area);
+    if (sc <= 0) return {};
+    const QRectF drawn = drawnRect(area);
+    const QPointF at((pos.x() - drawn.left()) / sc, (pos.y() - drawn.top()) / sc);
+    for (const auto& q : placed_) {
+        const double h = isWellKind(kinds_.value(q.name, KindGroup)) ? natBoxH_ - 3 : natBoxH_;
+        const QRectF box(q.x - q.w / 2, q.depth * natRowGap_ + (natBoxH_ - h) / 2, q.w, h);
+        if (box.contains(at)) return q.name;
+    }
+    return {};
+}
+
 void GraphView::mouseDoubleClickEvent(QMouseEvent* ev)
 {
     const QRectF area(rect());
     const QRectF kr = keyRect(area, QFontMetricsF(keyFont(fitScale(area))));
     if (!kr.isEmpty() && kr.contains(ev->position())) { resetKey(); ev->accept(); return; }
+    const QString n = nodeAt(ev->position());
+    if (!n.isEmpty()) { emit nodeActivated(n); ev->accept(); return; }
     QWidget::mouseDoubleClickEvent(ev);
 }
 
@@ -813,6 +919,13 @@ StructurePanel::StructurePanel(QWidget* parent) : QWidget(parent)
     row->addWidget(showWells_);
     row->addWidget(new QLabel(QStringLiteral("Draw:")));
     row->addWidget(viewBox_);
+    wellBtn_ = new QPushButton(QStringLiteral("Well structure..."));
+    wellBtn_->setToolTip(QStringLiteral(
+        "draw the selected well's own structure: its segments, and the "
+        "connections that reach the grid\n(or double-click the well, in "
+        "either pane)"));
+    wellBtn_->setEnabled(false);
+    row->addWidget(wellBtn_);
     row->addWidget(picBtn_);
     row->addWidget(bar_);
     row->addWidget(filter_, 1);
@@ -880,6 +993,22 @@ StructurePanel::StructurePanel(QWidget* parent) : QWidget(parent)
     connect(tree_, &QTreeWidget::itemSelectionChanged, this, [this] {
         auto* it = tree_->currentItem();
         graph_->setHighlight(it ? it->text(0) : QString());
+        wellBtn_->setEnabled(it && it->data(0, Qt::UserRole).toBool());
+    });
+    // A well is worth opening on its own: the group tree says where it hangs,
+    // its own drawing says how it is put together. Double-click either pane.
+    connect(tree_, &QTreeWidget::itemDoubleClicked, this,
+            [this](QTreeWidgetItem* it, int) {
+                if (it && it->data(0, Qt::UserRole).toBool()) showWellStructure(it->text(0));
+            });
+    connect(graph_, &GraphView::nodeActivated, this, [this](const QString& n) {
+        const int i = shapeBox_->currentIndex();
+        if (i < 0 || i >= model_.shapes.size()) return;
+        if (!model_.shapes[i].find(n)) showWellStructure(n);   // not a group: a well
+    });
+    connect(wellBtn_, &QPushButton::clicked, this, [this] {
+        auto* it = tree_->currentItem();
+        if (it && it->data(0, Qt::UserRole).toBool()) showWellStructure(it->text(0));
     });
 
     poll_ = new QTimer(this);
@@ -996,6 +1125,7 @@ void StructurePanel::showShape(int index)
             for (const auto& w : g->wells) {
                 auto* wi = new QTreeWidgetItem(it);
                 wi->setText(0, w);
+                wi->setData(0, Qt::UserRole, true);      // a well, not a group
                 const int k = wellKind(s, w);
                 wi->setForeground(0, QBrush(GraphView::kindText(k)));
                 wi->setText(1, s.injectors.contains(w)
@@ -1083,6 +1213,113 @@ void StructurePanel::refreshGraph()
 // is the picture, not a second rendering of it that can drift from it. The PDF
 // is vector, which is what a report wants; the PNG is drawn at three times the
 // on-screen size so it survives being scaled.
+// One well drawn on its own: the segment tree of a multisegment well with the
+// connections hanging off the segments they belong to, or - for a well that is
+// not segmented - simply the cells it reaches.
+//
+// The shape of it follows opm-common's own WellStructureViz, so this picture
+// and one from plot_ms_wells read the same way: edges run towards the
+// wellhead, a segment says which branch it is on, connections are labelled
+// with the deck's 1-based (i,j,k) and coloured its lightgreen. What differs is
+// that this is drawn in-process, like the group graph beside it, so it needs
+// no Graphviz and no file written to disk to be looked at.
+void StructurePanel::showWellStructure(const QString& well)
+{
+    const int idx = shapeBox_->currentIndex();
+    if (idx < 0 || idx >= model_.shapes.size()) return;
+    const Structure& shape = model_.shapes[idx];
+    const WellShape ws = wellShapeAt(model_, shape.step, well);
+    if (!ws.ok) {
+        QMessageBox::information(this, QStringLiteral("Well structure"),
+            ws.problem.isEmpty() ? QStringLiteral("nothing to draw for %1").arg(well)
+                                 : ws.problem);
+        return;
+    }
+
+    QStringList nodes;
+    QVector<GraphView::Edge> edges;
+    QHash<QString, int> kinds;
+
+    // The wellhead, coloured the way the group tree colours it.
+    const QString head = ws.name;
+    nodes << head;
+    kinds[head] = wellKind(shape, ws.name);
+
+    // Segments, and the name each one is drawn under.
+    QHash<int, QString> segNode;
+    for (const auto& sg : ws.segs) {
+        QString label = QStringLiteral("Seg %1").arg(sg.nr);
+        if (sg.branch > 1) label += QStringLiteral(" (b%1)").arg(sg.branch);
+        if (!sg.device.isEmpty()) label += QLatin1Char(' ') + sg.device;
+        segNode[sg.nr] = label;
+        nodes << label;
+        kinds[label] = sg.device.isEmpty() ? GraphView::KindSegment
+                                           : GraphView::KindSegDevice;
+    }
+    for (const auto& sg : ws.segs)
+        edges.push_back({ segNode.value(sg.nr),
+                          sg.outlet > 0 ? segNode.value(sg.outlet, head) : head,
+                          {} });
+
+    // Connections, on their segment where there is one.
+    QSet<QString> used;
+    for (const auto& c : ws.conns) {
+        QString label = QStringLiteral("(%1,%2,%3)").arg(c.i).arg(c.j).arg(c.k);
+        // A cell can be perforated more than once; keep the names apart so the
+        // two do not collapse into one box.
+        if (used.contains(label)) {
+            int n = 2;
+            while (used.contains(label + QStringLiteral(" #%1").arg(n))) ++n;
+            label += QStringLiteral(" #%1").arg(n);
+        }
+        used.insert(label);
+        if (!c.open) label += QStringLiteral(" shut");
+        nodes << label;
+        kinds[label] = GraphView::KindConnection;
+        edges.push_back({ label,
+                          c.segment > 0 ? segNode.value(c.segment, head) : head,
+                          {} });
+    }
+
+    // One window per well: asking again redraws it at the date now being
+    // looked at rather than stacking a second copy of the same well.
+    QDialog* dlg = wellWindows_.value(well);
+    GraphView* gv = dlg ? dlg->findChild<GraphView*>() : nullptr;
+    QLabel* cap = dlg ? dlg->findChild<QLabel*>() : nullptr;
+    if (!dlg) {
+        dlg = new QDialog(this);
+        dlg->setAttribute(Qt::WA_DeleteOnClose);
+        dlg->setWindowFlags(Qt::Window);      // a dialog is given no maximise
+        auto* lay = new QVBoxLayout(dlg);
+        cap = new QLabel;
+        cap->setTextInteractionFlags(Qt::TextSelectableByMouse);
+        lay->addWidget(cap);
+        gv = new GraphView;
+        lay->addWidget(gv, 1);
+        dlg->resize(820, 620);
+        wellWindows_.insert(well, dlg);
+        connect(dlg, &QObject::destroyed, this, [this, well] { wellWindows_.remove(well); });
+    }
+
+    dlg->setWindowTitle(QStringLiteral("%1 - well structure").arg(ws.name));
+    cap->setText(QStringLiteral("%1  -  %2  -  %3, %4 connection(s)%5")
+        .arg(ws.name,
+             ws.injector ? (shape.injectors.contains(ws.name)
+                                ? injectName(shape.injectors.value(ws.name))
+                                : QStringLiteral("injector"))
+                         : QStringLiteral("producer"),
+             ws.msw ? QStringLiteral("%1 segment(s)").arg(ws.segs.size())
+                    : QStringLiteral("not segmented"))
+        .arg(ws.conns.size())
+        .arg(shape.when.isValid()
+                 ? QStringLiteral("  -  at %1").arg(shape.when.toString(QStringLiteral("d MMM yyyy")))
+                 : QString()));
+    gv->setGraph(nodes, edges, QStringLiteral("this well has no connections"), kinds);
+    if (dlg->isMinimized()) dlg->showNormal(); else dlg->show();
+    dlg->raise();
+    dlg->activateWindow();
+}
+
 void StructurePanel::exportPicture()
 {
     if (graph_->isEmpty()) {
