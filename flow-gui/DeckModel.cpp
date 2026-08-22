@@ -4,6 +4,7 @@
   DeckModel implementation. Part of the opm_flow_windows harness;
   GPL v3+ (see repository LICENSE).
 */
+#include "CasePath.h"
 #include "DeckModel.h"
 
 #include "GuiPaths.h"
@@ -1020,6 +1021,11 @@ StructurePanel::~StructurePanel()
 {
     cancel_.store(true);
     if (worker_) { worker_->quit(); worker_->wait(8000); }
+}
+
+QString StructurePanel::shownDeck() const
+{
+    return model_.ok ? model_.deckPath : QString();
 }
 
 void StructurePanel::openDeck(const QString& dataFile)

@@ -254,8 +254,12 @@ public:
     explicit StructurePanel(QWidget* parent = nullptr);
     ~StructurePanel() override;
 
-    // Show this deck. Safe to call with a deck already loaded.
+    // Show this deck. Safe to call with a deck already loaded - and it always
+    // re-reads, which is what the Open button is for after a deck is edited.
     void openDeck(const QString& dataFile);
+    // The deck now on screen, so a caller can tell whether it needs opening at
+    // all. Empty until one has been read.
+    QString shownDeck() const;
 
 private:
     void startLoad(const QString& dataFile);

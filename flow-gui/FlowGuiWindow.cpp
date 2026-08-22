@@ -315,6 +315,10 @@ FlowGuiWindow::FlowGuiWindow()
         auto* bclr  = new QPushButton(QStringLiteral("Clear"));
         auto* bopen = new QPushButton(QStringLiteral("Open result folder"));
         auto* bedit = new QPushButton(QStringLiteral("View/Edit deck"));
+        auto* bstru = new QPushButton(QStringLiteral("Deck structure"));
+        bstru->setToolTip(QStringLiteral(
+            "read the selected deck in the Structure tab: its group tree, its "
+            "network, and the wells in it"));
         auto* bprt  = new QPushButton(QStringLiteral("View PRT"));
         auto* bdbg  = new QPushButton(QStringLiteral("View DBG"));
         bprt->setToolTip(QStringLiteral("the run's print file (results, warnings, errors)"));
@@ -403,9 +407,24 @@ FlowGuiWindow::FlowGuiWindow()
             deckEd_->openDeck(jobs_[r].deck);
             tabs_->setCurrentWidget(deckEd_);
         });
+        // The same jump for the Structure tab. A deck reaches the queue by
+        // being browsed to, dropped on the window or restored with a project,
+        // and having to find it a second time through the tab's own file
+        // dialog is the sort of errand a queue exists to save.
+        connect(bstru, &QPushButton::clicked, this, [this] {
+            const int r = jobTable_->currentRow();
+            if (r < 0 || r >= jobs_.size() || !structure_) return;
+            // Idempotent: pressing it again on the deck already shown just
+            // goes there. Re-reading is what the tab's own Open button is
+            // for - it costs half a second on Norne and would throw away
+            // the date being looked at.
+            if (!flowgui::sameCasePath(structure_->shownDeck(), jobs_[r].deck))
+                structure_->openDeck(jobs_[r].deck);
+            tabs_->setCurrentWidget(structure_);
+        });
         // queue management on top; the result viewers (used after a run
         // finishes) grouped below
-        for (auto* b : { badd, bedit, brem, bclr }) col->addWidget(b);
+        for (auto* b : { badd, bedit, bstru, brem, bclr }) col->addWidget(b);
         col->addSpacing(16);
         for (auto* b : { bprt, bdbg, bopen }) col->addWidget(b);
         col->addStretch(1);
