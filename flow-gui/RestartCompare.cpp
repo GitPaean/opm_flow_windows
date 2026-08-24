@@ -29,16 +29,10 @@
 #include <QPainter>
 #include <QProgressBar>
 #include <QPushButton>
-#include <QScrollArea>
-#include <QShowEvent>
 #include <QSplitter>
 #include <QTabWidget>
 #include <QTableWidget>
 #include <QTableWidgetItem>
-#include <QTreeWidget>
-#include <QTreeWidgetItem>
-#include <QGridLayout>
-#include <QValueAxis>
 #include <QThread>
 #include <QTimer>
 #include <QToolTip>
@@ -46,7 +40,6 @@
 #include <QVBoxLayout>
 
 #include <opm/io/eclipse/EGrid.hpp>
-#include <opm/io/eclipse/ESmry.hpp>
 #include <opm/io/eclipse/EInit.hpp>
 #include <opm/io/eclipse/ERst.hpp>
 
@@ -71,44 +64,6 @@ constexpr int IH_HOUR = 206, IH_MIN = 207;
 
 // The calendar date a restart step was written at - the key the two runs are
 // paired on. Integers, so equal means equal and there is no tolerance to pick.
-// The field vectors a comparison usually starts from, grouped the way an
-// engineer thinks of them. Curated by hand and deliberately field-level only:
-// well-by-well questions belong in the Summary Plots tab, where every vector
-// of every case is there to pick. What a deck carries beyond this list is not
-// lost - it appears under "other field vectors" below the curated groups,
-// which is where a compositional run's own F* vectors land.
-struct CuratedVec { const char* key; const char* name; };
-struct CuratedGroup { const char* title; std::initializer_list<CuratedVec> vecs; };
-static const CuratedGroup kCuratedField[] = {
-    { "Production rates",
-      { { "FOPR", "Oil Production Rate" },
-        { "FWPR", "Water Production Rate" },
-        { "FGPR", "Gas Production Rate" },
-        { "FLPR", "Liquid Production Rate" },
-        { "FVPR", "Reservoir Voidage Production Rate" } } },
-    { "Production totals",
-      { { "FOPT", "Oil Production Total" },
-        { "FWPT", "Water Production Total" },
-        { "FGPT", "Gas Production Total" },
-        { "FLPT", "Liquid Production Total" } } },
-    { "Injection",
-      { { "FWIR", "Water Injection Rate" },
-        { "FWIT", "Water Injection Total" },
-        { "FGIR", "Gas Injection Rate" },
-        { "FGIT", "Gas Injection Total" } } },
-    { "Pressure & in place",
-      { { "FPR",  "Average Reservoir Pressure" },
-        { "FOIP", "Oil In Place" },
-        { "FGIP", "Gas In Place" },
-        { "FWIP", "Water In Place" } } },
-    { "Ratios & fractions",
-      { { "FWCT", "Water Cut" },
-        { "FGOR", "Gas-Oil Ratio" } } },
-};
-// Ticked by default where the cases have them: the first look should already
-// be a picture, not a list of unticked boxes.
-static const char* kDefaultTicked[] = { "FOPR", "FWPR", "FPR", "FWCT" };
-
 QDateTime dateOfStep(Opm::EclIO::ERst& f, int seqnum)
 {
     try {
@@ -641,37 +596,9 @@ RestartComparePanel::RestartComparePanel(QWidget* parent)
     chartView_ = new QChartView(chart_);
     chartView_->setRenderHint(QPainter::Antialiasing);
 
-    // The summary-vector view: the comparison most days actually need. The
-    // restart views keep answering the deeper "do the cells agree" question.
-    vecTree_ = new QTreeWidget;
-    vecTree_->setHeaderHidden(true);
-    vecTree_->setMaximumWidth(280);
-    vecTree_->setMinimumWidth(190);
-    sumHead_ = new QLabel;
-    sumHead_->setTextFormat(Qt::RichText);
-    auto* sumScroll = new QScrollArea;
-    sumScroll->setWidgetResizable(true);
-    sumScroll->setFrameShape(QFrame::NoFrame);
-    auto* gridHost = new QWidget;
-    sumGrid_ = new QGridLayout(gridHost);
-    sumGrid_->setContentsMargins(0, 0, 0, 0);
-    sumScroll->setWidget(gridHost);
-    sumView_ = new QWidget;
-    {
-        auto* right = new QVBoxLayout;
-        right->setContentsMargins(0, 0, 0, 0);
-        right->addWidget(sumHead_);
-        right->addWidget(sumScroll, 1);
-        auto* srow = new QHBoxLayout(sumView_);
-        srow->setContentsMargins(4, 4, 4, 4);
-        srow->addWidget(vecTree_);
-        srow->addLayout(right, 1);
-    }
-
     views_ = new QTabWidget;
-    views_->addTab(sumView_, QStringLiteral("Summary vectors"));
-    views_->addTab(heat_, QStringLiteral("Restart overview"));
-    views_->addTab(chartView_, QStringLiteral("Restart curves"));
+    views_->addTab(heat_, QStringLiteral("Overview"));
+    views_->addTab(chartView_, QStringLiteral("Curves"));
 
     table_ = new QTableWidget(0, 4);
     table_->setHorizontalHeaderLabels({ QStringLiteral("Property"),
@@ -707,24 +634,21 @@ RestartComparePanel::RestartComparePanel(QWidget* parent)
     dlay->addLayout(drow);
     dlay->addWidget(detail_, 1);
 
-    lower_ = new QSplitter(Qt::Horizontal);
-    lower_->addWidget(table_);
-    lower_->addWidget(detailBox);
-    lower_->setStretchFactor(0, 2);
-    lower_->setStretchFactor(1, 3);
+    auto* lower = new QSplitter(Qt::Horizontal);
+    lower->addWidget(table_);
+    lower->addWidget(detailBox);
+    lower->setStretchFactor(0, 2);
+    lower->setStretchFactor(1, 3);
 
     auto* split = new QSplitter(Qt::Vertical);
     split->addWidget(views_);
-    split->addWidget(lower_);
+    split->addWidget(lower);
     split->setStretchFactor(0, 3);
     split->setStretchFactor(1, 2);
     // Explicit sizes: stretch factors alone let the tables' size hints squeeze
     // the views to a sliver once they have a few hundred rows in them.
     split->setSizes({ 460, 320 });
-    lower_->setSizes({ 380, 620 });
-    // The tables under the views belong to the restart comparison; while the
-    // summary view is up they would only take its height.
-    lower_->setVisible(false);
+    lower->setSizes({ 380, 620 });
 
     auto* lay = new QVBoxLayout(this);
     lay->addLayout(top);
@@ -747,17 +671,8 @@ RestartComparePanel::RestartComparePanel(QWidget* parent)
             emit openCaseRequested(base + QStringLiteral(".SMSPEC"));
         }
     });
-    connect(caseA_, &QComboBox::currentIndexChanged, this,
-            [this](int) { syncCaseTips(); summaryCasesChanged(); });
-    connect(caseB_, &QComboBox::currentIndexChanged, this,
-            [this](int) { syncCaseTips(); summaryCasesChanged(); });
-    connect(views_, &QTabWidget::currentChanged, this, [this](int idx) {
-        lower_->setVisible(idx != views_->indexOf(sumView_));
-        if (idx == views_->indexOf(sumView_) && sumDirty_) { rebuildVectorList(); replotSummary(); }
-    });
-    connect(vecTree_, &QTreeWidget::itemChanged, this, [this](QTreeWidgetItem*, int) {
-        if (!sumBuilding_) replotSummary();
-    });
+    connect(caseA_, &QComboBox::currentIndexChanged, this, [this](int) { syncCaseTips(); });
+    connect(caseB_, &QComboBox::currentIndexChanged, this, [this](int) { syncCaseTips(); });
     connect(runBtn_, &QPushButton::clicked, this, [this] { startCompare(); });
     connect(metric_, &QComboBox::currentIndexChanged, this, [this](int) { replot(); });
     connect(onlyBad_, &QCheckBox::toggled, this, [this](bool) { replot(); });
@@ -893,298 +808,6 @@ void RestartComparePanel::syncCaseTips()
     put(caseB_, "the second case of the pair");
 }
 
-void RestartComparePanel::showEvent(QShowEvent* ev)
-{
-    QWidget::showEvent(ev);
-    if (views_ && views_->currentWidget() == sumView_ && sumDirty_) {
-        rebuildVectorList();
-        replotSummary();
-    }
-}
-
-std::shared_ptr<Opm::EclIO::ESmry> RestartComparePanel::summaryReader(const QString& smspec)
-{
-    if (smspec.isEmpty()) return nullptr;
-    // Same staleness currency as the plots tab: a re-run of the case rewrites
-    // these files, and comparing yesterday's read of them would be worse than
-    // the reopen it saves.
-    QString stamp;
-    for (const QString& ext : { QStringLiteral("SMSPEC"), QStringLiteral("UNSMRY"),
-                                QStringLiteral("ESMRY") }) {
-        QString f = smspec; f.chop(6); f += ext;
-        const QFileInfo fi(f);
-        if (fi.exists())
-            stamp += QStringLiteral("%1|%2;").arg(fi.lastModified().toMSecsSinceEpoch())
-                                             .arg(fi.size());
-    }
-    auto it = sumReaders_.find(smspec);
-    if (it != sumReaders_.end() && it->second.stamp == stamp && it->second.smry)
-        return it->second.smry;
-    std::shared_ptr<Opm::EclIO::ESmry> r;
-    try {
-        r = std::make_shared<Opm::EclIO::ESmry>(smspec.toStdString());
-    } catch (...) { r = nullptr; }
-    sumReaders_[smspec] = SumReader{ r, stamp };
-    return r;
-}
-
-void RestartComparePanel::summaryCasesChanged()
-{
-    sumDirty_ = true;
-    if (isVisible() && views_ && views_->currentWidget() == sumView_) {
-        rebuildVectorList();
-        replotSummary();
-    }
-}
-
-void RestartComparePanel::rebuildVectorList()
-{
-    sumDirty_ = false;
-
-    // Keep the user's ticks across a rebuild; only a first-ever fill applies
-    // the defaults, so unticking FOPR is not undone by switching case B.
-    QHash<QString, bool> was;
-    for (int i = 0; i < vecTree_->topLevelItemCount(); ++i) {
-        auto* g = vecTree_->topLevelItem(i);
-        for (int j = 0; j < g->childCount(); ++j)
-            was.insert(g->child(j)->text(0).section(QLatin1Char(' '), 0, 0),
-                       g->child(j)->checkState(0) == Qt::Checked);
-    }
-    const bool firstFill = was.isEmpty();
-
-    sumBuilding_ = true;
-    vecTree_->clear();
-
-    const int ia = caseA_->currentIndex(), ib = caseB_->currentIndex();
-    auto ra = (ia >= 0 && ia < cases_.size()) ? summaryReader(cases_[ia].smspec) : nullptr;
-    auto rb = (ib >= 0 && ib < cases_.size()) ? summaryReader(cases_[ib].smspec) : nullptr;
-    if (!ra || !rb) { sumBuilding_ = false; return; }
-
-    // What both sides carry: comparing needs the vector on each.
-    QSet<QString> both;
-    for (const auto& k : ra->keywordList())
-        if (!k.empty() && k.front() == 'F') both.insert(QString::fromStdString(k));
-    QSet<QString> keep;
-    for (const auto& k : rb->keywordList()) {
-        const QString q = QString::fromStdString(k);
-        if (both.contains(q)) keep.insert(q);
-    }
-
-    auto ticked = [&](const QString& key) {
-        if (!firstFill) return was.value(key, false);
-        for (const char* d : kDefaultTicked) if (key == QLatin1String(d)) return true;
-        return false;
-    };
-    auto addLeaf = [&](QTreeWidgetItem* parent, const QString& key, const QString& name) {
-        auto* it = new QTreeWidgetItem(parent);
-        it->setText(0, name.isEmpty() ? key : key + QStringLiteral("  -  ") + name);
-        it->setFlags(Qt::ItemIsEnabled | Qt::ItemIsUserCheckable);
-        it->setCheckState(0, ticked(key) ? Qt::Checked : Qt::Unchecked);
-        try {
-            it->setToolTip(0, QString::fromStdString(ra->get_unit(key.toStdString())));
-        } catch (...) {}
-    };
-
-    QSet<QString> placed;
-    for (const auto& grp : kCuratedField) {
-        QVector<const CuratedVec*> have;
-        for (const auto& v : grp.vecs)
-            if (keep.contains(QLatin1String(v.key))) have.push_back(&v);
-        if (have.isEmpty()) continue;
-        auto* g = new QTreeWidgetItem(vecTree_);
-        g->setText(0, QLatin1String(grp.title));
-        g->setFlags(Qt::ItemIsEnabled);
-        QFont f = g->font(0); f.setBold(true); g->setFont(0, f);
-        for (const auto* v : have) {
-            addLeaf(g, QLatin1String(v->key), QLatin1String(v->name));
-            placed.insert(QLatin1String(v->key));
-        }
-        g->setExpanded(true);
-    }
-
-    // The rest of what the two decks share - a compositional run's field
-    // vectors live here, since the curated groups above are black-oil ones.
-    QStringList rest;
-    for (const QString& k : keep) if (!placed.contains(k)) rest << k;
-    rest.sort();
-    if (!rest.isEmpty()) {
-        auto* g = new QTreeWidgetItem(vecTree_);
-        g->setText(0, QStringLiteral("other field vectors"));
-        g->setFlags(Qt::ItemIsEnabled);
-        QFont f = g->font(0); f.setBold(true); g->setFont(0, f);
-        for (const QString& k : rest) addLeaf(g, k, QString());
-        g->setExpanded(rest.size() <= 12);
-    }
-    sumBuilding_ = false;
-}
-
-void RestartComparePanel::replotSummary()
-{
-    // Wholesale: a handful of small charts is cheap to rebuild, and partial
-    // updates would have to track which chart belongs to which vector.
-    while (QLayoutItem* it = sumGrid_->takeAt(0)) {
-        delete it->widget();
-        delete it;
-    }
-
-    const int ia = caseA_->currentIndex(), ib = caseB_->currentIndex();
-    auto ra = (ia >= 0 && ia < cases_.size()) ? summaryReader(cases_[ia].smspec) : nullptr;
-    auto rb = (ib >= 0 && ib < cases_.size()) ? summaryReader(cases_[ib].smspec) : nullptr;
-    if (!ra || !rb) {
-        sumHead_->setText(QStringLiteral("pick two cases with summary output "
-                                         "(run a job, or Add case...)"));
-        return;
-    }
-    const QColor colA(0x1f, 0x77, 0xb4), colB(0xd6, 0x27, 0x28);
-    sumHead_->setText(QStringLiteral(
-        "<span style=\"color:%1\"><b>&#9644;</b> A  %2</span>&nbsp;&nbsp;&nbsp;"
-        "<span style=\"color:%3\"><b>&#9644; &#9644;</b> B  %4</span>")
-        .arg(colA.name(), caseA_->currentText().toHtmlEscaped(),
-             colB.name(), caseB_->currentText().toHtmlEscaped()));
-
-    // The ticked vectors, in list order.
-    QStringList picks;
-    for (int i = 0; i < vecTree_->topLevelItemCount(); ++i) {
-        auto* g = vecTree_->topLevelItem(i);
-        for (int j = 0; j < g->childCount(); ++j)
-            if (g->child(j)->checkState(0) == Qt::Checked)
-                picks << g->child(j)->text(0).section(QLatin1Char(' '), 0, 0);
-    }
-    if (picks.isEmpty()) {
-        auto* hint = new QLabel(QStringLiteral("tick vectors on the left to compare them"));
-        hint->setAlignment(Qt::AlignCenter);
-        sumGrid_->addWidget(hint, 0, 0);
-        return;
-    }
-
-    auto msDates = [](Opm::EclIO::ESmry& r) {
-        QVector<qint64> out;
-        try {
-            for (const auto& tp : r.dates())
-                out.push_back(qint64(std::chrono::duration_cast<std::chrono::milliseconds>(
-                                         tp.time_since_epoch()).count()));
-        } catch (...) {}
-        return out;
-    };
-    const QVector<qint64> ta = msDates(*ra), tb = msDates(*rb);
-
-    const int cols = picks.size() > 1 ? 2 : 1;
-    for (int n = 0; n < picks.size(); ++n) {
-        const std::string key = picks[n].toStdString();
-        std::vector<float> va, vb;
-        try { va = ra->get(key); } catch (...) {}
-        try { vb = rb->get(key); } catch (...) {}
-        QString unit;
-        try { unit = QString::fromStdString(ra->get_unit(key)); } catch (...) {}
-
-        auto* chart = new QChart;
-        chart->setBackgroundRoundness(0);
-        chart->setDropShadowEnabled(false);
-        chart->legend()->hide();
-        chart->setTitle(picks[n] + (unit.isEmpty() ? QString()
-                                                   : QStringLiteral("  [%1]").arg(unit)));
-
-        auto* sa = new QLineSeries; sa->setPen(QPen(colA, 2.0));
-        auto* sb = new QLineSeries; sb->setPen(QPen(colB, 2.0, Qt::DashLine));
-        // A compositional run writes NaN where a ratio has no meaning yet
-        // (FWCT before any water moves); one NaN point poisons the whole
-        // axis range, so non-finite samples are left out of the drawing.
-        for (int i = 0; i < int(va.size()) && i < ta.size(); ++i)
-            if (std::isfinite(va[i])) sa->append(double(ta[i]), double(va[i]));
-        for (int i = 0; i < int(vb.size()) && i < tb.size(); ++i)
-            if (std::isfinite(vb[i])) sb->append(double(tb[i]), double(vb[i]));
-        chart->addSeries(sa);
-        chart->addSeries(sb);
-
-        auto* ax = new QDateTimeAxis;
-        auto* ay = new QValueAxis;
-        chart->addAxis(ax, Qt::AlignBottom);
-        chart->addAxis(ay, Qt::AlignLeft);
-        sa->attachAxis(ax); sa->attachAxis(ay);
-        sb->attachAxis(ax); sb->attachAxis(ay);
-
-        // The ranges, by hand. With axes added manually, attachAxis leaves
-        // the range where the FIRST series put it - so when the two runs sit
-        // apart (devel's FPR near zero, current's at 152 bar), B is off the
-        // scale and simply invisible, which on a comparison chart is the one
-        // thing that must not happen. Union over both, and over finite
-        // samples only.
-        double ymin = 0, ymax = 0, xmin = 0, xmax = 0;
-        bool any = false;
-        auto fold = [&](const QVector<qint64>& t, const std::vector<float>& v) {
-            for (int i = 0; i < int(v.size()) && i < t.size(); ++i) {
-                if (!std::isfinite(v[i])) continue;
-                if (!any) { ymin = ymax = v[i]; xmin = xmax = double(t[i]); any = true; continue; }
-                ymin = std::min(ymin, double(v[i])); ymax = std::max(ymax, double(v[i]));
-                xmin = std::min(xmin, double(t[i])); xmax = std::max(xmax, double(t[i]));
-            }
-        };
-        fold(ta, va);
-        fold(tb, vb);
-        if (any) {
-            if (ymax > ymin) {
-                ay->setRange(ymin, ymax);
-                ay->applyNiceNumbers();
-            } else {
-                // A flat line (FOPR of a case with no producing wells is zero
-                // throughout) gets a band to sit in the middle of; nice-
-                // numbering a [v,v] range computes over log10(0) and warns.
-                const double pad = std::max(1.0, std::abs(ymax) * 0.1);
-                ay->setRange(ymax - pad, ymax + pad);
-            }
-            ax->setRange(QDateTime::fromMSecsSinceEpoch(qint64(xmin), QTimeZone::utc()),
-                         QDateTime::fromMSecsSinceEpoch(qint64(xmax), QTimeZone::utc()));
-            // Label dates at the size the span needs: a run of days labelled
-            // "MMM yy" is five ticks reading Jan 16.
-            const double days = (xmax - xmin) / 86400.0e3;
-            ax->setFormat(days <= 3.0    ? QStringLiteral("d MMM hh:mm")
-                        : days <= 92.0   ? QStringLiteral("d MMM")
-                        : days <= 1100.0 ? QStringLiteral("MMM yy")
-                                         : QStringLiteral("yyyy"));
-        }
-
-        // Where the two runs sit furthest apart - paired by exact report
-        // date, the same rule the restart comparison uses: interpolating
-        // between different steppings would put a number on a difference
-        // that is partly the interpolation's.
-        QHash<qint64, float> atB;
-        for (int i = 0; i < int(vb.size()) && i < tb.size(); ++i)
-            if (std::isfinite(vb[i])) atB.insert(tb[i], vb[i]);
-        double worst = 0.0; qint64 when = 0; int paired = 0;
-        for (int i = 0; i < int(va.size()) && i < ta.size(); ++i) {
-            if (!std::isfinite(va[i])) continue;
-            const auto it = atB.constFind(ta[i]);
-            if (it == atB.constEnd()) continue;
-            ++paired;
-            const double d = std::abs(double(va[i]) - double(*it));
-            if (d > worst) { worst = d; when = ta[i]; }
-        }
-        QString capText;
-        if (paired == 0)
-            capText = QStringLiteral("no common report dates");
-        else if (worst == 0.0)
-            capText = QStringLiteral("identical at all %1 common dates").arg(paired);
-        else
-            capText = QStringLiteral("max |A-B|  %1 %2  at %3")
-                          .arg(worst, 0, 'g', 4).arg(unit,
-                               QDateTime::fromMSecsSinceEpoch(when, QTimeZone::utc())
-                                   .toString(QStringLiteral("d MMM yyyy")));
-        auto* cap = new QLabel(capText);
-        cap->setAlignment(Qt::AlignHCenter);
-        cap->setStyleSheet(QStringLiteral("color:#555b61;"));
-
-        auto* cell = new QWidget;
-        auto* cl = new QVBoxLayout(cell);
-        cl->setContentsMargins(0, 0, 0, 6);
-        auto* cv = new QChartView(chart);
-        cv->setRenderHint(QPainter::Antialiasing);
-        cv->setMinimumHeight(230);
-        cl->addWidget(cv, 1);
-        cl->addWidget(cap);
-        sumGrid_->addWidget(cell, n / cols, n % cols);
-    }
-}
-
 void RestartComparePanel::syncCombos()
 {
     const QSignalBlocker block(detailPick_);
@@ -1208,7 +831,6 @@ void RestartComparePanel::syncCombos()
         if (at >= 0) detailPick_->setCurrentIndex(at);
     }
     refreshDetail();
-    summaryCasesChanged();
 }
 
 void RestartComparePanel::refreshDetail()

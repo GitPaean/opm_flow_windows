@@ -126,21 +126,6 @@ results, animate them in 3D, and edit decks — all in one window.
   are left alone, and the view moves to the neighbouring case (or goes blank
   once the last one is gone). Removing a case in the Summary Plots tab drops
   it here too, the same way adding and renaming already carry over.
-- **Compare tab** — two runs side by side, at both of the levels that
-  question is asked. **Summary vectors** is the everyday half: a curated
-  list of the field vectors a comparison usually starts from (production
-  rates and totals, injection, pressure & in place, ratios), each ticked one
-  drawn as its own small chart with case A solid and case B dashed, and a
-  caption giving the largest |A−B| paired by exact report date. Whatever
-  else the two decks share appears under *other field vectors* — a
-  compositional run's F* vectors land there. Well-by-well questions stay in
-  the Summary Plots tab, which has every vector of every case. The
-  **restart** half answers the deeper "do the cells agree": each UNRST
-  property reduced per report date to cells-outside-tolerance, max |A−B| and
-  RMS with compareECL's own significance test, a property × date heatmap to
-  spot which property parted and when, and a drill-down to the worst cell.
-  Steps are paired by calendar date, not file position, so runs that report
-  at different times are never compared at different moments.
 - **Deck Editor tab** — edit the deck and its INCLUDE files directly: a
   section tree (RUNSPEC ... SCHEDULE) lists every keyword with file and
   line, INCLUDEs expanded recursively; clicking opens the real file in a
