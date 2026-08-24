@@ -33,6 +33,8 @@
 
 #include <atomic>
 #include <cmath>
+#include <map>
+#include <memory>
 
 class QCheckBox;
 class QComboBox;
@@ -45,7 +47,14 @@ class QThread;
 class QTimer;
 class QChart;
 class QChartView;
+class QGridLayout;
+class QShowEvent;
+class QSplitter;
 class QTabWidget;
+class QTreeWidget;
+class QTreeWidgetItem;
+
+namespace Opm { namespace EclIO { class ESmry; } }
 
 namespace flowgui {
 
@@ -177,7 +186,23 @@ signals:
     // once and consistently across the tabs. Wired in FlowGuiWindow.
     void openCaseRequested(const QString& smspecPath);
 
+protected:
+    // The summary view fills itself in lazily; catch the tab coming on screen.
+    void showEvent(QShowEvent* ev) override;
+
 private:
+    // --- the summary-vector view: same vector, two cases, side by side ------
+    // The typical comparison is not cell arrays at all: it is FOPR of one run
+    // against FOPR of the other. This view keeps a curated list of the field
+    // vectors worth starting from, and draws each ticked one as a small chart
+    // of its own with both cases in it. Cheap enough to need no Compare press.
+    void rebuildVectorList();
+    void replotSummary();
+    void summaryCasesChanged();
+    // The summary reader for one case, cached against mtime+size so a re-run
+    // of the case is picked up and an unchanged one costs a few stat calls.
+    std::shared_ptr<Opm::EclIO::ESmry> summaryReader(const QString& smspec);
+
     void startCompare();
     void finishCompare();
     void showResult();
@@ -212,6 +237,16 @@ private:
     QChartView*     chartView_ = nullptr;
     QTimer*         poll_   = nullptr;
     QThread*        worker_ = nullptr;
+
+    QWidget*      sumView_  = nullptr;
+    QTreeWidget*  vecTree_   = nullptr;
+    QLabel*       sumHead_   = nullptr;
+    QGridLayout*  sumGrid_   = nullptr;
+    QSplitter*    lower_     = nullptr;   // the restart tables under the views
+    bool          sumBuilding_ = false;   // guard: itemChanged during rebuild
+    bool          sumDirty_    = true;    // cases changed while the view was away
+    struct SumReader { std::shared_ptr<Opm::EclIO::ESmry> smry; QString stamp; };
+    std::map<QString, SumReader> sumReaders_;
 
     QVector<CaseEntry> cases_;
     CompareResult      result_;
