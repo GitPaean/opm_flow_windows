@@ -16,6 +16,7 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QFileDialog>
+#include <QDir>
 #include <QFileInfo>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -1042,6 +1043,10 @@ void StructurePanel::startLoad(const QString& dataFile)
     bar_->setValue(0); bar_->setVisible(true);
     openBtn_->setEnabled(false);
     status_->setText(QStringLiteral("reading %1 ...").arg(QFileInfo(dataFile).fileName()));
+    // The line names the file; the tooltip says which one of them it is. Two
+    // runs of a deck differ only by folder, and the folder is what is missing
+    // from a file name.
+    status_->setToolTip(QDir::toNativeSeparators(dataFile));
     poll_->start();
     worker_ = QThread::create([this, dataFile] {
         model_ = readDeckStructure(dataFile, &cancel_, &progress_);

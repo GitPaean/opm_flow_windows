@@ -139,6 +139,8 @@ public:
 
     // Follow a rename made in the Summary Plots tab (same case identity).
     void renameCase(const QString& smspecPath, const QString& label);
+    // Put the current case's path on the box itself, for hovering it closed.
+    void syncCaseTip();
 
     // Drop a case from the list - the Summary Plots tab dropped the same one,
     // or the Remove button here. The files on disk are left alone.

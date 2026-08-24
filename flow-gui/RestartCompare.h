@@ -186,6 +186,8 @@ private:
     void showStepDetail(const QDateTime& when);
     void refreshDetail();
     void syncCombos();
+    // Put each chosen case's path on the box itself, for hovering it closed.
+    void syncCaseTips();
     void pickFromHeatmap(const QString& keyword, const QDateTime& when);
 
     QComboBox*      caseA_ = nullptr;

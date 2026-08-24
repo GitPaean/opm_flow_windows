@@ -220,6 +220,8 @@ private:
     // separates it from the cases sharing that name. Run over the whole list
     // after every add, remove or rename.
     void relabelCases();
+    // Folder over file, for an item's tooltip.
+    static QString caseTip(const QString& smspecPath);
     void removeCurrentCase();
     void clearActiveCase();
     void browseCase();

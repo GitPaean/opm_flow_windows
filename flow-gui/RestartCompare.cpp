@@ -15,6 +15,7 @@
 #include <QDateTimeAxis>
 #include <QDoubleSpinBox>
 #include <QEvent>
+#include <QDir>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QHBoxLayout>
@@ -670,6 +671,8 @@ RestartComparePanel::RestartComparePanel(QWidget* parent)
             emit openCaseRequested(base + QStringLiteral(".SMSPEC"));
         }
     });
+    connect(caseA_, &QComboBox::currentIndexChanged, this, [this](int) { syncCaseTips(); });
+    connect(caseB_, &QComboBox::currentIndexChanged, this, [this](int) { syncCaseTips(); });
     connect(runBtn_, &QPushButton::clicked, this, [this] { startCompare(); });
     connect(metric_, &QComboBox::currentIndexChanged, this, [this](int) { replot(); });
     connect(onlyBad_, &QCheckBox::toggled, this, [this](bool) { replot(); });
@@ -729,6 +732,7 @@ void RestartComparePanel::addCase(const QString& label, const QString& smspecPat
     // and the label is a tag at best.
     caseA_->addItem(label); caseA_->setItemData(caseA_->count() - 1, p, Qt::ToolTipRole);
     caseB_->addItem(label); caseB_->setItemData(caseB_->count() - 1, p, Qt::ToolTipRole);
+    syncCaseTips();
     // A first pair is worth offering; after that, leave the user's choice be.
     // Qt puts currentIndex at 0 the moment the first item lands, so testing
     // "unset" never fires for B and both boxes would sit on the same case -
@@ -784,9 +788,25 @@ void RestartComparePanel::reorderCases(const QStringList& smspecPaths)
         if (!a.isEmpty() && sameCasePath(cases_[i].smspec, a)) caseA_->setCurrentIndex(i);
         if (!b.isEmpty() && sameCasePath(cases_[i].smspec, b)) caseB_->setCurrentIndex(i);
     }
+    syncCaseTips();
 }
 
 // -- the drill-down ----------------------------------------------------------
+
+// A closed combo shows its own tooltip, never the current item's, so the path
+// goes on the widget too - otherwise hovering A or B says nothing until the
+// list is dropped down, which is exactly when you no longer need telling.
+void RestartComparePanel::syncCaseTips()
+{
+    auto put = [this](QComboBox* box, const char* what) {
+        const int i = box->currentIndex();
+        box->setToolTip(i >= 0 && i < cases_.size()
+                            ? QDir::toNativeSeparators(cases_[i].smspec)
+                            : QString::fromLatin1(what));
+    };
+    put(caseA_, "the first case of the pair");
+    put(caseB_, "the second case of the pair");
+}
 
 void RestartComparePanel::syncCombos()
 {

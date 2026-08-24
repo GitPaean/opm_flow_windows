@@ -25,6 +25,10 @@
 #include <QDir>
 #include <QTimeZone>
 #include <QFile>
+#include <QClipboard>
+#include <QDesktopServices>
+#include <QGuiApplication>
+#include <QUrl>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFontMetrics>
@@ -1317,6 +1321,32 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
         caseList_->setDragDropMode(QAbstractItemView::InternalMove);
         caseList_->setDefaultDropAction(Qt::MoveAction);
         caseList_->viewport()->installEventFilter(this);   // to catch the drop
+        // Where the run actually is, for the times a tooltip is not enough -
+        // to paste the path somewhere, or to go and look at the files.
+        caseList_->setContextMenuPolicy(Qt::CustomContextMenu);
+        connect(caseList_, &QListWidget::customContextMenuRequested, this,
+                [this](const QPoint& at) {
+            auto* it = caseList_->itemAt(at);
+            if (!it) return;
+            const QString path = it->data(Qt::UserRole).toString();
+            QMenu m(this);
+            QAction* open = m.addAction(QStringLiteral("Open containing folder"));
+            QAction* copy = m.addAction(QStringLiteral("Copy path"));
+            QAction* copyDir = m.addAction(QStringLiteral("Copy folder"));
+            const QFileInfo fi(path);
+            open->setEnabled(fi.dir().exists());
+            QAction* chosen = m.exec(caseList_->viewport()->mapToGlobal(at));
+            if (chosen == open) {
+                QDesktopServices::openUrl(QUrl::fromLocalFile(fi.absolutePath()));
+            } else if (chosen == copy) {
+                QGuiApplication::clipboard()->setText(QDir::toNativeSeparators(path));
+                setStatus(QStringLiteral("copied %1").arg(QDir::toNativeSeparators(path)));
+            } else if (chosen == copyDir) {
+                const QString d = QDir::toNativeSeparators(fi.absolutePath());
+                QGuiApplication::clipboard()->setText(d);
+                setStatus(QStringLiteral("copied %1").arg(d));
+            }
+        });
         // double-click / F2 edits the name in place
         caseList_->setEditTriggers(QAbstractItemView::DoubleClicked
                                    | QAbstractItemView::EditKeyPressed);
@@ -1474,6 +1504,16 @@ QString SummaryPlotWidget::activeLabel() const
     return it ? it->text() : QString();
 }
 
+// Folder over file, each on its own line. A wall of one path is hard to read
+// at a glance and the folder is the part that tells two runs of one deck
+// apart, so it goes first and on its own.
+QString SummaryPlotWidget::caseTip(const QString& smspecPath)
+{
+    const QFileInfo fi(smspecPath);
+    return QDir::toNativeSeparators(fi.absolutePath())
+           + QLatin1Char('\n') + fi.fileName();
+}
+
 void SummaryPlotWidget::addCase(const QString& label, const QString& rawPath,
                                 bool checked)
 {
@@ -1489,7 +1529,7 @@ void SummaryPlotWidget::addCase(const QString& label, const QString& rawPath,
     it->setData(RoleCaseSeq, caseSeq_++);   // to sort back into load order
     it->setData(RoleCaseBase, label);    // the case's own name, before tagging
     it->setData(RoleCaseLabel, label);   // to tell a rename from a check toggle
-    it->setToolTip(smspecPath);
+    it->setToolTip(caseTip(smspecPath));
     it->setFlags(it->flags() | Qt::ItemIsUserCheckable | Qt::ItemIsEditable);
     it->setCheckState(checked ? Qt::Checked : Qt::Unchecked);
     caseList_->blockSignals(true);       // no premature replot from itemChanged

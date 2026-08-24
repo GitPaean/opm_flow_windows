@@ -620,7 +620,7 @@ Viewer3DWidget::Viewer3DWidget(QWidget* parent)
         connect(bremove, &QPushButton::clicked, this,
                 [this] { removeCaseAt(caseBox_->currentIndex()); });
         connect(caseBox_, &QComboBox::currentIndexChanged, this,
-                [this](int i) { openCase(i); });
+                [this](int i) { openCase(i); syncCaseTip(); });
         auto onProp = [this] { showProperty(); };
         connect(staticBox_, &QComboBox::currentIndexChanged, this, onProp);
         connect(dynBox_,    &QComboBox::currentIndexChanged, this, onProp);
@@ -749,7 +749,23 @@ void Viewer3DWidget::addCase(const QString& label, const QString& smspecPath)
         if (flowgui::sameCasePath(c.egrid, cf.egrid)) return;
     cases_.push_back(cf);
     caseBox_->addItem(label, cf.egrid);
+    // The path on the tooltip: two runs of one deck can only differ by folder,
+    // and the label is a tag at best.
+    caseBox_->setItemData(caseBox_->count() - 1, cf.egrid, Qt::ToolTipRole);
     if (caseBox_->count() == 1) caseBox_->setCurrentIndex(0);
+    syncCaseTip();
+}
+
+// A closed combo shows its OWN tooltip, never the current item's, so the path
+// has to be copied onto the widget every time the selection moves. Without
+// this, hovering the box says nothing until you open it.
+void Viewer3DWidget::syncCaseTip()
+{
+    const int i = caseBox_->currentIndex();
+    caseBox_->setToolTip(
+        i >= 0 && i < cases_.size()
+            ? QDir::toNativeSeparators(cases_[i].egrid)
+            : QStringLiteral("the case being viewed"));
 }
 
 void Viewer3DWidget::renameCase(const QString& smspecPath, const QString& label)
@@ -803,9 +819,11 @@ void Viewer3DWidget::reorderCases(const QStringList& smspecPaths)
     int current = -1;
     for (int i = 0; i < cases_.size(); ++i) {
         caseBox_->addItem(cases_[i].label, cases_[i].egrid);
+        caseBox_->setItemData(i, cases_[i].egrid, Qt::ToolTipRole);
         if (!shown.isEmpty() && flowgui::sameCasePath(cases_[i].egrid, shown)) current = i;
     }
     caseBox_->setCurrentIndex(current);
+    syncCaseTip();
 }
 
 // The list is what grows over a session - every job that runs adds to it - so
