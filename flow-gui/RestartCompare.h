@@ -26,6 +26,7 @@
 #pragma once
 
 #include <QDateTime>
+#include <QMap>
 #include <QString>
 #include <QStringList>
 #include <QVector>
@@ -33,6 +34,8 @@
 
 #include <atomic>
 #include <cmath>
+#include <map>
+#include <memory>
 
 class QCheckBox;
 class QComboBox;
@@ -45,7 +48,10 @@ class QThread;
 class QTimer;
 class QChart;
 class QChartView;
+class QShowEvent;
 class QTabWidget;
+
+namespace Opm { namespace EclIO { class ERst; } }
 
 namespace flowgui {
 
@@ -177,7 +183,24 @@ signals:
     // once and consistently across the tabs. Wired in FlowGuiWindow.
     void openCaseRequested(const QString& smspecPath);
 
+protected:
+    // The cell-values view fills itself in lazily; catch the tab coming up.
+    void showEvent(QShowEvent* ev) override;
+
 private:
+    // --- the cell-values view: one property, one date, every cell ----------
+    // The heatmap answers WHICH property differs and WHEN; this answers HOW:
+    // the two runs' values of that field drawn against the active-cell index
+    // (for a 1D column that is simply the profile), their difference, or one
+    // against the other. Reads the restart files directly, so it needs no
+    // Compare press and no reduction in between.
+    void rebuildCellPickers();
+    void replotCells();
+    void cellCasesChanged();
+    // The restart reader for one case, cached against mtime+size so a re-run
+    // is picked up and an unchanged file is not re-indexed.
+    std::shared_ptr<Opm::EclIO::ERst> rstReader(const QString& smspec);
+
     void startCompare();
     void finishCompare();
     void showResult();
@@ -212,6 +235,22 @@ private:
     QChartView*     chartView_ = nullptr;
     QTimer*         poll_   = nullptr;
     QThread*        worker_ = nullptr;
+
+    QWidget*    cellView_  = nullptr;
+    QComboBox*  cellProp_  = nullptr;
+    QComboBox*  cellDate_  = nullptr;
+    QComboBox*  cellMode_  = nullptr;
+    QLabel*     cellInfo_  = nullptr;
+    QChart*     cellChart_ = nullptr;
+    QChartView* cellChartView_ = nullptr;
+    bool        cellDirty_ = true;      // cases changed while the view was away
+    bool        cellFilling_ = false;   // guard: combo signals during refill
+    // The two files' report steps by calendar date, and the dates they share,
+    // as rebuildCellPickers() last found them.
+    QMap<QDateTime, int> cellDatesA_, cellDatesB_;
+    QVector<QDateTime>   cellTimes_;
+    struct RstReader { std::shared_ptr<Opm::EclIO::ERst> rst; QString stamp; };
+    std::map<QString, RstReader> rstReaders_;
 
     QVector<CaseEntry> cases_;
     CompareResult      result_;

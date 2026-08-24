@@ -33,6 +33,9 @@
 #include <QTabWidget>
 #include <QTableWidget>
 #include <QTableWidgetItem>
+#include <QScatterSeries>
+#include <QShowEvent>
+#include <QValueAxis>
 #include <QThread>
 #include <QTimer>
 #include <QToolTip>
@@ -596,9 +599,49 @@ RestartComparePanel::RestartComparePanel(QWidget* parent)
     chartView_ = new QChartView(chart_);
     chartView_->setRenderHint(QPainter::Antialiasing);
 
+    // The cell-values view: the heatmap says which property and when; this
+    // shows how - the field itself, cell by cell, at one date.
+    cellProp_ = new QComboBox;
+    cellProp_->setSizeAdjustPolicy(QComboBox::AdjustToContents);
+    cellProp_->setMinimumWidth(110);
+    cellDate_ = new QComboBox;
+    cellDate_->setSizeAdjustPolicy(QComboBox::AdjustToContents);
+    cellMode_ = new QComboBox;
+    cellMode_->addItem(QStringLiteral("A and B"));
+    cellMode_->addItem(QStringLiteral("difference A - B"));
+    cellMode_->addItem(QStringLiteral("scatter A vs B"));
+    cellMode_->setToolTip(QStringLiteral(
+        "A and B: both runs' values against the active-cell index - for a 1D "
+        "column, the profile.\n"
+        "difference: where along the cells the runs part, and by how much.\n"
+        "scatter: each cell as a point, A across, B up; agreement is the "
+        "diagonal."));
+    cellInfo_ = new QLabel;
+    cellInfo_->setStyleSheet(QStringLiteral("color:#555b61;"));
+    cellChart_ = new QChart;
+    cellChart_->setBackgroundRoundness(0);
+    cellChart_->setDropShadowEnabled(false);
+    cellChartView_ = new QChartView(cellChart_);
+    cellChartView_->setRenderHint(QPainter::Antialiasing);
+    cellView_ = new QWidget;
+    {
+        auto* crow = new QHBoxLayout;
+        crow->addWidget(new QLabel(QStringLiteral("Property:")));
+        crow->addWidget(cellProp_);
+        crow->addWidget(new QLabel(QStringLiteral("at:")));
+        crow->addWidget(cellDate_);
+        crow->addWidget(cellMode_);
+        crow->addWidget(cellInfo_, 1);
+        auto* clay = new QVBoxLayout(cellView_);
+        clay->setContentsMargins(4, 4, 4, 0);
+        clay->addLayout(crow);
+        clay->addWidget(cellChartView_, 1);
+    }
+
     views_ = new QTabWidget;
     views_->addTab(heat_, QStringLiteral("Overview"));
     views_->addTab(chartView_, QStringLiteral("Curves"));
+    views_->addTab(cellView_, QStringLiteral("Cell values"));
 
     table_ = new QTableWidget(0, 4);
     table_->setHorizontalHeaderLabels({ QStringLiteral("Property"),
@@ -671,8 +714,24 @@ RestartComparePanel::RestartComparePanel(QWidget* parent)
             emit openCaseRequested(base + QStringLiteral(".SMSPEC"));
         }
     });
-    connect(caseA_, &QComboBox::currentIndexChanged, this, [this](int) { syncCaseTips(); });
-    connect(caseB_, &QComboBox::currentIndexChanged, this, [this](int) { syncCaseTips(); });
+    connect(caseA_, &QComboBox::currentIndexChanged, this,
+            [this](int) { syncCaseTips(); cellCasesChanged(); });
+    connect(caseB_, &QComboBox::currentIndexChanged, this,
+            [this](int) { syncCaseTips(); cellCasesChanged(); });
+    connect(views_, &QTabWidget::currentChanged, this, [this](int idx) {
+        if (idx == views_->indexOf(cellView_) && cellDirty_) rebuildCellPickers();
+    });
+    connect(cellProp_, &QComboBox::currentIndexChanged, this,
+            [this](int) { if (!cellFilling_) replotCells(); });
+    connect(cellDate_, &QComboBox::currentIndexChanged, this,
+            [this](int) { if (!cellFilling_) replotCells(); });
+    connect(cellMode_, &QComboBox::currentIndexChanged, this,
+            [this](int) { if (!cellFilling_) replotCells(); });
+    // The caption counts cells outside tolerance, so it follows the spins.
+    connect(absTol_, &QDoubleSpinBox::valueChanged, this,
+            [this](double) { if (views_->currentWidget() == cellView_) replotCells(); });
+    connect(relTol_, &QDoubleSpinBox::valueChanged, this,
+            [this](double) { if (views_->currentWidget() == cellView_) replotCells(); });
     connect(runBtn_, &QPushButton::clicked, this, [this] { startCompare(); });
     connect(metric_, &QComboBox::currentIndexChanged, this, [this](int) { replot(); });
     connect(onlyBad_, &QCheckBox::toggled, this, [this](bool) { replot(); });
@@ -718,6 +777,19 @@ void RestartComparePanel::pickFromHeatmap(const QString& keyword, const QDateTim
     const int at = detailPick_->findText(when.toString(QStringLiteral("yyyy-MM-dd")));
     if (at >= 0) detailPick_->setCurrentIndex(at);
     refreshDetail();
+    // ... and aim the cell-values view at the same property and date, so
+    // switching to it continues the same question.
+    if (cellProp_ && cellDate_) {
+        cellFilling_ = true;
+        const int p = cellProp_->findText(keyword);
+        if (p >= 0) cellProp_->setCurrentIndex(p);
+        int d = -1;
+        for (int i = 0; i < cellDate_->count(); ++i)
+            if (cellDate_->itemData(i).toDateTime() == when) { d = i; break; }
+        if (d >= 0) cellDate_->setCurrentIndex(d);
+        cellFilling_ = false;
+        if (p >= 0 || cellDate_->count()) replotCells();
+    }
 }
 
 // -- the case list, mirrored from the Summary tab ---------------------------
@@ -808,6 +880,276 @@ void RestartComparePanel::syncCaseTips()
     put(caseB_, "the second case of the pair");
 }
 
+void RestartComparePanel::showEvent(QShowEvent* ev)
+{
+    QWidget::showEvent(ev);
+    if (views_ && views_->currentWidget() == cellView_ && cellDirty_)
+        rebuildCellPickers();
+}
+
+std::shared_ptr<Opm::EclIO::ERst> RestartComparePanel::rstReader(const QString& smspec)
+{
+    if (smspec.isEmpty()) return nullptr;
+    const QString path = caseBase(smspec) + QStringLiteral(".UNRST");
+    const QFileInfo fi(path);
+    if (!fi.exists()) return nullptr;
+    const QString stamp = QStringLiteral("%1|%2")
+                              .arg(fi.lastModified().toMSecsSinceEpoch()).arg(fi.size());
+    auto it = rstReaders_.find(path);
+    if (it != rstReaders_.end() && it->second.stamp == stamp && it->second.rst)
+        return it->second.rst;
+    std::shared_ptr<Opm::EclIO::ERst> r;
+    try {
+        r = std::make_shared<Opm::EclIO::ERst>(path.toStdString());
+    } catch (...) { r = nullptr; }
+    rstReaders_[path] = RstReader{ r, stamp };
+    return r;
+}
+
+void RestartComparePanel::cellCasesChanged()
+{
+    cellDirty_ = true;
+    if (isVisible() && views_ && views_->currentWidget() == cellView_)
+        rebuildCellPickers();
+}
+
+void RestartComparePanel::rebuildCellPickers()
+{
+    cellDirty_ = false;
+    const QString oldProp = cellProp_->currentText();
+    const QDateTime oldDate = cellDate_->currentData().toDateTime();
+
+    cellFilling_ = true;
+    cellProp_->clear();
+    cellDate_->clear();
+    cellDatesA_.clear();
+    cellDatesB_.clear();
+    cellTimes_.clear();
+
+    const int ia = caseA_->currentIndex(), ib = caseB_->currentIndex();
+    auto ra = (ia >= 0 && ia < cases_.size()) ? rstReader(cases_[ia].smspec) : nullptr;
+    auto rb = (ib >= 0 && ib < cases_.size()) ? rstReader(cases_[ib].smspec) : nullptr;
+    if (!ra || !rb) {
+        cellFilling_ = false;
+        cellInfo_->setText(QStringLiteral("pick two cases with a restart (UNRST) file"));
+        replotCells();
+        return;
+    }
+
+    // Steps by DATE, exactly as the full comparison pairs them: two runs need
+    // not report at the same times, and the n-th step of one against the n-th
+    // of the other can be different moments wearing the same number.
+    for (int st : ra->listOfReportStepNumbers()) {
+        const QDateTime d = dateOfStep(*ra, st);
+        if (d.isValid()) cellDatesA_.insert(d, st);
+    }
+    for (int st : rb->listOfReportStepNumbers()) {
+        const QDateTime d = dateOfStep(*rb, st);
+        if (d.isValid()) cellDatesB_.insert(d, st);
+    }
+    for (auto it = cellDatesA_.constBegin(); it != cellDatesA_.constEnd(); ++it)
+        if (cellDatesB_.contains(it.key())) cellTimes_ << it.key();
+    if (cellTimes_.isEmpty()) {
+        cellFilling_ = false;
+        cellInfo_->setText(QStringLiteral("no report date in common"));
+        replotCells();
+        return;
+    }
+    // A run reporting within a day (this equilibration case writes five steps
+    // on 1 Jan) would list one date five times; label with the clock when the
+    // calendar alone cannot tell the steps apart. The real QDateTime rides
+    // as item data either way, so picking never goes through the label.
+    bool intraday = false;
+    for (int i = 1; i < cellTimes_.size(); ++i)
+        if (cellTimes_[i].date() == cellTimes_[i - 1].date()) { intraday = true; break; }
+    for (const QDateTime& d : std::as_const(cellTimes_))
+        cellDate_->addItem(intraday
+                               ? d.toString(QStringLiteral("yyyy-MM-dd hh:mm"))
+                               : dstr(d), d);
+    // The latest common date, where the runs have had the longest to part -
+    // unless the previous choice is still on offer.
+    int keepD = -1;
+    if (oldDate.isValid())
+        for (int i = 0; i < cellDate_->count(); ++i)
+            if (cellDate_->itemData(i).toDateTime() == oldDate) { keepD = i; break; }
+    cellDate_->setCurrentIndex(keepD >= 0 ? keepD : cellDate_->count() - 1);
+
+    // The cell fields both files carry at that date, at the same length, in
+    // A's own file order - PRESSURE and the saturations first, then the
+    // compositional block (ZMF/XMF/YMF per component), the way the file has
+    // them.
+    const QDateTime at = cellTimes_[cellDate_->currentIndex()];
+    const int sa = cellDatesA_.value(at), sb = cellDatesB_.value(at);
+    QHash<QString, std::int64_t> lenB;
+    try {
+        for (const auto& [name, type, len] : rb->listOfRstArrays(sb))
+            if (isCellField(name, type, len, -1))
+                lenB.insert(QString::fromStdString(name).trimmed(), len);
+    } catch (...) {}
+    try {
+        for (const auto& [name, type, len] : ra->listOfRstArrays(sa)) {
+            if (!isCellField(name, type, len, -1)) continue;
+            const QString n = QString::fromStdString(name).trimmed();
+            if (lenB.value(n, -1) == len) cellProp_->addItem(n);
+        }
+    } catch (...) {}
+    const int keepP = oldProp.isEmpty() ? -1 : cellProp_->findText(oldProp);
+    if (keepP >= 0) cellProp_->setCurrentIndex(keepP);
+    else {
+        const int pr = cellProp_->findText(QStringLiteral("PRESSURE"));
+        if (pr >= 0) cellProp_->setCurrentIndex(pr);
+    }
+    cellFilling_ = false;
+    replotCells();
+}
+
+void RestartComparePanel::replotCells()
+{
+    // A fresh chart per plot. Emptying and refilling one QChart looks right
+    // in the object tree - axes() and series() both go to zero - but Qt
+    // Charts 6.4 leaves the removed items' tick labels and curves painting in
+    // the scene (reproduced in a 30-line probe, in either teardown order), so
+    // every replot stacked another set of ghosts. Swapping the whole chart is
+    // the clean path: setChart() shows the new one, the old is deleted here.
+    auto* chart = new QChart;
+    chart->setBackgroundRoundness(0);
+    chart->setDropShadowEnabled(false);
+    auto present = [this, chart] {
+        QChart* old = cellChartView_->chart();
+        cellChartView_->setChart(chart);
+        cellChart_ = chart;
+        if (old != chart) delete old;
+    };
+
+    const int ia = caseA_->currentIndex(), ib = caseB_->currentIndex();
+    auto ra = (ia >= 0 && ia < cases_.size()) ? rstReader(cases_[ia].smspec) : nullptr;
+    auto rb = (ib >= 0 && ib < cases_.size()) ? rstReader(cases_[ib].smspec) : nullptr;
+    const int di = cellDate_->currentIndex();
+    if (!ra || !rb || cellProp_->currentText().isEmpty()
+        || di < 0 || di >= cellTimes_.size())
+        { present(); return; }
+
+    const QDateTime at = cellTimes_[di];
+    const std::string key = cellProp_->currentText().toStdString();
+    std::vector<float> va, vb;
+    try {
+        va = ra->getRestartData<float>(key, cellDatesA_.value(at));
+        vb = rb->getRestartData<float>(key, cellDatesB_.value(at));
+    } catch (const std::exception& e) {
+        cellInfo_->setText(QString::fromLocal8Bit(e.what()));
+        { present(); return; }
+    }
+    const int n = int(std::min(va.size(), vb.size()));
+    if (n == 0) { cellInfo_->setText(QStringLiteral("empty field")); present(); return; }
+
+    // The caption's test is compareECL's, with the tolerances on this panel -
+    // the same currency as the heatmap, so the two views cannot disagree
+    // about what counts as different.
+    const DiffTol tol{ absTol_->value(), relTol_->value() };
+    int nBad = 0, worstCell = 0;
+    double maxAbs = 0.0;
+    for (int i = 0; i < n; ++i) {
+        const double d = std::abs(double(va[i]) - double(vb[i]));
+        if (d > maxAbs) { maxAbs = d; worstCell = i; }
+        if (diffIsSignificant(va[i], vb[i], tol)) ++nBad;
+    }
+    cellInfo_->setText(maxAbs == 0.0
+        ? QStringLiteral("%1 cells, identical").arg(n)
+        : QStringLiteral("%1 cells, %2 outside tolerance;  max |A-B| %3 at cell %4 "
+                         "(A %5, B %6)")
+              .arg(n).arg(nBad).arg(maxAbs, 0, 'g', 4).arg(worstCell + 1)
+              .arg(double(va[worstCell]), 0, 'g', 6)
+              .arg(double(vb[worstCell]), 0, 'g', 6));
+
+    const QColor colA(0x1f, 0x77, 0xb4), colB(0xd6, 0x27, 0x28);
+    const int mode = cellMode_->currentIndex();
+    chart->setTitle(QStringLiteral("%1  at %2")
+                             .arg(cellProp_->currentText(), cellDate_->currentText()));
+
+    // Ranges by hand throughout: with axes added manually, attachAxis leaves
+    // the range where the first series put it, and the second run would be
+    // off the scale exactly when the two disagree.
+    auto pad = [](double lo, double hi) {
+        double p = (hi - lo) * 0.05;
+        if (p <= 0.0) p = (hi == 0.0) ? 1.0 : std::max(1e-30, std::abs(hi) * 0.1);
+        return std::pair<double, double>(lo - p, hi + p);
+    };
+
+    if (mode == 2) {
+        // Each cell a point; agreement is the diagonal.
+        auto* sc = new QScatterSeries;
+        sc->setMarkerSize(7.0);
+        sc->setColor(QColor(0x33, 0x66, 0x99, 0xa0));
+        sc->setBorderColor(Qt::transparent);
+        double lo = va[0], hi = va[0];
+        for (int i = 0; i < n; ++i) {
+            sc->append(double(va[i]), double(vb[i]));
+            lo = std::min({ lo, double(va[i]), double(vb[i]) });
+            hi = std::max({ hi, double(va[i]), double(vb[i]) });
+        }
+        const auto [rlo, rhi] = pad(lo, hi);
+        auto* diag = new QLineSeries;
+        diag->setPen(QPen(QColor(0x88, 0x8e, 0x94), 1.0, Qt::DashLine));
+        diag->append(rlo, rlo); diag->append(rhi, rhi);
+        chart->addSeries(diag);
+        chart->addSeries(sc);
+        auto* ax = new QValueAxis; ax->setTitleText(QStringLiteral("A"));
+        auto* ay = new QValueAxis; ay->setTitleText(QStringLiteral("B"));
+        chart->addAxis(ax, Qt::AlignBottom);
+        chart->addAxis(ay, Qt::AlignLeft);
+        for (auto* ser : chart->series()) { ser->attachAxis(ax); ser->attachAxis(ay); }
+        ax->setRange(rlo, rhi); ay->setRange(rlo, rhi);
+        chart->legend()->hide();
+        { present(); return; }
+    }
+
+    auto* ax = new QValueAxis;
+    ax->setTitleText(QStringLiteral("active cell"));
+    ax->setLabelFormat(QStringLiteral("%d"));
+    auto* ay = new QValueAxis;
+    chart->addAxis(ax, Qt::AlignBottom);
+    chart->addAxis(ay, Qt::AlignLeft);
+
+    if (mode == 1) {
+        auto* sd = new QLineSeries;
+        sd->setPen(QPen(QColor(0x44, 0x2a, 0x66), 2.0));
+        double lo = 0.0, hi = 0.0;      // the zero line stays in view
+        for (int i = 0; i < n; ++i) {
+            const double d = double(va[i]) - double(vb[i]);
+            sd->append(i + 1, d);
+            lo = std::min(lo, d); hi = std::max(hi, d);
+        }
+        chart->addSeries(sd);
+        sd->attachAxis(ax); sd->attachAxis(ay);
+        const auto [rlo, rhi] = pad(lo, hi);
+        ay->setRange(rlo, rhi);
+        chart->legend()->hide();
+    } else {
+        auto* sa2 = new QLineSeries; sa2->setName(QStringLiteral("A"));
+        sa2->setPen(QPen(colA, 2.0));
+        auto* sb2 = new QLineSeries; sb2->setName(QStringLiteral("B"));
+        sb2->setPen(QPen(colB, 2.0, Qt::DashLine));
+        double lo = va[0], hi = va[0];
+        for (int i = 0; i < n; ++i) {
+            sa2->append(i + 1, double(va[i]));
+            sb2->append(i + 1, double(vb[i]));
+            lo = std::min({ lo, double(va[i]), double(vb[i]) });
+            hi = std::max({ hi, double(va[i]), double(vb[i]) });
+        }
+        chart->addSeries(sa2);
+        chart->addSeries(sb2);
+        sa2->attachAxis(ax); sa2->attachAxis(ay);
+        sb2->attachAxis(ax); sb2->attachAxis(ay);
+        const auto [rlo, rhi] = pad(lo, hi);
+        ay->setRange(rlo, rhi);
+        chart->legend()->show();
+        chart->legend()->setAlignment(Qt::AlignBottom);
+    }
+    ax->setRange(1, std::max(2, n));
+    ay->applyNiceNumbers();
+    present();
+}
+
 void RestartComparePanel::syncCombos()
 {
     const QSignalBlocker block(detailPick_);
@@ -831,6 +1173,7 @@ void RestartComparePanel::syncCombos()
         if (at >= 0) detailPick_->setCurrentIndex(at);
     }
     refreshDetail();
+    cellCasesChanged();
 }
 
 void RestartComparePanel::refreshDetail()

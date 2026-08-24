@@ -126,6 +126,22 @@ results, animate them in 3D, and edit decks — all in one window.
   are left alone, and the view moves to the neighbouring case (or goes blank
   once the last one is gone). Removing a case in the Summary Plots tab drops
   it here too, the same way adding and renaming already carry over.
+- **Compare tab** — do two runs agree, and if not: which property, when,
+  and how? Each UNRST cell field is reduced per report date to
+  cells-outside-tolerance, max |A−B| and RMS, using compareECL's own
+  significance test, so a green verdict means what a green regression test
+  means. The **Overview** heatmap (properties × dates) shows which property
+  parted and when; **Curves** draws a chosen measure over time; **Cell
+  values** shows how — one property at one date, cell by cell: both runs
+  against the active-cell index (for a 1D column, the profile), their
+  difference, or A against B as a scatter about the diagonal. That view
+  reads the restart files directly and needs no Compare press, so checking
+  ZMF1 of two compositional runs at a date is pick-and-look; its caption
+  counts cells outside the same tolerances. Steps are paired by calendar
+  date (clock included when a run reports within a day), never by position
+  in the file, so runs that report at different times are not compared at
+  different moments. Clicking a heatmap cell aims both the detail table and
+  the Cell values view at that property and date.
 - **Deck Editor tab** — edit the deck and its INCLUDE files directly: a
   section tree (RUNSPEC ... SCHEDULE) lists every keyword with file and
   line, INCLUDEs expanded recursively; clicking opens the real file in a
