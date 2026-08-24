@@ -21,6 +21,7 @@
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QLabel>
+#include <QLegendMarker>
 #include <QLineSeries>
 #include <QLogValueAxis>
 #include <QMap>
@@ -35,6 +36,7 @@
 #include <QTableWidgetItem>
 #include <QScatterSeries>
 #include <QShowEvent>
+#include <QSpinBox>
 #include <QValueAxis>
 #include <QThread>
 #include <QTimer>
@@ -568,16 +570,12 @@ RestartComparePanel::RestartComparePanel(QWidget* parent)
     metric_->addItem(QStringLiteral("cells outside tolerance"));
     metric_->addItem(QStringLiteral("max |A-B|"));
     metric_->addItem(QStringLiteral("RMS of A-B"));
-    metric_->addItem(QStringLiteral("field average of A and B"));
+
     metric_->setToolTip(QStringLiteral(
-        "what to show per report date.\n\n"
-        "The cell count is usually the most telling of the three divergence "
-        "measures: a single pathological cell dominates max|A-B|, while a "
-        "count going 0, 0, 3, 47, 1200 shows both when the runs parted and how "
-        "fast they are separating.\n\n"
-        "The field average is not a difference at all - it is the quantity "
-        "itself, averaged over the field for each run and drawn as two curves, "
-        "which is what tells you whether a divergence matters."));
+        "what the overview shows per report date.\n\n"
+        "The cell count is usually the most telling: a single pathological "
+        "cell dominates max|A-B|, while a count going 0, 0, 3, 47, 1200 shows "
+        "both when the runs parted and how fast they are separating."));
     onlyBad_ = new QCheckBox(QStringLiteral("only properties that differ"));
     onlyBad_->setChecked(true);
     onlyBad_->setToolTip(QStringLiteral(
@@ -592,12 +590,6 @@ RestartComparePanel::RestartComparePanel(QWidget* parent)
     // Overview first. With a dozen properties a line apiece is a tangle, and
     // the question to answer first is which property and when, not by how much.
     heat_ = new DivergenceHeatmap;
-    chart_ = new QChart;
-    chart_->setBackgroundRoundness(0);
-    chart_->setDropShadowEnabled(false);
-    chart_->legend()->setAlignment(Qt::AlignBottom);
-    chartView_ = new QChartView(chart_);
-    chartView_->setRenderHint(QPainter::Antialiasing);
 
     // The cell-values view: the heatmap says which property and when; this
     // shows how - the field itself, cell by cell, at one date.
@@ -638,10 +630,40 @@ RestartComparePanel::RestartComparePanel(QWidget* parent)
         clay->addWidget(cellChartView_, 1);
     }
 
+    // One cell through time: the third of the three questions. The heatmap
+    // says which property and when; Cell values shows the whole field at one
+    // date; this follows a single cell across every common date - the two
+    // runs' values as marked curves, the way the summary plots mark theirs.
+    histProp_ = new QComboBox;
+    histProp_->setSizeAdjustPolicy(QComboBox::AdjustToContents);
+    histProp_->setMinimumWidth(110);
+    histCell_ = new QSpinBox;
+    histCell_->setRange(1, 1);
+    histCell_->setToolTip(QStringLiteral(
+        "which active cell to follow - the same numbering the Cell values "
+        "view draws along its X axis"));
+    histInfo_ = new QLabel;
+    histInfo_->setStyleSheet(QStringLiteral("color:#555b61;"));
+    histChartView_ = new QChartView(new QChart);
+    histChartView_->setRenderHint(QPainter::Antialiasing);
+    histView_ = new QWidget;
+    {
+        auto* hrow = new QHBoxLayout;
+        hrow->addWidget(new QLabel(QStringLiteral("Property:")));
+        hrow->addWidget(histProp_);
+        hrow->addWidget(new QLabel(QStringLiteral("cell:")));
+        hrow->addWidget(histCell_);
+        hrow->addWidget(histInfo_, 1);
+        auto* hlay = new QVBoxLayout(histView_);
+        hlay->setContentsMargins(4, 4, 4, 0);
+        hlay->addLayout(hrow);
+        hlay->addWidget(histChartView_, 1);
+    }
+
     views_ = new QTabWidget;
     views_->addTab(heat_, QStringLiteral("Overview"));
-    views_->addTab(chartView_, QStringLiteral("Curves"));
     views_->addTab(cellView_, QStringLiteral("Cell values"));
+    views_->addTab(histView_, QStringLiteral("Cell history"));
 
     table_ = new QTableWidget(0, 4);
     table_->setHorizontalHeaderLabels({ QStringLiteral("Property"),
@@ -719,7 +741,9 @@ RestartComparePanel::RestartComparePanel(QWidget* parent)
     connect(caseB_, &QComboBox::currentIndexChanged, this,
             [this](int) { syncCaseTips(); cellCasesChanged(); });
     connect(views_, &QTabWidget::currentChanged, this, [this](int idx) {
-        if (idx == views_->indexOf(cellView_) && cellDirty_) rebuildCellPickers();
+        if (cellDirty_ && (idx == views_->indexOf(cellView_)
+                           || idx == views_->indexOf(histView_)))
+            rebuildCellPickers();
     });
     connect(cellProp_, &QComboBox::currentIndexChanged, this,
             [this](int) { if (!cellFilling_) replotCells(); });
@@ -727,6 +751,10 @@ RestartComparePanel::RestartComparePanel(QWidget* parent)
             [this](int) { if (!cellFilling_) replotCells(); });
     connect(cellMode_, &QComboBox::currentIndexChanged, this,
             [this](int) { if (!cellFilling_) replotCells(); });
+    connect(histProp_, &QComboBox::currentIndexChanged, this,
+            [this](int) { if (!cellFilling_) replotHistory(); });
+    connect(histCell_, &QSpinBox::valueChanged, this,
+            [this](int) { if (!cellFilling_) replotHistory(); });
     // The caption counts cells outside tolerance, so it follows the spins.
     connect(absTol_, &QDoubleSpinBox::valueChanged, this,
             [this](double) { if (views_->currentWidget() == cellView_) replotCells(); });
@@ -747,13 +775,10 @@ RestartComparePanel::RestartComparePanel(QWidget* parent)
         const int at = detailPick_->findText(kw);
         if (at >= 0 && at != detailPick_->currentIndex()) detailPick_->setCurrentIndex(at);
         else refreshDetail();
-        if (metric_->currentIndex() == 3) replot();   // the average is per property
     });
     connect(detailMode_, &QComboBox::currentIndexChanged, this, [this](int) { syncCombos(); });
-    connect(detailPick_, &QComboBox::currentIndexChanged, this, [this](int) {
-        refreshDetail();
-        if (metric_->currentIndex() == 3) replot();
-    });
+    connect(detailPick_, &QComboBox::currentIndexChanged, this,
+            [this](int) { refreshDetail(); });
 
     poll_ = new QTimer(this);
     poll_->setInterval(120);
@@ -787,8 +812,20 @@ void RestartComparePanel::pickFromHeatmap(const QString& keyword, const QDateTim
         for (int i = 0; i < cellDate_->count(); ++i)
             if (cellDate_->itemData(i).toDateTime() == when) { d = i; break; }
         if (d >= 0) cellDate_->setCurrentIndex(d);
+        // ... and the history at the same property, following the cell the
+        // comparison found worst at that date.
+        const int hp = histProp_->findText(keyword);
+        if (hp >= 0) histProp_->setCurrentIndex(hp);
+        for (const auto& k : result_.keywords) {
+            if (k.keyword != keyword) continue;
+            for (const auto& sd : k.steps)
+                if (sd.when == when && sd.worstCell >= 0
+                    && sd.worstCell < histCell_->maximum())
+                    histCell_->setValue(sd.worstCell + 1);
+        }
         cellFilling_ = false;
         if (p >= 0 || cellDate_->count()) replotCells();
+        replotHistory();
     }
 }
 
@@ -883,7 +920,8 @@ void RestartComparePanel::syncCaseTips()
 void RestartComparePanel::showEvent(QShowEvent* ev)
 {
     QWidget::showEvent(ev);
-    if (views_ && views_->currentWidget() == cellView_ && cellDirty_)
+    if (views_ && cellDirty_ && (views_->currentWidget() == cellView_
+                                 || views_->currentWidget() == histView_))
         rebuildCellPickers();
 }
 
@@ -909,7 +947,8 @@ std::shared_ptr<Opm::EclIO::ERst> RestartComparePanel::rstReader(const QString& 
 void RestartComparePanel::cellCasesChanged()
 {
     cellDirty_ = true;
-    if (isVisible() && views_ && views_->currentWidget() == cellView_)
+    if (isVisible() && views_ && (views_->currentWidget() == cellView_
+                                  || views_->currentWidget() == histView_))
         rebuildCellPickers();
 }
 
@@ -999,8 +1038,26 @@ void RestartComparePanel::rebuildCellPickers()
         const int pr = cellProp_->findText(QStringLiteral("PRESSURE"));
         if (pr >= 0) cellProp_->setCurrentIndex(pr);
     }
+
+    // The history view picks from the same list, and keeps its cell if the
+    // grid still has it.
+    const QString oldHProp = histProp_->currentText();
+    const int oldHCell = histCell_->value();
+    histProp_->clear();
+    std::int64_t nAct = 0;
+    for (int i = 0; i < cellProp_->count(); ++i) {
+        histProp_->addItem(cellProp_->itemText(i));
+        if (nAct == 0) nAct = lenB.value(cellProp_->itemText(i), 0);
+    }
+    const int keepH = oldHProp.isEmpty() ? -1 : histProp_->findText(oldHProp);
+    if (keepH >= 0) histProp_->setCurrentIndex(keepH);
+    else histProp_->setCurrentIndex(cellProp_->currentIndex());
+    histCell_->setRange(1, std::max<qint64>(1, nAct));
+    histCell_->setValue(std::min<qint64>(oldHCell, std::max<qint64>(1, nAct)));
+
     cellFilling_ = false;
     replotCells();
+    replotHistory();
 }
 
 void RestartComparePanel::replotCells()
@@ -1147,6 +1204,123 @@ void RestartComparePanel::replotCells()
     }
     ax->setRange(1, std::max(2, n));
     ay->applyNiceNumbers();
+    present();
+}
+
+void RestartComparePanel::replotHistory()
+{
+    // Fresh chart per plot, swapped in whole - same reason as replotCells():
+    // emptying a QChart in place leaves ghosts painting in the scene.
+    auto* chart = new QChart;
+    chart->setBackgroundRoundness(0);
+    chart->setDropShadowEnabled(false);
+    auto present = [this, chart] {
+        QChart* old = histChartView_->chart();
+        histChartView_->setChart(chart);
+        if (old != chart) delete old;
+    };
+
+    const int ia = caseA_->currentIndex(), ib = caseB_->currentIndex();
+    auto ra = (ia >= 0 && ia < cases_.size()) ? rstReader(cases_[ia].smspec) : nullptr;
+    auto rb = (ib >= 0 && ib < cases_.size()) ? rstReader(cases_[ib].smspec) : nullptr;
+    const int cell = histCell_->value() - 1;
+    if (!ra || !rb || histProp_->currentText().isEmpty() || cellTimes_.isEmpty()) {
+        histInfo_->setText(QStringLiteral("pick two cases with a restart (UNRST) file"));
+        present();
+        return;
+    }
+
+    // The chosen cell of the chosen field, at every common date. One array
+    // read per date per case - a look, not a sweep; the full comparison is
+    // what streams everything.
+    const std::string key = histProp_->currentText().toStdString();
+    QVector<double> when, va, vb;
+    for (const QDateTime& d : std::as_const(cellTimes_)) {
+        try {
+            const auto& a = ra->getRestartData<float>(key, cellDatesA_.value(d));
+            const auto& b = rb->getRestartData<float>(key, cellDatesB_.value(d));
+            if (cell >= int(a.size()) || cell >= int(b.size())) continue;
+            when << double(d.toMSecsSinceEpoch());
+            va << double(a[cell]);
+            vb << double(b[cell]);
+        } catch (...) {}
+    }
+    if (when.isEmpty()) {
+        histInfo_->setText(QStringLiteral("no common report date carries %1")
+                               .arg(histProp_->currentText()));
+        present();
+        return;
+    }
+
+    const DiffTol tol{ absTol_->value(), relTol_->value() };
+    int nBad = 0, worstAt = 0;
+    double maxAbs = 0.0;
+    for (int i = 0; i < when.size(); ++i) {
+        const double d = std::abs(va[i] - vb[i]);
+        if (d > maxAbs) { maxAbs = d; worstAt = i; }
+        if (diffIsSignificant(va[i], vb[i], tol)) ++nBad;
+    }
+    const QDateTime worstDate = QDateTime::fromMSecsSinceEpoch(qint64(when[worstAt]),
+                                                               QTimeZone::utc());
+    histInfo_->setText(maxAbs == 0.0
+        ? QStringLiteral("identical at all %1 common dates").arg(when.size())
+        : QStringLiteral("%1 of %2 dates outside tolerance;  max |A-B| %3 at %4 "
+                         "(A %5, B %6)")
+              .arg(nBad).arg(when.size()).arg(maxAbs, 0, 'g', 4)
+              .arg(worstDate.toString(QStringLiteral("yyyy-MM-dd hh:mm")))
+              .arg(va[worstAt], 0, 'g', 6).arg(vb[worstAt], 0, 'g', 6));
+
+    chart->setTitle(QStringLiteral("%1  -  cell %2")
+                        .arg(histProp_->currentText()).arg(cell + 1));
+
+    // Lines with a marker on every sample, the way the summary plots mark
+    // theirs: report steps are few and exactly where a value was written is
+    // the point of looking.
+    const QColor colA(0x1f, 0x77, 0xb4), colB(0xd6, 0x27, 0x28);
+    auto* la = new QLineSeries; la->setName(QStringLiteral("A"));
+    la->setPen(QPen(colA, 2.0));
+    auto* lb = new QLineSeries; lb->setName(QStringLiteral("B"));
+    lb->setPen(QPen(colB, 2.0, Qt::DashLine));
+    auto* ma = new QScatterSeries;
+    ma->setMarkerSize(8.0); ma->setColor(colA); ma->setBorderColor(Qt::white);
+    auto* mb = new QScatterSeries;
+    mb->setMarkerSize(8.0); mb->setColor(colB); mb->setBorderColor(Qt::white);
+    mb->setMarkerShape(QScatterSeries::MarkerShapeRectangle);
+    for (int i = 0; i < when.size(); ++i) {
+        la->append(when[i], va[i]); ma->append(when[i], va[i]);
+        lb->append(when[i], vb[i]); mb->append(when[i], vb[i]);
+    }
+    chart->addSeries(la); chart->addSeries(lb);
+    chart->addSeries(ma); chart->addSeries(mb);
+    chart->legend()->setAlignment(Qt::AlignBottom);
+    for (auto* m : chart->legend()->markers(ma)) m->setVisible(false);
+    for (auto* m : chart->legend()->markers(mb)) m->setVisible(false);
+
+    auto* ax = new QDateTimeAxis;
+    auto* ay = new QValueAxis;
+    chart->addAxis(ax, Qt::AlignBottom);
+    chart->addAxis(ay, Qt::AlignLeft);
+    for (auto* ser : chart->series()) { ser->attachAxis(ax); ser->attachAxis(ay); }
+
+    // Ranges by hand, as everywhere in this panel: attachAxis keeps the first
+    // series' range, and B off the scale is the failure mode of a comparison.
+    double lo = va[0], hi = va[0];
+    for (int i = 0; i < when.size(); ++i) {
+        lo = std::min({ lo, va[i], vb[i] });
+        hi = std::max({ hi, va[i], vb[i] });
+    }
+    if (hi > lo) { ay->setRange(lo, hi); ay->applyNiceNumbers(); }
+    else {
+        const double pad = (hi == 0.0) ? 1.0 : std::max(1e-30, std::abs(hi) * 0.1);
+        ay->setRange(hi - pad, hi + pad);
+    }
+    ax->setRange(QDateTime::fromMSecsSinceEpoch(qint64(when.first()), QTimeZone::utc()),
+                 QDateTime::fromMSecsSinceEpoch(qint64(when.last()), QTimeZone::utc()));
+    const double days = (when.last() - when.first()) / 86400.0e3;
+    ax->setFormat(days <= 3.0    ? QStringLiteral("d MMM hh:mm")
+                : days <= 92.0   ? QStringLiteral("d MMM")
+                : days <= 1100.0 ? QStringLiteral("MMM yy")
+                                 : QStringLiteral("yyyy"));
     present();
 }
 
@@ -1370,122 +1544,7 @@ void RestartComparePanel::showResult()
 
 void RestartComparePanel::replot()
 {
-    chart_->removeAllSeries();
-    for (auto* ax : chart_->axes()) chart_->removeAxis(ax);
     heat_->setResult(&result_, metric_->currentIndex(), onlyBad_->isChecked());
-    if (!result_.ran || result_.keywords.isEmpty()) { chart_->setTitle(QString()); return; }
-
-    const int metric = metric_->currentIndex();
-    const bool onlyBad = onlyBad_->isChecked();
-    const bool valueMode = (metric == 3);
-    double ymin = 0.0, ymax = 0.0;
-    bool any = false;
-    int shown = 0, hidden = 0, omitted = 0;
-
-    auto ms = [](const QDateTime& t) { return double(t.toMSecsSinceEpoch()); };
-
-    if (valueMode) {
-        // The quantity itself, for ONE property, as two curves. Every property
-        // at once would be meaningless: pressure in bar and saturation in
-        // fractions do not share an axis.
-        const QString kw = detailMode_->currentIndex() == 0
-                               ? detailPick_->currentText()
-                               : (table_->currentRow() >= 0
-                                      && table_->currentRow() < result_.keywords.size()
-                                          ? result_.keywords[table_->currentRow()].keyword
-                                          : QString());
-        const KeywordDiff* kd = nullptr;
-        for (const auto& k : result_.keywords) if (k.keyword == kw) { kd = &k; break; }
-        if (!kd) {
-            chart_->setTitle(QStringLiteral(
-                "pick a property (Detail, left) to see its field average"));
-            return;
-        }
-        auto* sa = new QLineSeries; sa->setName(QStringLiteral("A - %1").arg(kw));
-        auto* sb = new QLineSeries; sb->setName(QStringLiteral("B - %1").arg(kw));
-        bool first = true;
-        for (const auto& sd : kd->steps) {
-            sa->append(ms(sd.when), sd.aggA);
-            sb->append(ms(sd.when), sd.aggB);
-            if (first) { ymin = ymax = sd.aggA; first = false; }
-            ymin = std::min({ ymin, sd.aggA, sd.aggB });
-            ymax = std::max({ ymax, sd.aggA, sd.aggB });
-            any = true;
-        }
-        chart_->addSeries(sa); chart_->addSeries(sb);
-        shown = 2;
-        chart_->setTitle(QStringLiteral("%1 - field average, %2")
-            .arg(kw, result_.porvWeighted ? QStringLiteral("pore-volume weighted")
-                                          : QStringLiteral("unweighted")));
-    } else {
-        // Zero is both common and meaningful - it is what agreement looks like
-        // - and a log axis has nothing to say about it. Rather than plot a fake
-        // floor, a date with nothing to report is left out, so a curve begins
-        // exactly where its property first differs. Said in the title, so an
-        // absence is not mistaken for missing data.
-        for (const auto& k : result_.keywords) {
-            if (onlyBad && k.clean()) { ++hidden; continue; }
-            auto* s = new QLineSeries;
-            s->setName(k.keyword);
-            int pts = 0;
-            for (const auto& sd : k.steps) {
-                const double y = metric == 0 ? double(sd.nBad)
-                               : metric == 1 ? sd.maxAbs : sd.rms;
-                if (y <= 0.0) { ++omitted; continue; }
-                s->append(ms(sd.when), y);
-                ymax = std::max(ymax, y);
-                ++pts; any = true;
-            }
-            if (pts == 0) { delete s; ++hidden; continue; }
-            chart_->addSeries(s);
-            ++shown;
-        }
-        if (!any) {
-            chart_->setTitle(onlyBad && hidden
-                ? QStringLiteral("every property agrees within tolerance")
-                : QStringLiteral("nothing to plot"));
-            return;
-        }
-        QString sub = QStringLiteral("%1 - %2 propert(y/ies)")
-                          .arg(metric_->currentText()).arg(shown);
-        if (hidden)  sub += QStringLiteral(", %1 agreeing hidden").arg(hidden);
-        if (omitted) sub += QStringLiteral(" (log axis: %1 zero point(s) not drawn)")
-                                .arg(omitted);
-        chart_->setTitle(sub);
-    }
-    if (!any) return;
-
-    // Time, not step number: the two runs are paired on the date, and a date
-    // axis is also what every other plot in this program uses.
-    auto* ax = new QDateTimeAxis;
-    ax->setFormat(QStringLiteral("yyyy-MM-dd"));
-    ax->setTitleText(QStringLiteral("date"));
-    ax->setTickCount(4);
-    if (!result_.times.isEmpty())
-        ax->setRange(result_.times.first(), result_.times.last());
-    chart_->addAxis(ax, Qt::AlignBottom);
-
-    QAbstractAxis* ay = nullptr;
-    if (valueMode) {
-        auto* va = new QValueAxis;
-        const double pad = (ymax > ymin) ? 0.05 * (ymax - ymin) : 1.0;
-        va->setRange(ymin - pad, ymax + pad);
-        ay = va;
-    } else if (ymax > 0.0) {
-        // A divergence climbs by orders of magnitude, so a linear axis shows
-        // the last date and nothing before it.
-        auto* la = new QLogValueAxis;
-        la->setBase(10.0);
-        la->setLabelFormat(QStringLiteral("%g"));
-        la->setRange(std::max(ymax * 1e-6, 1e-12), ymax * 1.5);
-        ay = la;
-    } else {
-        auto* va = new QValueAxis; va->setRange(0.0, 1.0); ay = va;
-    }
-    ay->setTitleText(valueMode ? QStringLiteral("field average")
-                               : metric_->currentText());
-    chart_->addAxis(ay, Qt::AlignLeft);
-    for (auto* s : chart_->series()) { s->attachAxis(ax); s->attachAxis(ay); }
 }
 
 } // namespace flowgui

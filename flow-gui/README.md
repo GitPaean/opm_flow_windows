@@ -131,17 +131,20 @@ results, animate them in 3D, and edit decks — all in one window.
   cells-outside-tolerance, max |A−B| and RMS, using compareECL's own
   significance test, so a green verdict means what a green regression test
   means. The **Overview** heatmap (properties × dates) shows which property
-  parted and when; **Curves** draws a chosen measure over time; **Cell
-  values** shows how — one property at one date, cell by cell: both runs
-  against the active-cell index (for a 1D column, the profile), their
-  difference, or A against B as a scatter about the diagonal. That view
-  reads the restart files directly and needs no Compare press, so checking
-  ZMF1 of two compositional runs at a date is pick-and-look; its caption
-  counts cells outside the same tolerances. Steps are paired by calendar
-  date (clock included when a run reports within a day), never by position
-  in the file, so runs that report at different times are not compared at
-  different moments. Clicking a heatmap cell aims both the detail table and
-  the Cell values view at that property and date.
+  parted and when; **Cell values** shows how at one date — one property,
+  cell by cell: both runs against the active-cell index (for a 1D column,
+  the profile), their difference, or A against B as a scatter about the
+  diagonal; **Cell history** follows one cell of one property through time,
+  both runs as marked curves (a marker on every report step, the way the
+  summary plots mark theirs). Both views read the restart files directly
+  and need no Compare press, so checking ZMF1 of two compositional runs is
+  pick-and-look; their captions count what falls outside the same
+  tolerances. Steps are paired by calendar date (clock included when a run
+  reports within a day), never by position in the file, so runs that report
+  at different times are not compared at different moments. Clicking a
+  heatmap cell aims the detail table, the Cell values view, and the Cell
+  history view — the latter at the very cell the comparison found worst
+  there.
 - **Deck Editor tab** — edit the deck and its INCLUDE files directly: a
   section tree (RUNSPEC ... SCHEDULE) lists every keyword with file and
   line, INCLUDEs expanded recursively; clicking opens the real file in a

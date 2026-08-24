@@ -42,6 +42,7 @@ class QComboBox;
 class QDoubleSpinBox;
 class QLabel;
 class QProgressBar;
+class QSpinBox;
 class QPushButton;
 class QTableWidget;
 class QThread;
@@ -196,6 +197,8 @@ private:
     // Compare press and no reduction in between.
     void rebuildCellPickers();
     void replotCells();
+    // One cell of one property through time, both runs, marked at the data.
+    void replotHistory();
     void cellCasesChanged();
     // The restart reader for one case, cached against mtime+size so a re-run
     // is picked up and an unchanged file is not re-indexed.
@@ -231,8 +234,11 @@ private:
     QComboBox*      detailPick_ = nullptr;
     QLabel*         detailInfo_ = nullptr;
     QTableWidget*   detail_ = nullptr;
-    QChart*         chart_  = nullptr;
-    QChartView*     chartView_ = nullptr;
+    QWidget*    histView_  = nullptr;
+    QComboBox*  histProp_  = nullptr;
+    QSpinBox*   histCell_  = nullptr;
+    QLabel*     histInfo_  = nullptr;
+    QChartView* histChartView_ = nullptr;
     QTimer*         poll_   = nullptr;
     QThread*        worker_ = nullptr;
 
