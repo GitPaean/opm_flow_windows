@@ -237,6 +237,8 @@ private:
     QWidget*    histView_  = nullptr;
     QComboBox*  histProp_  = nullptr;
     QSpinBox*   histCell_  = nullptr;
+    QCheckBox*      histMarkers_    = nullptr;
+    QDoubleSpinBox* histMarkerSize_ = nullptr;
     QLabel*     histInfo_  = nullptr;
     QChartView* histChartView_ = nullptr;
     QTimer*         poll_   = nullptr;
@@ -246,6 +248,8 @@ private:
     QComboBox*  cellProp_  = nullptr;
     QComboBox*  cellDate_  = nullptr;
     QComboBox*  cellMode_  = nullptr;
+    QCheckBox*      cellMarkers_    = nullptr;
+    QDoubleSpinBox* cellMarkerSize_ = nullptr;
     QLabel*     cellInfo_  = nullptr;
     QChart*     cellChart_ = nullptr;
     QChartView* cellChartView_ = nullptr;

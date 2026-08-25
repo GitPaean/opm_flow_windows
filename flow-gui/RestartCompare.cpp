@@ -138,6 +138,10 @@ QString dstr(const QDateTime& d) { return d.toString(QStringLiteral("yyyy-MM-dd"
 
 namespace flowgui {
 
+// Markers are thinned to keep them this many times their own size apart;
+// closer than that and the row of them reads as a band, not as points.
+constexpr double kMarkerPitch = 2.5;
+
 bool CompareResult::sameEnd() const
 {
     return endA.isValid() && endB.isValid() && endA == endB;
@@ -608,6 +612,22 @@ RestartComparePanel::RestartComparePanel(QWidget* parent)
         "difference: where along the cells the runs part, and by how much.\n"
         "scatter: each cell as a point, A across, B up; agreement is the "
         "diagonal."));
+    // Off to begin with here: this plot has a point per active cell, and a
+    // marker on each of a hundred thousand of them is a solid band, not a
+    // reading. It earns its keep on a small model or a zoomed-in stretch,
+    // which is why it is offered at all.
+    cellMarkers_ = new QCheckBox(QStringLiteral("markers"));
+    cellMarkers_->setChecked(false);
+    cellMarkers_->setToolTip(QStringLiteral(
+        "mark each cell's value on the curve.\n"
+        "With more cells than can be marked legibly, every n-th is marked and "
+        "the caption says which - the curve itself still shows every cell."));
+    cellMarkerSize_ = new QDoubleSpinBox;
+    cellMarkerSize_->setRange(2.0, 20.0);
+    cellMarkerSize_->setSingleStep(0.5);
+    cellMarkerSize_->setValue(7.0);
+    cellMarkerSize_->setSuffix(QStringLiteral(" px"));
+    cellMarkerSize_->setToolTip(QStringLiteral("marker size"));
     cellInfo_ = new QLabel;
     cellInfo_->setStyleSheet(QStringLiteral("color:#555b61;"));
     cellChart_ = new QChart;
@@ -623,6 +643,8 @@ RestartComparePanel::RestartComparePanel(QWidget* parent)
         crow->addWidget(new QLabel(QStringLiteral("at:")));
         crow->addWidget(cellDate_);
         crow->addWidget(cellMode_);
+        crow->addWidget(cellMarkers_);
+        crow->addWidget(cellMarkerSize_);
         crow->addWidget(cellInfo_, 1);
         auto* clay = new QVBoxLayout(cellView_);
         clay->setContentsMargins(4, 4, 4, 0);
@@ -642,6 +664,19 @@ RestartComparePanel::RestartComparePanel(QWidget* parent)
     histCell_->setToolTip(QStringLiteral(
         "which active cell to follow - the same numbering the Cell values "
         "view draws along its X axis"));
+    // On here, unlike the cell view: a run reports at a few dozen dates, and
+    // exactly where a value was written is most of what this plot is for.
+    histMarkers_ = new QCheckBox(QStringLiteral("markers"));
+    histMarkers_->setChecked(true);
+    histMarkers_->setToolTip(QStringLiteral(
+        "mark each report date on the curves - where a value was actually "
+        "written, as opposed to the line drawn between"));
+    histMarkerSize_ = new QDoubleSpinBox;
+    histMarkerSize_->setRange(2.0, 20.0);
+    histMarkerSize_->setSingleStep(0.5);
+    histMarkerSize_->setValue(8.0);
+    histMarkerSize_->setSuffix(QStringLiteral(" px"));
+    histMarkerSize_->setToolTip(QStringLiteral("marker size"));
     histInfo_ = new QLabel;
     histInfo_->setStyleSheet(QStringLiteral("color:#555b61;"));
     histChartView_ = new QChartView(new QChart);
@@ -653,6 +688,8 @@ RestartComparePanel::RestartComparePanel(QWidget* parent)
         hrow->addWidget(histProp_);
         hrow->addWidget(new QLabel(QStringLiteral("cell:")));
         hrow->addWidget(histCell_);
+        hrow->addWidget(histMarkers_);
+        hrow->addWidget(histMarkerSize_);
         hrow->addWidget(histInfo_, 1);
         auto* hlay = new QVBoxLayout(histView_);
         hlay->setContentsMargins(4, 4, 4, 0);
@@ -753,6 +790,14 @@ RestartComparePanel::RestartComparePanel(QWidget* parent)
             [this](int) { if (!cellFilling_) replotCells(); });
     connect(histProp_, &QComboBox::currentIndexChanged, this,
             [this](int) { if (!cellFilling_) replotHistory(); });
+    connect(cellMarkers_, &QCheckBox::toggled, this,
+            [this](bool) { replotCells(); });
+    connect(cellMarkerSize_, &QDoubleSpinBox::valueChanged, this,
+            [this](double) { replotCells(); });
+    connect(histMarkers_, &QCheckBox::toggled, this,
+            [this](bool) { replotHistory(); });
+    connect(histMarkerSize_, &QDoubleSpinBox::valueChanged, this,
+            [this](double) { replotHistory(); });
     connect(histCell_, &QSpinBox::valueChanged, this,
             [this](int) { if (!cellFilling_) replotHistory(); });
     // The caption counts cells outside tolerance, so it follows the spins.
@@ -1120,6 +1165,46 @@ void RestartComparePanel::replotCells()
 
     const QColor colA(0x1f, 0x77, 0xb4), colB(0xd6, 0x27, 0x28);
     const int mode = cellMode_->currentIndex();
+    // The scatter mode is nothing but markers, so the option is meaningless
+    // there rather than merely ineffective - say so by greying it out.
+    const bool canMark = (mode != 2);
+    cellMarkers_->setEnabled(canMark);
+    cellMarkerSize_->setEnabled(canMark && cellMarkers_->isChecked());
+
+    // A marker reads as a point only while it has clear space around it; once
+    // they sit closer than about their own size apart the row closes into a
+    // band. So the budget is how many fit at that spacing, not a fixed count:
+    // both the plot width and the marker size can change under us. The CURVE
+    // is never thinned - what is drawn is still every cell.
+    double plotW = cellChart_->plotArea().width();
+    if (plotW < 50.0 && cellChartView_) plotW = cellChartView_->width();
+    if (plotW < 50.0) plotW = 1000.0;   // first replot, before any layout
+    const int budget =
+        std::max(8, int(plotW / (kMarkerPitch * cellMarkerSize_->value())));
+    const int markEvery = std::max(1, (n + budget - 1) / budget);
+    const bool marking = canMark && cellMarkers_->isChecked();
+    if (marking && markEvery > 1)
+        cellInfo_->setText(cellInfo_->text()
+                           + QStringLiteral("  -  one marker per %1 cells").arg(markEvery));
+    // B is drawn over A, and in a comparison the two usually agree - a filled
+    // B would simply erase A. Hollow it out so A shows through, the same
+    // bargain the dashed B curve already strikes with the solid A curve.
+    auto marked = [&](const QColor& c, QScatterSeries::MarkerShape shape,
+                      bool hollow = false) {
+        auto* m = new QScatterSeries;
+        m->setMarkerSize(cellMarkerSize_->value());
+        m->setMarkerShape(shape);
+        if (hollow) {
+            m->setBrush(Qt::NoBrush);
+            QPen pen(c);
+            pen.setWidthF(1.5);
+            m->setPen(pen);
+        } else {
+            m->setColor(c);
+            m->setBorderColor(Qt::white);
+        }
+        return m;
+    };
     chart->setTitle(QStringLiteral("%1  at %2")
                              .arg(cellProp_->currentText(), cellDate_->currentText()));
 
@@ -1178,6 +1263,13 @@ void RestartComparePanel::replotCells()
         }
         chart->addSeries(sd);
         sd->attachAxis(ax); sd->attachAxis(ay);
+        if (marking) {
+            auto* md = marked(QColor(0x44, 0x2a, 0x66), QScatterSeries::MarkerShapeCircle);
+            for (int i = 0; i < n; i += markEvery)
+                md->append(i + 1, double(va[i]) - double(vb[i]));
+            chart->addSeries(md);
+            md->attachAxis(ax); md->attachAxis(ay);
+        }
         const auto [rlo, rhi] = pad(lo, hi);
         ay->setRange(rlo, rhi);
         chart->legend()->hide();
@@ -1197,6 +1289,21 @@ void RestartComparePanel::replotCells()
         chart->addSeries(sb2);
         sa2->attachAxis(ax); sa2->attachAxis(ay);
         sb2->attachAxis(ax); sb2->attachAxis(ay);
+        if (marking) {
+            auto* ma2 = marked(colA, QScatterSeries::MarkerShapeCircle);
+            auto* mb2 = marked(colB, QScatterSeries::MarkerShapeRectangle, true);
+            for (int i = 0; i < n; i += markEvery) {
+                ma2->append(i + 1, double(va[i]));
+                mb2->append(i + 1, double(vb[i]));
+            }
+            chart->addSeries(ma2); chart->addSeries(mb2);
+            ma2->attachAxis(ax); ma2->attachAxis(ay);
+            mb2->attachAxis(ax); mb2->attachAxis(ay);
+            // The markers stand for the curves already named, so they add
+            // nothing to the legend but a second copy of each name.
+            for (auto* m : chart->legend()->markers(ma2)) m->setVisible(false);
+            for (auto* m : chart->legend()->markers(mb2)) m->setVisible(false);
+        }
         const auto [rlo, rhi] = pad(lo, hi);
         ay->setRange(rlo, rhi);
         chart->legend()->show();
@@ -1281,20 +1388,36 @@ void RestartComparePanel::replotHistory()
     la->setPen(QPen(colA, 2.0));
     auto* lb = new QLineSeries; lb->setName(QStringLiteral("B"));
     lb->setPen(QPen(colB, 2.0, Qt::DashLine));
-    auto* ma = new QScatterSeries;
-    ma->setMarkerSize(8.0); ma->setColor(colA); ma->setBorderColor(Qt::white);
-    auto* mb = new QScatterSeries;
-    mb->setMarkerSize(8.0); mb->setColor(colB); mb->setBorderColor(Qt::white);
-    mb->setMarkerShape(QScatterSeries::MarkerShapeRectangle);
     for (int i = 0; i < when.size(); ++i) {
-        la->append(when[i], va[i]); ma->append(when[i], va[i]);
-        lb->append(when[i], vb[i]); mb->append(when[i], vb[i]);
+        la->append(when[i], va[i]);
+        lb->append(when[i], vb[i]);
     }
     chart->addSeries(la); chart->addSeries(lb);
-    chart->addSeries(ma); chart->addSeries(mb);
+    const bool hmark = histMarkers_->isChecked();
+    histMarkerSize_->setEnabled(hmark);
+    if (hmark) {
+        const double sz = histMarkerSize_->value();
+        auto* ma = new QScatterSeries;
+        ma->setMarkerSize(sz); ma->setColor(colA); ma->setBorderColor(Qt::white);
+        // Hollow, for the same reason as in the cell view: B lands on top of
+        // A wherever the runs agree, and a filled B would hide it.
+        auto* mb = new QScatterSeries;
+        mb->setMarkerSize(sz);
+        mb->setBrush(Qt::NoBrush);
+        QPen bpen(colB);
+        bpen.setWidthF(1.5);
+        mb->setPen(bpen);
+        mb->setMarkerShape(QScatterSeries::MarkerShapeRectangle);
+        for (int i = 0; i < when.size(); ++i) {
+            ma->append(when[i], va[i]);
+            mb->append(when[i], vb[i]);
+        }
+        chart->addSeries(ma); chart->addSeries(mb);
+        // The markers stand for curves the legend already names.
+        for (auto* m : chart->legend()->markers(ma)) m->setVisible(false);
+        for (auto* m : chart->legend()->markers(mb)) m->setVisible(false);
+    }
     chart->legend()->setAlignment(Qt::AlignBottom);
-    for (auto* m : chart->legend()->markers(ma)) m->setVisible(false);
-    for (auto* m : chart->legend()->markers(mb)) m->setVisible(false);
 
     auto* ax = new QDateTimeAxis;
     auto* ay = new QValueAxis;
