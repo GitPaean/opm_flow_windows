@@ -175,6 +175,10 @@ private:
     // caption has to quote the values, not the bounds the floor invented.
     QVector<double> rowLo_, rowHi_;      // the axis
     QVector<double> dataLo_, dataHi_;    // what the numbers actually span
+    // The widest gap between the runs as a share of A - the one number that
+    // says whether a shape is worth worrying about. Negative where A is zero
+    // throughout and there is no proportion to take.
+    QVector<double> rowRel_;
 };
 
 // What each small plot draws, in the order the picker offers them.

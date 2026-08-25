@@ -413,6 +413,17 @@ QString overviewMetricName(int metric)
     }
 }
 
+// How far apart the runs are, said plainly. A shape can only show that
+// something moved; this says whether it moved by anything worth reading.
+QString gapText(double rel)
+{
+    if (rel < 0.0)     return QStringLiteral("gap n/a");
+    if (rel == 0.0)    return QStringLiteral("identical");
+    const double pct = rel * 100.0;
+    if (pct < 0.01)    return QStringLiteral("gap < 0.01%");
+    return QStringLiteral("gap %1%").arg(pct, 0, 'g', 2);
+}
+
 QString PropertyPlots::stampFormat(bool full) const
 {
     if (!r_ || r_->times.size() < 2)
@@ -458,6 +469,7 @@ void PropertyPlots::setResult(const CompareResult* r, int metric, bool onlyDiffe
     rows_.clear();
     rowLo_.clear(); rowHi_.clear();
     dataLo_.clear(); dataHi_.clear();
+    rowRel_.clear();
     if (r_ && r_->ran) {
         for (int i = 0; i < r_->keywords.size(); ++i) {
             const auto& k = r_->keywords[i];
@@ -483,6 +495,15 @@ void PropertyPlots::setResult(const CompareResult* r, int metric, bool onlyDiffe
                 mag = std::max(mag, std::max(std::abs(kk.steps[col].aggA),
                                              std::abs(kk.steps[col].aggB)));
             }
+            // The gap between the runs in the property's own terms, which is
+            // what the shape of a curve cannot say on its own.
+            double rel = -1.0;
+            for (int col = 0; col < nc; ++col) {
+                const double a = kk.steps[col].aggA, b = kk.steps[col].aggB;
+                if (std::abs(a) > 0.0)
+                    rel = std::max(rel, std::abs(a - b) / std::abs(a));
+            }
+            rowRel_ << rel;
             // A difference is read against zero, so zero has to be on the axis;
             // a count or a magnitude starts there for the same reason.
             if (metric_ == 1 || metric_ == 2) {
@@ -618,12 +639,24 @@ void PropertyPlots::paintEvent(QPaintEvent*)
         p.setPen(k.clean() ? QColor(0x55, 0x5b, 0x61) : QColor(0xb3, 0x1f, 0x1f));
         p.drawText(titleRow, Qt::AlignLeft | Qt::AlignVCenter, k.keyword);
 
-        // What the numbers actually span - not the axis, which is held wider
-        // when the two runs are close. Without it the shape says only that
-        // something moved, not whether it moved by a bar or by a millionth.
+        // The gap first and in the darker ink, because it is the answer to the
+        // question a worrying-looking curve raises. A run that parts by four
+        // thousandths of a percent should say so where it cannot be missed;
+        // then the shape below is read for what it is, not for how big it is.
+        const QString gap = gapText(rowRel_.value(i, -1.0));
+        QFont gf = ft; gf.setBold(true); p.setFont(gf);
+        const double relv = rowRel_.value(i, -1.0);
+        p.setPen(relv > 0.01 ? QColor(0xa8, 0x50, 0x0d)     // a percent or more
+                             : QColor(0x55, 0x5b, 0x61));
+        p.drawText(titleRow, Qt::AlignRight | Qt::AlignVCenter, gap);
+        const int gapW = p.fontMetrics().horizontalAdvance(gap) + 10;
+
+        // Then what the numbers actually span - not the axis, which is held
+        // open when the two runs are close.
         p.setFont(ft);
-        p.setPen(QColor(0x88, 0x8e, 0x94));
-        p.drawText(titleRow, Qt::AlignRight | Qt::AlignVCenter,
+        p.setPen(QColor(0x99, 0x9f, 0xa5));
+        p.drawText(titleRow.adjusted(0, 0, -gapW, 0),
+                   Qt::AlignRight | Qt::AlignVCenter,
                    QStringLiteral("%1 .. %2")
                        .arg(QString::number(dataLo_.value(i), 'g', 6),
                             QString::number(dataHi_.value(i), 'g', 6)));

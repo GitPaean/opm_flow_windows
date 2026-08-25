@@ -131,9 +131,11 @@ results, animate them in 3D, and edit decks — all in one window.
   cells-outside-tolerance, max |A−B| and RMS, using compareECL's own
   significance test, so a green verdict means what a green regression test
   means. The **Overview** gives every property its own small plot over the
-  run — A solid, B dashed, on the property's own scale with the range
-  printed, since a colour can carry one number and two runs cannot be
-  compared by one number. Its picker swaps all of them at once between the
+  run — A solid, B dashed, since a colour can carry one number and two runs
+  cannot be compared by one number. Each plot says what it spans and how far
+  apart the runs are as a share of A (`gap 1.5%`), and its axis is held open
+  to a share of the property's own magnitude, so how loud a difference looks
+  does not depend on how far from zero the values sit. Its picker swaps all of them at once between the
   two runs' field averages, their difference, that difference as a
   proportion, and the per-cell measures (cells outside tolerance, max |A−B|,
   RMS); **Cell values** shows how at one date — one property,
