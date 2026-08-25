@@ -144,9 +144,10 @@ namespace flowgui {
 constexpr double kMarkerPitch = 2.5;
 
 // An overview plot of A against B never spans less than this share of the
-// property's own magnitude. Two runs that agree to five digits then draw as
-// one flat line, which is what agreeing looks like.
-constexpr double kMinRelSpan = 0.02;
+// property's own magnitude. It is what decides how loud a difference looks:
+// a gap of one part in a hundred fills about a fifteenth of the frame, so it
+// is plainly there and plainly not a catastrophe.
+constexpr double kMinRelSpan = 0.15;
 
 bool CompareResult::sameEnd() const
 {
@@ -487,14 +488,16 @@ void PropertyPlots::setResult(const CompareResult* r, int metric, bool onlyDiffe
             if (metric_ == 1 || metric_ == 2) {
                 lo = std::min(lo, 0.0); hi = std::max(hi, 0.0);
             }
-            if (metric_ >= 3) lo = std::min(lo, 0.0);
+            bool pinLo = false;
+            if (metric_ >= 3) { lo = std::min(lo, 0.0); pinLo = (lo == 0.0); }
             dataLo_ << lo; dataHi_ << hi;
-            // Two runs agreeing to five digits must not be drawn as a chasm.
-            // An axis fitted to the data alone does exactly that - it spends
-            // the full height on whatever spread it finds, so a hundredth of a
-            // percent and a blow-up come out the same shape. Hold the axis to a
-            // share of the property's own size and closeness looks like
-            // closeness. The difference modes are left to fit, because
+            // How loud a difference looks must not depend on how far from zero
+            // the values happen to sit. An axis fitted to the data alone gives
+            // its whole height to whatever gap it finds, so a gap of one part
+            // in a hundred thousand comes out the same shape as a blow-up.
+            // Hold the axis open to a share of the property's own magnitude
+            // instead, and the gap is drawn in proportion to the quantity it
+            // is a gap in. The difference modes are left to fit, because
             // magnifying the gap is the whole of what they are for.
             if (pairMode() && mag > 0.0) {
                 const double floorSpan = kMinRelSpan * mag;
@@ -504,10 +507,15 @@ void PropertyPlots::setResult(const CompareResult* r, int metric, bool onlyDiffe
                     hi = mid + 0.5 * floorSpan;
                 }
             }
+            // Headroom, so a marker sitting at an extreme is not sliced in
+            // half by the frame - but not at an end pinned to zero.
+            const double pad = 0.04 * (hi - lo);
+            if (!pinLo) lo -= pad;
+            hi += pad;
             // A curve that never moves still needs a band to sit in.
             if (hi <= lo) {
-                const double pad = std::abs(hi) > 0.0 ? std::abs(hi) * 0.05 : 1.0;
-                lo -= pad; hi += pad;
+                const double flat = std::abs(hi) > 0.0 ? std::abs(hi) * 0.05 : 1.0;
+                lo -= flat; hi += flat;
             }
             rowLo_ << lo; rowHi_ << hi;
         }
@@ -519,9 +527,13 @@ void PropertyPlots::setResult(const CompareResult* r, int metric, bool onlyDiffe
 int PropertyPlots::columns() const
 {
     if (rows_.isEmpty()) return 1;
-    // Wide enough for a curve and its labels; whatever is left over buys
-    // another column rather than a wider one.
-    return std::min(std::max(1, width() / 210), int(rows_.size()));
+    // Aim for tiles a little wider than tall. Packing in as many columns as
+    // will fit gives one long row of slivers on a wide panel, with the rest of
+    // the height left blank. Deriving the count from width and a target height
+    // keeps the layout from chasing its own size hint, which it would if it
+    // asked how tall it currently is.
+    constexpr double kTileH = 170.0, kTileAspect = 1.7;
+    return std::clamp(int(width() / (kTileH * kTileAspect)), 1, int(rows_.size()));
 }
 
 QRect PropertyPlots::plotBox(int i) const
