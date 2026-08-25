@@ -116,6 +116,7 @@ struct CompareResult {
     QStringList  kwSkipped;        // present, but not one value per cell
     QString      gridNote;
     bool         porvWeighted = false;
+    int          nActive = 0;      // so a count of bad cells can be read as a fraction
 
     QVector<KeywordDiff> keywords;
 
@@ -154,14 +155,22 @@ private:
     int rowAt(int y) const;
     int colAt(int x) const;
     double valueAt(int row, int col) const;
+    // Column labels: a run of sub-day steps must not print one month per column.
+    QString stampFormat(bool full) const;
 
     const CompareResult* r_ = nullptr;
     int  metric_ = 0;
     bool onlyDiffering_ = true;
     QVector<int> rows_;      // indices into r_->keywords, in display order
     double vmax_ = 0.0;
+    // Per-property range, for the measure carried in the property's own units:
+    // nothing else on the map shares them, so nothing else can set its scale.
+    QVector<double> rowLo_, rowHi_;
     int    labelW_ = 90;
 };
+
+// What the overview colours, in the order the picker offers them.
+QString heatmapMetricName(int metric);
 
 // ---------------------------------------------------------------------------
 class RestartComparePanel : public QWidget

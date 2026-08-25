@@ -302,6 +302,7 @@ CompareResult compareRestarts(const QString& smspecA, const QString& smspecB,
     double porvSum = 0.0;
     for (double v : porv) porvSum += v;
     r.porvWeighted = !porv.empty() && porvSum > 0.0;
+    r.nActive = int(nActA);
     r.gridNote = QStringLiteral("grid %1, %2 active cells, field averages %3")
                      .arg(dimA.isEmpty() ? QStringLiteral("?") : dimA).arg(nActA)
                      .arg(r.porvWeighted ? QStringLiteral("pore-volume weighted")
@@ -393,19 +394,54 @@ DivergenceHeatmap::DivergenceHeatmap(QWidget* parent) : QWidget(parent)
     setMinimumHeight(120);
 }
 
+QString heatmapMetricName(int metric)
+{
+    switch (metric) {
+    case 0:  return QStringLiteral("cells outside tolerance");
+    case 1:  return QStringLiteral("max |A-B|");
+    case 2:  return QStringLiteral("RMS of A-B");
+    case 3:  return QStringLiteral("field average of A");
+    case 4:  return QStringLiteral("field average |A-B|");
+    default: return QStringLiteral("field average |A-B| / |A|");
+    }
+}
+
+QString DivergenceHeatmap::stampFormat(bool full) const
+{
+    if (!r_ || r_->times.size() < 2)
+        return full ? QStringLiteral("yyyy-MM-dd") : QStringLiteral("yyyy-MM");
+    const qint64 s = r_->times.first().secsTo(r_->times.last());
+    if (s < 86400)
+        return full ? QStringLiteral("yyyy-MM-dd HH:mm") : QStringLiteral("HH:mm");
+    if (s < 86400 * 60)
+        return full ? QStringLiteral("yyyy-MM-dd") : QStringLiteral("MM-dd");
+    return full ? QStringLiteral("yyyy-MM-dd") : QStringLiteral("yyyy-MM");
+}
+
 void DivergenceHeatmap::setResult(const CompareResult* r, int metric, bool onlyDiffering)
 {
     r_ = r; metric_ = metric; onlyDiffering_ = onlyDiffering;
     rows_.clear();
+    rowLo_.clear(); rowHi_.clear();
     vmax_ = 0.0;
     if (r_ && r_->ran) {
         for (int i = 0; i < r_->keywords.size(); ++i) {
             const auto& k = r_->keywords[i];
             if (onlyDiffering_ && k.clean()) continue;
             rows_ << i;
-            for (const auto& s : k.steps)
-                vmax_ = std::max(vmax_, metric_ == 0 ? double(s.nBad)
-                                      : metric_ == 1 ? s.maxAbs : s.rms);
+        }
+        // valueAt() reads through rows_, so the scales can only be taken once
+        // the row list is settled.
+        for (int row = 0; row < rows_.size(); ++row) {
+            const int nc = r_->keywords[rows_[row]].steps.size();
+            double lo = 0.0, hi = 0.0;
+            for (int col = 0; col < nc; ++col) {
+                const double v = valueAt(row, col);
+                if (col == 0) { lo = hi = v; }
+                else          { lo = std::min(lo, v); hi = std::max(hi, v); }
+                vmax_ = std::max(vmax_, v);
+            }
+            rowLo_ << lo; rowHi_ << hi;
         }
     }
     updateGeometry();
@@ -418,7 +454,18 @@ double DivergenceHeatmap::valueAt(int row, int col) const
     const auto& k = r_->keywords[rows_[row]];
     if (col < 0 || col >= k.steps.size()) return 0.0;
     const auto& s = k.steps[col];
-    return metric_ == 0 ? double(s.nBad) : metric_ == 1 ? s.maxAbs : s.rms;
+    switch (metric_) {
+    case 0:  return double(s.nBad);
+    case 1:  return s.maxAbs;
+    case 2:  return s.rms;
+    case 3:  return s.aggA;
+    case 4:  return std::abs(s.aggA - s.aggB);
+    // Relative to A, which is the run being compared against. Where A is zero
+    // there is no proportion to take, so the pair is reported as agreeing
+    // rather than as infinitely far apart.
+    default: return std::abs(s.aggA) > 0.0
+                    ? std::abs(s.aggA - s.aggB) / std::abs(s.aggA) : 0.0;
+    }
 }
 
 int DivergenceHeatmap::rowAt(int y) const
@@ -459,15 +506,19 @@ void DivergenceHeatmap::paintEvent(QPaintEvent*)
 
     QFont f = p.font(); f.setPointSizeF(8.0); p.setFont(f);
 
+    const bool valueMode = (metric_ == 3);
+    const bool fracMode  = (metric_ == 0 && r_->nActive > 0);
+
     // Time ruler: first, middle and last date, which is as much as fits and
     // as much as is needed to place a column.
+    const QString fmt = stampFormat(false);
     p.setPen(QColor(0x33, 0x38, 0x3d));
     for (int c : { 0, nT / 2, nT - 1 }) {
         if (c < 0 || c >= nT) continue;
         const int x = int(labelW_ + c * cw);
         p.drawText(QRect(x - 34, 0, 80, 16),
                    c == 0 ? Qt::AlignLeft : (c == nT - 1 ? Qt::AlignRight : Qt::AlignHCenter),
-                   r_->times[c].toString(QStringLiteral("yyyy-MM")));
+                   r_->times[c].toString(fmt));
     }
 
     for (int row = 0; row < rows_.size(); ++row) {
@@ -479,8 +530,23 @@ void DivergenceHeatmap::paintEvent(QPaintEvent*)
         for (int col = 0; col < nT && col < k.steps.size(); ++col) {
             const double v = valueAt(row, col);
             QColor c;
-            if (v <= 0.0) {
+            if (valueMode) {
+                // The quantity itself, not a divergence. Only this property
+                // shares its units, so only this property's own range can
+                // scale it - and the hue stays off the red ramp, because a
+                // large value is not a bad one.
+                const double lo = rowLo_.value(row), hi = rowHi_.value(row);
+                const double t = hi > lo ? std::clamp((v - lo) / (hi - lo), 0.0, 1.0) : 0.0;
+                c = QColor::fromHsvF(0.58, 0.10 + 0.70 * t, 1.0 - 0.16 * t);
+            } else if (v <= 0.0) {
                 c = QColor(0xf2, 0xf5, 0xf8);        // agrees: near-white
+            } else if (fracMode) {
+                // How much of the field differs, against the field itself.
+                // Scaled against the worst cell instead, a single bad cell
+                // out of twenty thousand would paint the row as dark as a
+                // run that had gone wrong everywhere.
+                const double t = std::clamp(v / double(r_->nActive), 0.0, 1.0);
+                c = QColor::fromHsvF(0.13 * (1.0 - t), 0.15 + 0.80 * t, 1.0 - 0.25 * t);
             } else {
                 // Log-scaled: divergence spans orders of magnitude, and on a
                 // linear ramp everything below the worst cell reads as zero.
@@ -513,14 +579,15 @@ bool DivergenceHeatmap::event(QEvent* ev)
         if (row >= 0 && col >= 0) {
             const auto& k = r_->keywords[rows_[row]];
             const double v = valueAt(row, col);
+            // A bare count says little without the field it is drawn from.
+            const QString shown = (metric_ == 0 && r_->nActive > 0)
+                ? QStringLiteral("%1 of %2").arg(v, 0, 'g', 6).arg(r_->nActive)
+                : QStringLiteral("%1").arg(v, 0, 'g', 6);
             QToolTip::showText(he->globalPos(),
                 QStringLiteral("%1\n%2\n%3: %4")
                     .arg(k.keyword,
-                         r_->times[col].toString(QStringLiteral("yyyy-MM-dd")),
-                         metric_ == 0 ? QStringLiteral("cells outside tolerance")
-                                      : metric_ == 1 ? QStringLiteral("max |A-B|")
-                                                     : QStringLiteral("RMS"))
-                    .arg(v, 0, 'g', 6), this);
+                         r_->times[col].toString(stampFormat(true)),
+                         heatmapMetricName(metric_), shown), this);
             return true;
         }
         QToolTip::hideText();
@@ -582,15 +649,18 @@ RestartComparePanel::RestartComparePanel(QWidget* parent)
     note_->setStyleSheet(QStringLiteral("color:#555b61;"));
 
     metric_ = new QComboBox;
-    metric_->addItem(QStringLiteral("cells outside tolerance"));
-    metric_->addItem(QStringLiteral("max |A-B|"));
-    metric_->addItem(QStringLiteral("RMS of A-B"));
+    for (int m = 0; m <= 5; ++m) metric_->addItem(heatmapMetricName(m));
 
     metric_->setToolTip(QStringLiteral(
         "what the overview shows per report date.\n\n"
         "The cell count is usually the most telling: a single pathological "
         "cell dominates max|A-B|, while a count going 0, 0, 3, 47, 1200 shows "
-        "both when the runs parted and how fast they are separating."));
+        "both when the runs parted and how fast they are separating.\n\n"
+        "The last three read the field average itself rather than the spread "
+        "across cells - what the property does over the run, how far the two "
+        "runs' averages sit apart, and that gap as a proportion. The plain "
+        "average is scaled per property, since no two properties share "
+        "units; the others are scaled across the whole map."));
     onlyBad_ = new QCheckBox(QStringLiteral("only properties that differ"));
     onlyBad_->setChecked(true);
     onlyBad_->setToolTip(QStringLiteral(
