@@ -35,6 +35,7 @@
 #include <QTableWidget>
 #include <QTableWidgetItem>
 #include <QScatterSeries>
+#include <QScrollArea>
 #include <QShowEvent>
 #include <QSpinBox>
 #include <QValueAxis>
@@ -384,29 +385,29 @@ CompareResult compareRestarts(const QString& smspecA, const QString& smspecB,
 }
 
 // ===========================================================================
-// DivergenceHeatmap
+// PropertyPlots
 // ===========================================================================
 
-DivergenceHeatmap::DivergenceHeatmap(QWidget* parent) : QWidget(parent)
+PropertyPlots::PropertyPlots(QWidget* parent) : QWidget(parent)
 {
     setMouseTracking(true);
     setAttribute(Qt::WA_Hover, true);
-    setMinimumHeight(120);
+    setMinimumHeight(140);
 }
 
-QString heatmapMetricName(int metric)
+QString overviewMetricName(int metric)
 {
     switch (metric) {
-    case 0:  return QStringLiteral("cells outside tolerance");
-    case 1:  return QStringLiteral("max |A-B|");
-    case 2:  return QStringLiteral("RMS of A-B");
-    case 3:  return QStringLiteral("field average of A");
-    case 4:  return QStringLiteral("field average |A-B|");
-    default: return QStringLiteral("field average |A-B| / |A|");
+    case 0:  return QStringLiteral("A and B");
+    case 1:  return QStringLiteral("difference A - B");
+    case 2:  return QStringLiteral("relative (A - B) / A");
+    case 3:  return QStringLiteral("cells outside tolerance");
+    case 4:  return QStringLiteral("max |A-B|");
+    default: return QStringLiteral("RMS of A-B");
     }
 }
 
-QString DivergenceHeatmap::stampFormat(bool full) const
+QString PropertyPlots::stampFormat(bool full) const
 {
     if (!r_ || r_->times.size() < 2)
         return full ? QStringLiteral("yyyy-MM-dd") : QStringLiteral("yyyy-MM");
@@ -418,28 +419,67 @@ QString DivergenceHeatmap::stampFormat(bool full) const
     return full ? QStringLiteral("yyyy-MM-dd") : QStringLiteral("yyyy-MM");
 }
 
-void DivergenceHeatmap::setResult(const CompareResult* r, int metric, bool onlyDiffering)
+double PropertyPlots::aOf(int row, int col) const
+{
+    if (!r_ || row < 0 || row >= rows_.size()) return 0.0;
+    const auto& k = r_->keywords[rows_[row]];
+    if (col < 0 || col >= k.steps.size()) return 0.0;
+    const auto& s = k.steps[col];
+    switch (metric_) {
+    case 0:  return s.aggA;
+    case 1:  return s.aggA - s.aggB;
+    // Relative to A, the run being compared against. Where A is zero there is
+    // no proportion to take, so the pair is reported as agreeing rather than
+    // as infinitely far apart.
+    case 2:  return std::abs(s.aggA) > 0.0 ? (s.aggA - s.aggB) / std::abs(s.aggA) : 0.0;
+    case 3:  return double(s.nBad);
+    case 4:  return s.maxAbs;
+    default: return s.rms;
+    }
+}
+
+double PropertyPlots::bOf(int row, int col) const
+{
+    if (!r_ || row < 0 || row >= rows_.size()) return 0.0;
+    const auto& k = r_->keywords[rows_[row]];
+    if (col < 0 || col >= k.steps.size()) return 0.0;
+    return k.steps[col].aggB;
+}
+
+void PropertyPlots::setResult(const CompareResult* r, int metric, bool onlyDiffering)
 {
     r_ = r; metric_ = metric; onlyDiffering_ = onlyDiffering;
     rows_.clear();
     rowLo_.clear(); rowHi_.clear();
-    vmax_ = 0.0;
     if (r_ && r_->ran) {
         for (int i = 0; i < r_->keywords.size(); ++i) {
             const auto& k = r_->keywords[i];
             if (onlyDiffering_ && k.clean()) continue;
             rows_ << i;
         }
-        // valueAt() reads through rows_, so the scales can only be taken once
+        // aOf()/bOf() read through rows_, so the scales can only be taken once
         // the row list is settled.
         for (int row = 0; row < rows_.size(); ++row) {
             const int nc = r_->keywords[rows_[row]].steps.size();
             double lo = 0.0, hi = 0.0;
+            bool first = true;
             for (int col = 0; col < nc; ++col) {
-                const double v = valueAt(row, col);
-                if (col == 0) { lo = hi = v; }
-                else          { lo = std::min(lo, v); hi = std::max(hi, v); }
-                vmax_ = std::max(vmax_, v);
+                const double a = aOf(row, col);
+                if (first) { lo = hi = a; first = false; }
+                else       { lo = std::min(lo, a); hi = std::max(hi, a); }
+                if (pairMode()) {
+                    const double b = bOf(row, col);
+                    lo = std::min(lo, b); hi = std::max(hi, b);
+                }
+            }
+            // A difference is read against zero, so zero has to be on the axis.
+            if (metric_ == 1 || metric_ == 2) {
+                lo = std::min(lo, 0.0); hi = std::max(hi, 0.0);
+            }
+            // A curve that never moves still needs a band to sit in.
+            if (hi <= lo) {
+                const double pad = std::abs(hi) > 0.0 ? std::abs(hi) * 0.05 : 1.0;
+                lo -= pad; hi += pad;
             }
             rowLo_ << lo; rowHi_ << hi;
         }
@@ -448,50 +488,68 @@ void DivergenceHeatmap::setResult(const CompareResult* r, int metric, bool onlyD
     update();
 }
 
-double DivergenceHeatmap::valueAt(int row, int col) const
+int PropertyPlots::columns() const
 {
-    if (!r_ || row < 0 || row >= rows_.size()) return 0.0;
-    const auto& k = r_->keywords[rows_[row]];
-    if (col < 0 || col >= k.steps.size()) return 0.0;
-    const auto& s = k.steps[col];
-    switch (metric_) {
-    case 0:  return double(s.nBad);
-    case 1:  return s.maxAbs;
-    case 2:  return s.rms;
-    case 3:  return s.aggA;
-    case 4:  return std::abs(s.aggA - s.aggB);
-    // Relative to A, which is the run being compared against. Where A is zero
-    // there is no proportion to take, so the pair is reported as agreeing
-    // rather than as infinitely far apart.
-    default: return std::abs(s.aggA) > 0.0
-                    ? std::abs(s.aggA - s.aggB) / std::abs(s.aggA) : 0.0;
-    }
+    if (rows_.isEmpty()) return 1;
+    // Wide enough for a curve and its labels; whatever is left over buys
+    // another column rather than a wider one.
+    return std::min(std::max(1, width() / 210), int(rows_.size()));
 }
 
-int DivergenceHeatmap::rowAt(int y) const
+QRect PropertyPlots::plotBox(int i) const
 {
-    if (rows_.isEmpty()) return -1;
-    const double h = double(height() - 18) / rows_.size();
-    const int i = int((y - 18) / std::max(1.0, h));
-    return (i >= 0 && i < rows_.size()) ? i : -1;
+    const int cols = columns();
+    const int nrow = std::max(1, (int(rows_.size()) + cols - 1) / cols);
+    const double w = double(width()) / cols;
+    const double h = double(std::max(height(), nrow * 130)) / nrow;
+    return QRect(int((i % cols) * w), int((i / cols) * h), int(w) - 4, int(h) - 4);
 }
 
-int DivergenceHeatmap::colAt(int x) const
+QRect PropertyPlots::frameOf(const QRect& box) const
+{
+    // Room above for the name and the range, below for the dates. The range
+    // sits up there rather than in a left gutter because a gutter wide enough
+    // for -1.00985e-05 is most of a small plot's width.
+    return box.adjusted(6, 15, -6, -13);
+}
+
+int PropertyPlots::plotAt(const QPoint& pt) const
+{
+    for (int i = 0; i < rows_.size(); ++i)
+        if (plotBox(i).contains(pt)) return i;
+    return -1;
+}
+
+double PropertyPlots::xOf(const QRect& fr, const QDateTime& t) const
+{
+    if (!r_ || r_->times.size() < 2) return fr.center().x();
+    const qint64 span = r_->times.first().msecsTo(r_->times.last());
+    if (span <= 0) return fr.center().x();
+    return fr.left() + double(r_->times.first().msecsTo(t)) / double(span) * fr.width();
+}
+
+int PropertyPlots::stepAt(const QRect& fr, int x) const
 {
     if (!r_ || r_->times.isEmpty()) return -1;
-    const double w = double(width() - labelW_) / r_->times.size();
-    const int i = int((x - labelW_) / std::max(1.0, w));
-    return (i >= 0 && i < r_->times.size()) ? i : -1;
+    int best = 0;
+    double bd = -1.0;
+    for (int i = 0; i < r_->times.size(); ++i) {
+        const double d = std::abs(xOf(fr, r_->times[i]) - double(x));
+        if (bd < 0.0 || d < bd) { bd = d; best = i; }
+    }
+    return best;
 }
 
-QSize DivergenceHeatmap::minimumSizeHint() const
+QSize PropertyPlots::minimumSizeHint() const
 {
-    return { 320, 18 + 14 * std::max(1, int(rows_.size())) };
+    const int cols = columns();
+    return { 320, std::max(1, (int(rows_.size()) + cols - 1) / cols) * 130 };
 }
 
-void DivergenceHeatmap::paintEvent(QPaintEvent*)
+void PropertyPlots::paintEvent(QPaintEvent*)
 {
     QPainter p(this);
+    p.setRenderHint(QPainter::Antialiasing, true);
     p.fillRect(rect(), Qt::white);
     if (!r_ || !r_->ran || rows_.isEmpty() || r_->times.isEmpty()) {
         p.setPen(QColor(0x88, 0x8e, 0x94));
@@ -500,94 +558,112 @@ void DivergenceHeatmap::paintEvent(QPaintEvent*)
                                  : QStringLiteral("no comparison yet"));
         return;
     }
-    const int nT = r_->times.size();
-    const double cw = double(width() - labelW_) / nT;
-    const double ch = double(height() - 18) / rows_.size();
 
-    QFont f = p.font(); f.setPointSizeF(8.0); p.setFont(f);
-
-    const bool valueMode = (metric_ == 3);
-    const bool fracMode  = (metric_ == 0 && r_->nActive > 0);
-
-    // Time ruler: first, middle and last date, which is as much as fits and
-    // as much as is needed to place a column.
+    const QColor colA(0x1f, 0x77, 0xb4), colB(0xd6, 0x27, 0x28);
     const QString fmt = stampFormat(false);
-    p.setPen(QColor(0x33, 0x38, 0x3d));
-    for (int c : { 0, nT / 2, nT - 1 }) {
-        if (c < 0 || c >= nT) continue;
-        const int x = int(labelW_ + c * cw);
-        p.drawText(QRect(x - 34, 0, 80, 16),
-                   c == 0 ? Qt::AlignLeft : (c == nT - 1 ? Qt::AlignRight : Qt::AlignHCenter),
-                   r_->times[c].toString(fmt));
-    }
+    QFont ft = p.font(); ft.setPointSizeF(7.5);
 
-    for (int row = 0; row < rows_.size(); ++row) {
-        const auto& k = r_->keywords[rows_[row]];
-        const int y = int(18 + row * ch);
-        p.setPen(QColor(0x22, 0x26, 0x2b));
-        p.drawText(QRect(2, y, labelW_ - 6, int(ch)),
-                   Qt::AlignVCenter | Qt::AlignRight, k.keyword);
-        for (int col = 0; col < nT && col < k.steps.size(); ++col) {
-            const double v = valueAt(row, col);
-            QColor c;
-            if (valueMode) {
-                // The quantity itself, not a divergence. Only this property
-                // shares its units, so only this property's own range can
-                // scale it - and the hue stays off the red ramp, because a
-                // large value is not a bad one.
-                const double lo = rowLo_.value(row), hi = rowHi_.value(row);
-                const double t = hi > lo ? std::clamp((v - lo) / (hi - lo), 0.0, 1.0) : 0.0;
-                c = QColor::fromHsvF(0.58, 0.10 + 0.70 * t, 1.0 - 0.16 * t);
-            } else if (v <= 0.0) {
-                c = QColor(0xf2, 0xf5, 0xf8);        // agrees: near-white
-            } else if (fracMode) {
-                // How much of the field differs, against the field itself.
-                // Scaled against the worst cell instead, a single bad cell
-                // out of twenty thousand would paint the row as dark as a
-                // run that had gone wrong everywhere.
-                const double t = std::clamp(v / double(r_->nActive), 0.0, 1.0);
-                c = QColor::fromHsvF(0.13 * (1.0 - t), 0.15 + 0.80 * t, 1.0 - 0.25 * t);
-            } else {
-                // Log-scaled: divergence spans orders of magnitude, and on a
-                // linear ramp everything below the worst cell reads as zero.
-                const double t = vmax_ > 0.0
-                    ? std::clamp(std::log10(v + 1e-30) - std::log10(vmax_ * 1e-4), 0.0, 4.0) / 4.0
-                    : 0.0;
-                c = QColor::fromHsvF(0.13 * (1.0 - t), 0.15 + 0.80 * t, 1.0 - 0.25 * t);
-            }
-            p.fillRect(QRectF(labelW_ + col * cw, y, std::max(1.0, cw), std::max(1.0, ch)), c);
+    for (int i = 0; i < rows_.size(); ++i) {
+        const auto& k = r_->keywords[rows_[i]];
+        const QRect box = plotBox(i);
+        const QRect fr  = frameOf(box);
+        if (fr.width() < 8 || fr.height() < 8) continue;
+
+        const double lo = rowLo_.value(i), hi = rowHi_.value(i);
+        const QRect titleRow(box.left() + 2, box.top(), box.width() - 4, 14);
+
+        // Name it, and say in the naming whether this one is clean - it saves
+        // reading every curve to find the one that moved.
+        QFont tf = ft; tf.setBold(!k.clean()); p.setFont(tf);
+        p.setPen(k.clean() ? QColor(0x55, 0x5b, 0x61) : QColor(0xb3, 0x1f, 0x1f));
+        p.drawText(titleRow, Qt::AlignLeft | Qt::AlignVCenter, k.keyword);
+
+        // What the curve is drawn between. Without it the shape says only that
+        // something moved, not whether it moved by a bar or by a millionth.
+        p.setFont(ft);
+        p.setPen(QColor(0x88, 0x8e, 0x94));
+        p.drawText(titleRow, Qt::AlignRight | Qt::AlignVCenter,
+                   QStringLiteral("%1 .. %2").arg(QString::number(lo, 'g', 6),
+                                                  QString::number(hi, 'g', 6)));
+
+        p.setPen(QColor(0xe4, 0xe8, 0xec));
+        p.drawRect(fr);
+
+        const auto yOf = [&](double v) {
+            return fr.bottom() - std::clamp((v - lo) / (hi - lo), 0.0, 1.0) * fr.height();
+        };
+
+        // Zero is what a difference is read against, so put it on the picture.
+        if ((metric_ == 1 || metric_ == 2) && lo < 0.0 && hi > 0.0) {
+            p.setPen(QPen(QColor(0xc4, 0xc9, 0xce), 1.0, Qt::DashLine));
+            p.drawLine(QPointF(fr.left(), yOf(0.0)), QPointF(fr.right(), yOf(0.0)));
         }
+
+        const int nc = std::min(int(k.steps.size()), int(r_->times.size()));
+        const auto curve = [&](bool isB) {
+            QPolygonF pts;
+            for (int c = 0; c < nc; ++c)
+                pts << QPointF(xOf(fr, r_->times[c]), yOf(isB ? bOf(i, c) : aOf(i, c)));
+            return pts;
+        };
+
+        // B first, so A is never buried under it where the two agree.
+        if (pairMode()) {
+            const QPolygonF pb = curve(true);
+            p.setPen(QPen(colB, 1.6, Qt::DashLine));
+            p.drawPolyline(pb);
+            p.setPen(QPen(colB, 1.2));
+            p.setBrush(Qt::NoBrush);
+            for (const QPointF& q : pb) p.drawRect(QRectF(q.x() - 2.0, q.y() - 2.0, 4.0, 4.0));
+        }
+        const QPolygonF pa = curve(false);
+        p.setPen(QPen(colA, 1.6));
+        p.drawPolyline(pa);
+        p.setBrush(colA);
+        for (const QPointF& q : pa) p.drawEllipse(q, 2.0, 2.0);
+        p.setBrush(Qt::NoBrush);
+
+        // The numbers that make this a plot rather than a shape: the two ends
+        // of the property's own range, and the span of the run beneath it.
+        p.setPen(QColor(0x88, 0x8e, 0x94));
+        p.drawText(QRect(fr.left(), box.bottom() - 12, fr.width() / 2, 12),
+                   Qt::AlignLeft | Qt::AlignVCenter, r_->times.first().toString(fmt));
+        p.drawText(QRect(fr.left() + fr.width() / 2, box.bottom() - 12, fr.width() / 2, 12),
+                   Qt::AlignRight | Qt::AlignVCenter, r_->times.last().toString(fmt));
     }
-    p.setPen(QColor(0xdc, 0xe0, 0xe4));
-    p.drawRect(QRect(labelW_, 18, width() - labelW_ - 1, height() - 19));
 }
 
-void DivergenceHeatmap::mousePressEvent(QMouseEvent* ev)
+void PropertyPlots::mousePressEvent(QMouseEvent* ev)
 {
-    const int row = rowAt(int(ev->position().y()));
-    const int col = colAt(int(ev->position().x()));
-    if (row < 0 || col < 0 || !r_) return;
-    emit cellPicked(r_->keywords[rows_[row]].keyword, r_->times[col]);
+    const QPoint pt = ev->position().toPoint();
+    const int i = plotAt(pt);
+    if (i < 0 || !r_) return;
+    const int c = stepAt(frameOf(plotBox(i)), pt.x());
+    if (c >= 0) emit cellPicked(r_->keywords[rows_[i]].keyword, r_->times[c]);
 }
 
-bool DivergenceHeatmap::event(QEvent* ev)
+bool PropertyPlots::event(QEvent* ev)
 {
     if (ev->type() == QEvent::ToolTip && r_ && r_->ran) {
         auto* he = static_cast<QHelpEvent*>(ev);
-        const int row = rowAt(he->pos().y());
-        const int col = colAt(he->pos().x());
-        if (row >= 0 && col >= 0) {
-            const auto& k = r_->keywords[rows_[row]];
-            const double v = valueAt(row, col);
-            // A bare count says little without the field it is drawn from.
-            const QString shown = (metric_ == 0 && r_->nActive > 0)
-                ? QStringLiteral("%1 of %2").arg(v, 0, 'g', 6).arg(r_->nActive)
-                : QStringLiteral("%1").arg(v, 0, 'g', 6);
+        const int i = plotAt(he->pos());
+        const int c = i >= 0 ? stepAt(frameOf(plotBox(i)), he->pos().x()) : -1;
+        if (i >= 0 && c >= 0) {
+            QString body;
+            if (pairMode())
+                body = QStringLiteral("A  %1\nB  %2")
+                           .arg(aOf(i, c), 0, 'g', 6).arg(bOf(i, c), 0, 'g', 6);
+            else if (metric_ == 3 && r_->nActive > 0)
+                // A bare count says little without the field it is drawn from.
+                body = QStringLiteral("%1: %2 of %3").arg(overviewMetricName(metric_))
+                           .arg(aOf(i, c), 0, 'g', 6).arg(r_->nActive);
+            else
+                body = QStringLiteral("%1: %2").arg(overviewMetricName(metric_))
+                           .arg(aOf(i, c), 0, 'g', 6);
             QToolTip::showText(he->globalPos(),
-                QStringLiteral("%1\n%2\n%3: %4")
-                    .arg(k.keyword,
-                         r_->times[col].toString(stampFormat(true)),
-                         heatmapMetricName(metric_), shown), this);
+                QStringLiteral("%1\n%2\n%3").arg(r_->keywords[rows_[i]].keyword,
+                                                 r_->times[c].toString(stampFormat(true)),
+                                                 body), this);
             return true;
         }
         QToolTip::hideText();
@@ -649,32 +725,40 @@ RestartComparePanel::RestartComparePanel(QWidget* parent)
     note_->setStyleSheet(QStringLiteral("color:#555b61;"));
 
     metric_ = new QComboBox;
-    for (int m = 0; m <= 5; ++m) metric_->addItem(heatmapMetricName(m));
+    for (int m = 0; m <= 5; ++m) metric_->addItem(overviewMetricName(m));
 
     metric_->setToolTip(QStringLiteral(
-        "what the overview shows per report date.\n\n"
-        "The cell count is usually the most telling: a single pathological "
-        "cell dominates max|A-B|, while a count going 0, 0, 3, 47, 1200 shows "
-        "both when the runs parted and how fast they are separating.\n\n"
-        "The last three read the field average itself rather than the spread "
-        "across cells - what the property does over the run, how far the two "
-        "runs' averages sit apart, and that gap as a proportion. The plain "
-        "average is scaled per property, since no two properties share "
-        "units; the others are scaled across the whole map."));
+        "what each property's plot draws against time.\n\n"
+        "A and B puts both runs' field averages on one pair of axes - the "
+        "comparison itself, and where the two lines part is where the runs "
+        "did. The difference and the relative difference collapse that to a "
+        "single line against zero, which is easier to read once the two "
+        "curves are too close to tell apart.\n\n"
+        "The last three measure the spread across cells instead of the "
+        "average: how many cells are out, the worst one, and the RMS. A "
+        "count going 0, 0, 3, 47, 1200 shows both when the runs parted and "
+        "how fast they are separating."));
     onlyBad_ = new QCheckBox(QStringLiteral("only properties that differ"));
     onlyBad_->setChecked(true);
     onlyBad_->setToolTip(QStringLiteral(
         "hide the properties that agree everywhere - usually most of them"));
 
+    // The plots are too small to carry a legend apiece, and every one of them
+    // uses the same two pens, so the key belongs here and once.
+    overviewKey_ = new QLabel(QStringLiteral(
+        "<span style='color:#1f77b4'>&#9679;&#8212;&#8212;</span> A &nbsp;&nbsp;"
+        "<span style='color:#d62728'>&#9633;&#8211;&#8211;</span> B"));
+
     auto* mrow = new QHBoxLayout;
     mrow->addWidget(new QLabel(QStringLiteral("Show:")));
     mrow->addWidget(metric_);
     mrow->addWidget(onlyBad_);
+    mrow->addWidget(overviewKey_);
     mrow->addStretch(1);
 
-    // Overview first. With a dozen properties a line apiece is a tangle, and
-    // the question to answer first is which property and when, not by how much.
-    heat_ = new DivergenceHeatmap;
+    // Overview first: one small plot per property, so which properties moved
+    // and by how much are answered in the same glance.
+    heat_ = new PropertyPlots;
 
     // The cell-values view: the heatmap says which property and when; this
     // shows how - the field itself, cell by cell, at one date.
@@ -779,7 +863,14 @@ RestartComparePanel::RestartComparePanel(QWidget* parent)
     }
 
     views_ = new QTabWidget;
-    views_->addTab(heat_, QStringLiteral("Overview"));
+    // A plot per property needs room a colour band did not: past a dozen or so
+    // properties the grid is taller than the panel, so let it scroll rather
+    // than squeezing every plot down to a smear.
+    auto* heatScroll = new QScrollArea;
+    heatScroll->setWidget(heat_);
+    heatScroll->setWidgetResizable(true);
+    heatScroll->setFrameShape(QFrame::NoFrame);
+    views_->addTab(heatScroll, QStringLiteral("Overview"));
     views_->addTab(cellView_, QStringLiteral("Cell values"));
     views_->addTab(histView_, QStringLiteral("Cell history"));
 
@@ -891,7 +982,7 @@ RestartComparePanel::RestartComparePanel(QWidget* parent)
     connect(onlyBad_, &QCheckBox::toggled, this, [this](bool) { replot(); });
     // A cell of the overview is a property at a date, which is exactly what
     // the detail view wants to be told.
-    connect(heat_, &DivergenceHeatmap::cellPicked, this,
+    connect(heat_, &PropertyPlots::cellPicked, this,
             [this](const QString& kw, const QDateTime& when) { pickFromHeatmap(kw, when); });
     connect(table_, &QTableWidget::itemSelectionChanged, this, [this] {
         const int row = table_->currentRow();
@@ -1748,7 +1839,11 @@ void RestartComparePanel::showResult()
 
 void RestartComparePanel::replot()
 {
-    heat_->setResult(&result_, metric_->currentIndex(), onlyBad_->isChecked());
+    const int m = metric_->currentIndex();
+    // Every other measure is a single curve, and a key naming two pens would
+    // then name one that is not on the picture.
+    overviewKey_->setVisible(m == 0);
+    heat_->setResult(&result_, m, onlyBad_->isChecked());
 }
 
 } // namespace flowgui

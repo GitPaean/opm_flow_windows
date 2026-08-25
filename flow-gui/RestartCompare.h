@@ -131,15 +131,17 @@ CompareResult compareRestarts(const QString& smspecA, const QString& smspecB,
                               std::atomic<bool>* cancel = nullptr);
 
 // ---------------------------------------------------------------------------
-// Properties down, time across, colour for how far apart the two runs are.
-// The overview: with a dozen or more properties a line per property is a
-// tangle, and the question it has to answer first is WHICH property and WHEN,
-// not by how much.
-class DivergenceHeatmap : public QWidget
+// One small plot per property, laid out in a grid: A against B, over the run.
+// The overview has to answer two questions - which properties moved, and by
+// how much - and a colour map can only answer the first. A shade carries one
+// number, and two runs cannot be compared by one number: the eye needs both
+// values against an axis. So every property gets a small plot of its own, on
+// its own y scale, and the set is still read at a single glance.
+class PropertyPlots : public QWidget
 {
     Q_OBJECT
 public:
-    explicit DivergenceHeatmap(QWidget* parent = nullptr);
+    explicit PropertyPlots(QWidget* parent = nullptr);
     void setResult(const CompareResult* r, int metric, bool onlyDiffering);
 
 signals:
@@ -152,25 +154,27 @@ protected:
     QSize minimumSizeHint() const override;
 
 private:
-    int rowAt(int y) const;
-    int colAt(int x) const;
-    double valueAt(int row, int col) const;
-    // Column labels: a run of sub-day steps must not print one month per column.
+    int    columns() const;
+    QRect  plotBox(int i) const;              // the whole tile, title included
+    QRect  frameOf(const QRect& box) const;   // just the drawing area
+    int    plotAt(const QPoint& p) const;
+    int    stepAt(const QRect& fr, int x) const;
+    double aOf(int row, int col) const;       // the A curve, or the lone measure
+    double bOf(int row, int col) const;       // only drawn when comparing A to B
+    bool   pairMode() const { return metric_ == 0; }
+    double xOf(const QRect& fr, const QDateTime& t) const;
     QString stampFormat(bool full) const;
 
     const CompareResult* r_ = nullptr;
     int  metric_ = 0;
     bool onlyDiffering_ = true;
     QVector<int> rows_;      // indices into r_->keywords, in display order
-    double vmax_ = 0.0;
-    // Per-property range, for the measure carried in the property's own units:
-    // nothing else on the map shares them, so nothing else can set its scale.
+    // Each property is scaled against itself: nothing else shares its units.
     QVector<double> rowLo_, rowHi_;
-    int    labelW_ = 90;
 };
 
-// What the overview colours, in the order the picker offers them.
-QString heatmapMetricName(int metric);
+// What each small plot draws, in the order the picker offers them.
+QString overviewMetricName(int metric);
 
 // ---------------------------------------------------------------------------
 class RestartComparePanel : public QWidget
@@ -237,7 +241,8 @@ private:
     QLabel*         verdict_ = nullptr;
     QLabel*         note_    = nullptr;
     QTabWidget*     views_  = nullptr;
-    DivergenceHeatmap* heat_ = nullptr;
+    PropertyPlots* heat_ = nullptr;
+    QLabel*        overviewKey_ = nullptr;   // which pen is A, which is B
     QTableWidget*   table_  = nullptr;
     QComboBox*      detailMode_ = nullptr;
     QComboBox*      detailPick_ = nullptr;

@@ -130,8 +130,13 @@ results, animate them in 3D, and edit decks — all in one window.
   and how? Each UNRST cell field is reduced per report date to
   cells-outside-tolerance, max |A−B| and RMS, using compareECL's own
   significance test, so a green verdict means what a green regression test
-  means. The **Overview** heatmap (properties × dates) shows which property
-  parted and when; **Cell values** shows how at one date — one property,
+  means. The **Overview** gives every property its own small plot over the
+  run — A solid, B dashed, on the property's own scale with the range
+  printed, since a colour can carry one number and two runs cannot be
+  compared by one number. Its picker swaps all of them at once between the
+  two runs' field averages, their difference, that difference as a
+  proportion, and the per-cell measures (cells outside tolerance, max |A−B|,
+  RMS); **Cell values** shows how at one date — one property,
   cell by cell: both runs against the active-cell index (for a 1D column,
   the profile), their difference, or A against B as a scatter about the
   diagonal; **Cell history** follows one cell of one property through time,
@@ -141,9 +146,9 @@ results, animate them in 3D, and edit decks — all in one window.
   pick-and-look; their captions count what falls outside the same
   tolerances. Steps are paired by calendar date (clock included when a run
   reports within a day), never by position in the file, so runs that report
-  at different times are not compared at different moments. Clicking a
-  heatmap cell aims the detail table, the Cell values view, and the Cell
-  history view — the latter at the very cell the comparison found worst
+  at different times are not compared at different moments. Clicking a point
+  on an Overview plot aims the detail table, the Cell values view, and the
+  Cell history view — the latter at the very cell the comparison found worst
   there.
 - **Deck Editor tab** — edit the deck and its INCLUDE files directly: a
   section tree (RUNSPEC ... SCHEDULE) lists every keyword with file and
