@@ -207,10 +207,21 @@ CompareResult compareRestarts(const QString& smspecA, const QString& smspecB,
     const auto stop = [cancel] { return cancel && cancel->load(); };
     const auto tick = [progress](int p) { if (progress) progress->store(p); };
 
-    if (!QFileInfo::exists(pa) || !QFileInfo::exists(pb)) {
+    const bool hasA = QFileInfo::exists(pa), hasB = QFileInfo::exists(pb);
+    if (!hasA || !hasB) {
+        // Two runs of one case share a file name, so naming the file says
+        // nothing about which side is missing it - name the side, and the
+        // folder that tells the two apart. Both can be missing at once.
+        const auto where = [](const QString& p) {
+            const QFileInfo fi(p);
+            return QStringLiteral("%1 (%2)")
+                .arg(fi.fileName(), QDir(fi.absolutePath()).dirName());
+        };
+        QStringList miss;
+        if (!hasA) miss << QStringLiteral("A: %1").arg(where(pa));
+        if (!hasB) miss << QStringLiteral("B: %1").arg(where(pb));
         r.problem = QStringLiteral("no restart file for %1")
-                        .arg(QFileInfo::exists(pa) ? QFileInfo(pb).fileName()
-                                                   : QFileInfo(pa).fileName());
+                        .arg(miss.join(QStringLiteral(", ")));
         return r;
     }
     std::unique_ptr<ERst> A, B;
