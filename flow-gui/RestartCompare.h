@@ -170,7 +170,11 @@ private:
     bool onlyDiffering_ = true;
     QVector<int> rows_;      // indices into r_->keywords, in display order
     // Each property is scaled against itself: nothing else shares its units.
-    QVector<double> rowLo_, rowHi_;
+    // The axis may be held wider than the data to keep a close pair looking
+    // close, so what was drawn and what was measured are kept apart - the
+    // caption has to quote the values, not the bounds the floor invented.
+    QVector<double> rowLo_, rowHi_;      // the axis
+    QVector<double> dataLo_, dataHi_;    // what the numbers actually span
 };
 
 // What each small plot draws, in the order the picker offers them.

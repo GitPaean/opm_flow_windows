@@ -143,6 +143,11 @@ namespace flowgui {
 // closer than that and the row of them reads as a band, not as points.
 constexpr double kMarkerPitch = 2.5;
 
+// An overview plot of A against B never spans less than this share of the
+// property's own magnitude. Two runs that agree to five digits then draw as
+// one flat line, which is what agreeing looks like.
+constexpr double kMinRelSpan = 0.02;
+
 bool CompareResult::sameEnd() const
 {
     return endA.isValid() && endB.isValid() && endA == endB;
@@ -451,6 +456,7 @@ void PropertyPlots::setResult(const CompareResult* r, int metric, bool onlyDiffe
     r_ = r; metric_ = metric; onlyDiffering_ = onlyDiffering;
     rows_.clear();
     rowLo_.clear(); rowHi_.clear();
+    dataLo_.clear(); dataHi_.clear();
     if (r_ && r_->ran) {
         for (int i = 0; i < r_->keywords.size(); ++i) {
             const auto& k = r_->keywords[i];
@@ -460,8 +466,9 @@ void PropertyPlots::setResult(const CompareResult* r, int metric, bool onlyDiffe
         // aOf()/bOf() read through rows_, so the scales can only be taken once
         // the row list is settled.
         for (int row = 0; row < rows_.size(); ++row) {
-            const int nc = r_->keywords[rows_[row]].steps.size();
-            double lo = 0.0, hi = 0.0;
+            const auto& kk = r_->keywords[rows_[row]];
+            const int nc = kk.steps.size();
+            double lo = 0.0, hi = 0.0, mag = 0.0;
             bool first = true;
             for (int col = 0; col < nc; ++col) {
                 const double a = aOf(row, col);
@@ -471,10 +478,31 @@ void PropertyPlots::setResult(const CompareResult* r, int metric, bool onlyDiffe
                     const double b = bOf(row, col);
                     lo = std::min(lo, b); hi = std::max(hi, b);
                 }
+                // How big this property is, whatever the measure being drawn.
+                mag = std::max(mag, std::max(std::abs(kk.steps[col].aggA),
+                                             std::abs(kk.steps[col].aggB)));
             }
-            // A difference is read against zero, so zero has to be on the axis.
+            // A difference is read against zero, so zero has to be on the axis;
+            // a count or a magnitude starts there for the same reason.
             if (metric_ == 1 || metric_ == 2) {
                 lo = std::min(lo, 0.0); hi = std::max(hi, 0.0);
+            }
+            if (metric_ >= 3) lo = std::min(lo, 0.0);
+            dataLo_ << lo; dataHi_ << hi;
+            // Two runs agreeing to five digits must not be drawn as a chasm.
+            // An axis fitted to the data alone does exactly that - it spends
+            // the full height on whatever spread it finds, so a hundredth of a
+            // percent and a blow-up come out the same shape. Hold the axis to a
+            // share of the property's own size and closeness looks like
+            // closeness. The difference modes are left to fit, because
+            // magnifying the gap is the whole of what they are for.
+            if (pairMode() && mag > 0.0) {
+                const double floorSpan = kMinRelSpan * mag;
+                if (hi - lo < floorSpan) {
+                    const double mid = 0.5 * (lo + hi);
+                    lo = mid - 0.5 * floorSpan;
+                    hi = mid + 0.5 * floorSpan;
+                }
             }
             // A curve that never moves still needs a band to sit in.
             if (hi <= lo) {
@@ -578,13 +606,15 @@ void PropertyPlots::paintEvent(QPaintEvent*)
         p.setPen(k.clean() ? QColor(0x55, 0x5b, 0x61) : QColor(0xb3, 0x1f, 0x1f));
         p.drawText(titleRow, Qt::AlignLeft | Qt::AlignVCenter, k.keyword);
 
-        // What the curve is drawn between. Without it the shape says only that
+        // What the numbers actually span - not the axis, which is held wider
+        // when the two runs are close. Without it the shape says only that
         // something moved, not whether it moved by a bar or by a millionth.
         p.setFont(ft);
         p.setPen(QColor(0x88, 0x8e, 0x94));
         p.drawText(titleRow, Qt::AlignRight | Qt::AlignVCenter,
-                   QStringLiteral("%1 .. %2").arg(QString::number(lo, 'g', 6),
-                                                  QString::number(hi, 'g', 6)));
+                   QStringLiteral("%1 .. %2")
+                       .arg(QString::number(dataLo_.value(i), 'g', 6),
+                            QString::number(dataHi_.value(i), 'g', 6)));
 
         p.setPen(QColor(0xe4, 0xe8, 0xec));
         p.drawRect(fr);
