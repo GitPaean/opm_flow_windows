@@ -176,3 +176,102 @@ underneath the step.
 
 These two compose: rank by regression, then play the ranked list — which
 is close to an automatic review of what changed between two runs.
+
+---
+
+## 6. Scale the Compare overview by the tolerance rather than by a guess
+
+Each overview plot holds its axis open to `kMinRelSpan` — a fixed share
+of the property's own magnitude — so that two runs which agree are not
+drawn as a chasm. That constant reached its present value by being tried
+and looked at: fitted to the data every property screamed; at a fiftieth
+a one-percent gap still filled most of the frame; anchored at zero every
+curve went flat against an empty frame. A seventh looks right on the
+cases it was tried on. Nothing says it is right on a case with different
+numbers in it, and the next person to find it too loud or too quiet has
+no way to reason about it — only the same eye and a different case.
+
+The tolerance is the honest yardstick. The tab already asks for `abs`
+and `rel` and defines "these runs agree" by them, so an axis scaled in
+units of the tolerance would make *flat* mean exactly *passes the test* —
+and a curve with visible shape mean exactly *does not*. The picture and
+the verdict would then be the same statement, and a number nobody chose
+by eye would set the scale.
+
+*Where it would go:* `PropertyPlots::setResult()` computes `rowLo_`/
+`rowHi_` and applies `kMinRelSpan` there. The blocker is small and worth
+naming: `DiffTol` is passed to `compareRestarts()` (`RestartCompare.h`)
+but never stored on `CompareResult`, so the plots cannot currently see
+the tolerances at all. Putting it on the result is the prerequisite.
+
+*Worth weighing before doing it:* the tolerance is a per-cell test, while
+these plots draw the field average, so scaling one by the other is not
+the tidy identity it first looks like — see the next idea. And a run
+compared at a deliberately loose tolerance would flatten everything,
+which is either exactly right or a trap, depending on why it was
+loosened.
+
+---
+
+## 7. Say why a property's name is red above a flat curve
+
+A property whose name is red and bold in the overview has cells outside
+tolerance. Its curve is the pore-volume weighted field average. Those are
+different scopes, and they disagree in a way that is entirely possible
+and reads as a contradiction: on `COMP_EQUIL_1D_VERTICAL` against its
+rerun, `PRESSURE` has 30 cells outside tolerance and a max |A−B| of
+0.0267, while the two runs' field averages sit less than 0.01% apart —
+so the name says *this differs* directly above a flat line and a caption
+reading `gap < 0.01%`.
+
+Both are true. Averaging is what hides it: a bounded disagreement spread
+over 20 cells barely moves a mean, and on a real field a handful of bad
+cells in ten thousand never will. The overview is not wrong here, but it
+is quietly inviting the wrong conclusion — that the property is fine.
+
+The fix is probably a sentence, not a feature: the per-cell measures are
+already in the picker (`cells outside tolerance`, `max |A-B|`, `RMS`) and
+already tell the other half of the story. What is missing is anything
+that says to go and look at them.
+
+*Where it would go:* `PropertyPlots::paintEvent()` draws the name from
+`k.clean()` and the caption from `rowRel_`; both halves are in hand at
+the same moment, so the case of *not clean, but the averages agree* can
+be detected exactly where it is drawn.
+
+---
+
+## 8. A supported way to drive the tab for a screenshot
+
+Checking that a change to a plot actually looks right means opening two
+cases, pressing Compare, switching to a view, setting a control and
+looking — and there is no way to ask the program to do that. The
+workaround is to add a temporary block to `FlowGuiWindow`'s constructor
+that reads a few environment variables and fires timed lambdas at the
+widgets, take the screenshots, then strip it out again.
+
+That workaround was written, extended, stripped and rewritten several
+times over one afternoon's work on the Compare tab, and it earns its
+place here on the strength of what it caught: markers that were never
+actually switched on because the code assumed `findChildren` returns
+widgets in construction order, and it does not — the box being ticked
+was the other one, already ticked, so the feature looked implemented and
+had never once run. No amount of re-reading the diff would have found
+that. Only driving it did.
+
+Against that, every rebuild ships whatever is in the constructor, and the
+block is `// TEMP` in a file that is otherwise released. It has to be
+checked for in the binary before every commit, which is not a safe thing
+to depend on remembering.
+
+*What it might be:* small and honest rather than a test framework — a
+switch, off unless asked for, that opens the named cases, selects a tab
+and view, sets named controls, and exits. Enough to make the picture in a
+commit message reproducible by whoever reads it.
+
+*Where it would go:* `FlowGuiWindow`'s constructor already has
+`openCaseEverywhere()` for the cases, and the tabs and views are ordinary
+`QTabWidget`s. The lesson from the bug above is the design constraint:
+address controls by what they *are* — the tooltip, the text, the
+property they belong to — never by their position in a `findChildren`
+list, which is not the order they were built in.
