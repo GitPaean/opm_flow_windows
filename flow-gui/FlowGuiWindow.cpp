@@ -194,6 +194,57 @@ QString FlowGuiWindow::resolveSimulator() const
     return findFlowExe();
 }
 
+namespace {
+
+// How old a binary is. A path says WHICH build will run; only a date says
+// whether it is still the source you think you are testing - and with a list
+// of builds to switch between, the stale one looks exactly like the fresh one.
+// The file's own timestamp is used rather than a stamp compiled into it: it
+// needs no cooperation from the thing being measured, so it is just as good
+// for a flow built elsewhere, and it cannot go stale when one translation
+// unit is rebuilt and another is not.
+QString ageOf(const QDateTime& built)
+{
+    const qint64 mins = built.secsTo(QDateTime::currentDateTime()) / 60;
+    if (mins < 2)          return QStringLiteral("just now");
+    if (mins < 60)         return QStringLiteral("%1 minutes ago").arg(mins);
+    if (mins < 60 * 48)    return QStringLiteral("%1 hours ago").arg(mins / 60);
+    return QStringLiteral("%1 days ago").arg(mins / (60 * 24));
+}
+
+// Past this, a build is old enough to be worth a second look before trusting
+// a result that came out of it.
+constexpr qint64 kStaleDays = 30;
+
+} // namespace
+
+void FlowGuiWindow::updateSimulatorAge()
+{
+    if (!simAge_) return;
+    const QString exe = resolveSimulator();
+    const QFileInfo fi(exe);
+    if (exe.isEmpty() || !fi.exists()) {
+        simAge_->setText(QStringLiteral("not found"));
+        simAge_->setStyleSheet(QStringLiteral("color:#b31f1f;"));
+        simAge_->setToolTip(QStringLiteral(
+            "no flow executable at this path - pick one with Browse"));
+        return;
+    }
+    const QDateTime built = fi.lastModified();
+    const qint64 days = built.daysTo(QDateTime::currentDateTime());
+    simAge_->setText(QStringLiteral("built %1  (%2)")
+                         .arg(built.toString(QStringLiteral("yyyy-MM-dd HH:mm")),
+                              ageOf(built)));
+    simAge_->setStyleSheet(days >= kStaleDays ? QStringLiteral("color:#a8500d;")
+                                              : QStringLiteral("color:#555b61;"));
+    simAge_->setToolTip(QStringLiteral(
+        "when this flow was last written - its own file date, so it holds for "
+        "a build made anywhere.\n\nIt turns amber past %1 days, which is not a "
+        "verdict on the build, only a reminder to check it is the one you "
+        "meant before reading much into what it produces.")
+            .arg(kStaleDays));
+}
+
 QString FlowGuiWindow::findFlowExe()
 {
 #ifdef Q_OS_WIN
@@ -263,6 +314,10 @@ FlowGuiWindow::FlowGuiWindow()
         row->addWidget(simBox_, 1);
         auto* bsim = new QPushButton(QStringLiteral("Browse..."));
         row->addWidget(bsim);
+        // Beside the picker, not only in the log: the log scrolls away behind
+        // a run's output, and this is wanted at the moment of choosing.
+        simAge_ = new QLabel;
+        row->addWidget(simAge_);
         top->addLayout(row);
         connect(bsim, &QPushButton::clicked, this, [this] {
 #ifdef Q_OS_WIN
@@ -282,12 +337,16 @@ FlowGuiWindow::FlowGuiWindow()
         // run, and a typed one joins the list.
         connect(simBox_->lineEdit(), &QLineEdit::editingFinished, this, [this] {
             rememberSimulator(currentSimulator());
-            appendLog(QStringLiteral("simulator: %1\n")
-                          .arg(QDir::toNativeSeparators(resolveSimulator())));
+            updateSimulatorAge();
+            appendLog(QStringLiteral("simulator: %1   %2\n")
+                          .arg(QDir::toNativeSeparators(resolveSimulator()),
+                               simAge_->text()));
         });
         connect(simBox_, &QComboBox::activated, this, [this](int) {
-            appendLog(QStringLiteral("simulator: %1\n")
-                          .arg(QDir::toNativeSeparators(resolveSimulator())));
+            updateSimulatorAge();
+            appendLog(QStringLiteral("simulator: %1   %2\n")
+                          .arg(QDir::toNativeSeparators(resolveSimulator()),
+                               simAge_->text()));
         });
     }
 
@@ -615,9 +674,18 @@ FlowGuiWindow::FlowGuiWindow()
 
     loadSettings();
     exePath_ = resolveSimulator();
+    updateSimulatorAge();
 
-    appendLog(QString::fromLatin1("%1 %2 - queue OPM Flow simulations and watch them run.\n")
-                  .arg(QLatin1String(kAppName), QLatin1String(kVersion)));
+    // The GUI's own age, by the same file date as the simulator's. A version
+    // number does not move between two builds of the same source, so on its
+    // own it cannot tell this morning's build from one left over for months.
+    const QDateTime guiBuilt =
+        QFileInfo(QCoreApplication::applicationFilePath()).lastModified();
+    appendLog(QString::fromLatin1("%1 %2, built %3 (%4)"
+                                  " - queue OPM Flow simulations and watch them run.\n")
+                  .arg(QLatin1String(kAppName), QLatin1String(kVersion),
+                       guiBuilt.toString(QStringLiteral("yyyy-MM-dd HH:mm")),
+                       ageOf(guiBuilt)));
     if (!moved.isEmpty())
         appendLog(QStringLiteral("NOTE: the directory this was started from is gone; "
                                  "working from %1 instead\n")
@@ -626,10 +694,11 @@ FlowGuiWindow::FlowGuiWindow()
         appendLog(QStringLiteral("WARNING: no flow executable found next to this "
                                  "program - simulations cannot be started.\n"));
     else
-        appendLog(QStringLiteral("simulator: %1%2\n")
+        appendLog(QStringLiteral("simulator: %1%2   %3\n")
                       .arg(QDir::toNativeSeparators(exePath_),
                            currentSimulator().isEmpty()
-                               ? QString() : QStringLiteral("  (override)")));
+                               ? QString() : QStringLiteral("  (override)"),
+                           simAge_ ? simAge_->text() : QString()));
 
     // Say so when a pip-installed Intel MPI is being picked up. It is the one
     // piece of setup this build asks of the user, and the failure mode without

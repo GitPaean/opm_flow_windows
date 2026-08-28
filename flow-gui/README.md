@@ -210,7 +210,13 @@ results, animate them in 3D, and edit decks — all in one window.
   recent first, so comparing a release against your own build is a pick from
   the drop-down rather than a path to retype; the first entry is the flow
   shipped with the GUI, i.e. no override. The choice and the list are
-  remembered between sessions and stored in the project file.
+  remembered between sessions and stored in the project file. Beside the box
+  is **when that executable was built** — its own file date, so it holds for a
+  build made anywhere — turning amber past a month, since with several builds
+  a pick away the stale one otherwise looks exactly like the fresh one. The
+  GUI's own build date is in the first line of the log for the same reason: a
+  version number cannot tell this morning's build from one left over for
+  months.
 - **Queue control** — *Stop queue* kills the running job and aborts the rest;
   *Skip job* kills the running job and continues with the next; *Validate
   deck* parse-and-initializes the selected deck (`flow --enable-dry-run`)

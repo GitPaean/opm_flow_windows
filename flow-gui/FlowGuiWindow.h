@@ -22,6 +22,7 @@ class QComboBox;
 class QDialog;
 class QDragEnterEvent;
 class QDropEvent;
+class QLabel;
 class QLineEdit;
 class QPlainTextEdit;
 class QProcess;
@@ -70,6 +71,8 @@ private:
     QTabWidget*     tabs_        = nullptr;
     QComboBox*      simBox_      = nullptr;   // which flow to run, plus the
                                               // builds used before; empty = auto
+    QLabel*         simAge_      = nullptr;   // when that flow was built, so a
+                                              // stale one is caught before it runs
     QTableWidget*   jobTable_    = nullptr;
     QSpinBox*       ranksSpin_   = nullptr;
     QSpinBox*       threadsSpin_ = nullptr;
@@ -117,6 +120,7 @@ private:
     QStringList simulators() const;
     void setSimulators(const QStringList& list, const QString& current);
     void rememberSimulator(const QString& path);
+    void updateSimulatorAge();      // re-read the build date beside the picker
     void loadSettings();
     void saveSettings();
     void appendLog(const QString& text);
