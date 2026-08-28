@@ -93,3 +93,86 @@ lists are deck keywords only and do not carry descriptions, so the text
 has to come from the appendix itself. Worth extracting once into a table
 that says where each line came from, rather than correcting entries one
 report at a time.
+
+---
+
+## 4. A button that plots the summary vectors which regressed most
+
+The Compare tab answers "which of these parted, and when" for restart
+data: it reduces every cell field per report date and puts the worst in
+front of you. Summary vectors have no equivalent. A run writes hundreds
+to thousands of them, two runs are opened side by side all the time, and
+finding which ones moved is done by knowing where to look — you plot the
+vectors you already suspect, so a regression in one you did not think to
+check is not found at all.
+
+The idea: a button that ranks the vectors the checked cases share by how
+far apart the runs are, and loads the worst of them straight into the
+subplot grid. The interesting half is that it needs no guess about which
+vector matters.
+
+*Where it would go:* `vecs_` holds every plottable vector; `checkedCases()`
+returns each checked case with its `ESmry*`; `seriesData(v, smry,
+isActive, out)` already yields one vector's values for one case and
+returns false when that case does not carry it, which is exactly the
+"only in A/B" case the Compare tab reports. Filling the result is the
+existing subplot path — `setLayoutGrid()`, `ensureCharts()`,
+`applyChartLayout()` and the per-subplot key lists the tree edits.
+
+*Questions to settle first, since they decide the shape of it:*
+- **Which two runs?** The tab plots any number of checked cases at once,
+  while a regression is a statement about a pair. Either an A/B pair is
+  borrowed from the Compare tab, or the measure becomes the spread across
+  everything checked — the second is a different and vaguer question.
+- **The runs need not share timesteps.** Each case is plotted against its
+  own `TIME` (`SummaryPlotWidget.cpp:3460`), and two runs will not have
+  stepped identically, so a vector cannot be subtracted sample by sample.
+  Restart comparison sidesteps this by pairing report *dates*; summary
+  data would need either interpolation onto common times or a comparison
+  restricted to dates both wrote. Worth deciding before anything else —
+  it determines whether this shares code with the Compare tab or not.
+- **What counts as "big"?** Ranked on absolute difference the list fills
+  with whatever has the largest units — `FOPT` will always outrank a
+  well's `WWCT` — and ranked on relative difference it fills with vectors
+  that pass near zero. The abs+rel pair the Compare tab already takes
+  from compareECL is the obvious precedent. Separately, a vector that
+  diverges once and returns is a different failure from one that drifts
+  the whole run, and a single ranking cannot say which you want.
+- **Scan everything, or what the filter currently shows?** Scanning all
+  of them is the point of the feature; honouring the filter is what makes
+  it usable when you already know the region of interest.
+
+---
+
+## 5. Step through a set of vectors on a timer, like a presentation
+
+Once a filter has picked out a set — every `WBHP`, say, or the ranked
+list from the idea above — looking at them means clicking each in turn.
+A play button that advanced the plot through the set on an interval would
+turn that into watching, which is both a faster way to review a run and
+the natural way to show one to somebody else.
+
+*Where it would go:* `filter_` and `tree_` already produce the candidate
+set, and the tree edits the focused subplot's key list, so advancing is
+rewriting that list and replotting. `timer_` and `autoRef_` are the
+precedent for a timed action, and the caution they carry applies here:
+the two timers must not fight, since a refresh mid-step would replot
+underneath the step.
+
+*Questions to settle first:*
+- **What advances — one subplot or the whole grid?** A 3x2 layout paging
+  six at a time reviews a long list far quicker than one vector at a
+  time, and is the better fit for showing someone. One at a time is the
+  better fit for study.
+- **Where does the list come from:** everything the filter matches, or
+  only what is checked in the tree? The first needs no setup; the second
+  lets a set be built deliberately and then played.
+- **Zoom has to be reset as it steps.** Per-subplot axis ranges are kept
+  across refreshes on purpose; a range that suits one vector will hide
+  the next one entirely, so stepping should clear it rather than inherit
+  it.
+- Does it stop at the end or loop, and does interacting pause it? Both
+  matter more for presenting than for reviewing.
+
+These two compose: rank by regression, then play the ranked list — which
+is close to an automatic review of what changed between two runs.
