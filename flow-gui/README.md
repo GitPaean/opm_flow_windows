@@ -190,7 +190,11 @@ results, animate them in 3D, and edit decks — all in one window.
   through the groups to the wells, or the extended network (`BRANPROP`) /
   standard network (`GRUPNET`) when the deck has one. A schedule is mostly
   repetition, so the date picker lists only the moments something actually
-  changed. Wells are coloured by what they do (producer, water / gas / other
+  changed. *Expand* / *Collapse* act on the selected group and everything
+  under it, *Expand all* / *Collapse all* on the whole tree — the same four
+  the Deck Editor puts over its section tree, and the way back to a readable
+  shape on a field that opens deeper than the pane. Wells are coloured by
+  what they do (producer, water / gas / other
   injector), the tree pane and the drawing share those colours, and the
   drawing is exported to PNG or PDF exactly as it appears — no Graphviz
   needed. A **multisegment well is marked in the tree**, with a run of beads

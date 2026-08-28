@@ -7,6 +7,7 @@
 #include "CasePath.h"
 #include "DeckModel.h"
 
+#include "FlowLayout.h"
 #include "GuiPaths.h"
 
 #include <QApplication>
@@ -78,6 +79,13 @@ namespace {
 // What to draw a well as, at this moment: producers are one thing, injectors
 // three, since water and gas going back in are not the same operation and the
 // picture is read by people for whom that distinction is the point.
+void setExpandedRecursively(QTreeWidgetItem* it, bool expanded)
+{
+    it->setExpanded(expanded);
+    for (int i = 0; i < it->childCount(); ++i)
+        setExpandedRecursively(it->child(i), expanded);
+}
+
 // A short run of beads on a line: a well made of segments, small enough to sit
 // in front of the name without crowding it. Which wells are multisegment is
 // most of what decides whether opening one is worth the click - a standard
@@ -986,8 +994,45 @@ StructurePanel::StructurePanel(QWidget* parent) : QWidget(parent)
     rl->addWidget(netInfo_);
     rl->addWidget(graph_, 1);
 
+    // The same four the Deck Editor puts over its section tree. A field of any
+    // size opens deep, and a tree only auto-expands while it is small enough
+    // to stay readable - past that, getting to a shape you can read means
+    // clicking arrows one at a time. In a flow layout so they wrap rather than
+    // force the pane wider than the drawing can spare.
+    FlowLayout* trow = nullptr;
+    QWidget* treeBar = FlowLayout::host(&trow);
+    auto* bexp = new QPushButton(QStringLiteral("Expand"));
+    bexp->setToolTip(QStringLiteral(
+        "expand the selected group and everything below it"));
+    auto* bcol = new QPushButton(QStringLiteral("Collapse"));
+    bcol->setToolTip(QStringLiteral(
+        "collapse the selected group and everything below it"));
+    auto* bexpAll = new QPushButton(QStringLiteral("Expand all"));
+    auto* bcolAll = new QPushButton(QStringLiteral("Collapse all"));
+    trow->addWidget(bexp);    trow->addWidget(bcol);
+    trow->addWidget(bexpAll); trow->addWidget(bcolAll);
+
+    auto* leftPane = new QWidget;
+    auto* ll = new QVBoxLayout(leftPane);
+    ll->setContentsMargins(0, 0, 0, 0);
+    ll->addWidget(treeBar);
+    ll->addWidget(tree_, 1);
+
+    connect(bexp, &QPushButton::clicked, this, [this] {
+        if (auto* it = tree_->currentItem()) setExpandedRecursively(it, true);
+        else status_->setText(QStringLiteral(
+            "select a group or well first (or use Expand all)"));
+    });
+    connect(bcol, &QPushButton::clicked, this, [this] {
+        if (auto* it = tree_->currentItem()) setExpandedRecursively(it, false);
+        else status_->setText(QStringLiteral(
+            "select a group or well first (or use Collapse all)"));
+    });
+    connect(bexpAll, &QPushButton::clicked, tree_, &QTreeWidget::expandAll);
+    connect(bcolAll, &QPushButton::clicked, tree_, &QTreeWidget::collapseAll);
+
     auto* split = new QSplitter(Qt::Horizontal);
-    split->addWidget(tree_);
+    split->addWidget(leftPane);
     split->addWidget(right);
     // Every pixel the window gains goes to the drawing. The names in the tree
     // are as long as they are going to get, so a wider window only adds empty
