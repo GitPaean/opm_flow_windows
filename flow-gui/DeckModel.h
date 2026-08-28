@@ -82,6 +82,13 @@ struct Structure {
     // was doing at the date being looked at, not what it ends up doing.
     // Producers are simply absent. Ordered, so fingerprint() is stable.
     QMap<QString, Inject> injectors;
+    // Segment count of each multisegment well; absent means a standard well.
+    // Per moment for the same reason as the injectors: a well is segmented by
+    // a WELSEGS that arrives at some step, so it is a fact about the date
+    // being looked at rather than about the run. Ordered, so fingerprint() is
+    // stable. The count and not just a flag, because it is what says whether
+    // the structure is worth opening.
+    QMap<QString, int> mswSegments;
     QVector<NetBranch> branches;
     QStringList        netNodes;
     bool               netActive = false;

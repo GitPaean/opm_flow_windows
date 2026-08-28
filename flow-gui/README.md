@@ -193,8 +193,11 @@ results, animate them in 3D, and edit decks — all in one window.
   changed. Wells are coloured by what they do (producer, water / gas / other
   injector), the tree pane and the drawing share those colours, and the
   drawing is exported to PNG or PDF exactly as it appears — no Graphviz
-  needed. Double-click a well, in either pane, to open **how that well is put
-  together**: the segments of a multisegment well with the branch each is on
+  needed. A **multisegment well is marked in the tree**, with a run of beads
+  on its name and its segment count beside it: a standard well's structure is
+  the cells it reaches and little else, so which wells are segmented is most
+  of what decides whether opening one is worth it. Double-click a well, in
+  either pane, to open **how that well is put together**: the segments of a multisegment well with the branch each is on
   and any valve / SICD / AICD it carries, and the connections that reach the
   grid, labelled with the deck's 1-based `(i,j,k)` and hanging off the segment
   they belong to. The conventions follow opm-common's own `writeWellStructure`

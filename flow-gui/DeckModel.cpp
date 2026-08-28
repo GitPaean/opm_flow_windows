@@ -23,7 +23,9 @@
 #include <QLabel>
 #include <QMessageBox>
 #include <QLineEdit>
+#include <QIcon>
 #include <QPainter>
+#include <QPixmap>
 #include <QMouseEvent>
 #include <QProgressBar>
 #include <QPushButton>
@@ -76,6 +78,24 @@ namespace {
 // What to draw a well as, at this moment: producers are one thing, injectors
 // three, since water and gas going back in are not the same operation and the
 // picture is read by people for whom that distinction is the point.
+// A short run of beads on a line: a well made of segments, small enough to sit
+// in front of the name without crowding it. Which wells are multisegment is
+// most of what decides whether opening one is worth the click - a standard
+// well's structure is the list of cells it reaches and little else - and in a
+// column of names nothing else tells them apart.
+QIcon segmentedIcon(const QColor& c)
+{
+    QPixmap pm(14, 14);
+    pm.fill(Qt::transparent);
+    QPainter p(&pm);
+    p.setRenderHint(QPainter::Antialiasing, true);
+    p.setPen(QPen(c, 1.2));
+    p.drawLine(QPointF(1.5, 7.0), QPointF(12.5, 7.0));
+    p.setBrush(c);
+    for (double x : { 2.0, 7.0, 12.0 }) p.drawEllipse(QPointF(x, 7.0), 1.7, 1.7);
+    return QIcon(pm);
+}
+
 int wellKind(const Structure& s, const QString& well)
 {
     if (!s.injectors.contains(well)) return GraphView::KindProducer;
@@ -116,8 +136,16 @@ QString Structure::fingerprint() const
     QStringList inj;
     for (auto it = injectors.cbegin(); it != injectors.cend(); ++it)
         inj << it.key() + QLatin1Char('=') + QString::number(int(it.value()));
+    // Segmentation counts too, and for the same reason: the step a well is
+    // given its segments changes nothing about the hierarchy, so without this
+    // it would collapse into the step before and the tree would go on calling
+    // a multisegment well standard.
+    QStringList seg;
+    for (auto it = mswSegments.cbegin(); it != mswSegments.cend(); ++it)
+        seg << it.key() + QLatin1Char('=') + QString::number(it.value());
     return bits.join(QLatin1Char(';')) + QStringLiteral("|") + nb.join(QLatin1Char(';'))
            + QStringLiteral("|") + inj.join(QLatin1Char(','))
+           + QStringLiteral("|") + seg.join(QLatin1Char(','))
            + QStringLiteral("|%1%2").arg(int(netActive)).arg(int(netStandard));
 }
 
@@ -155,14 +183,18 @@ Structure snapshotAt(const Opm::Schedule& sched, std::size_t step)
         for (const auto& w : g.wells()) {
             const QString wn = QString::fromStdString(w);
             n.wells << wn;
-            if (st.wells.has(w) && st.wells.get(w).isInjector()) {
-                switch (st.wells.get(w).injectorType()) {
+            if (!st.wells.has(w)) continue;
+            const auto& wd = st.wells.get(w);
+            if (wd.isInjector()) {
+                switch (wd.injectorType()) {
                     case Opm::InjectorType::WATER: s.injectors[wn] = Inject::Water; break;
                     case Opm::InjectorType::GAS:   s.injectors[wn] = Inject::Gas;   break;
                     case Opm::InjectorType::OIL:   s.injectors[wn] = Inject::Oil;   break;
                     default:                       s.injectors[wn] = Inject::Multi; break;
                 }
             }
+            if (wd.isMultiSegment())
+                s.mswSegments[wn] = int(wd.getSegments().size());
         }
         s.groups.push_back(n);
     }
@@ -1139,9 +1171,21 @@ void StructurePanel::showShape(int index)
                 wi->setData(0, Qt::UserRole, true);      // a well, not a group
                 const int k = wellKind(s, w);
                 wi->setForeground(0, QBrush(GraphView::kindText(k)));
-                wi->setText(1, s.injectors.contains(w)
-                                   ? injectName(s.injectors.value(w))
-                                   : QStringLiteral("producer"));
+                QStringList what;
+                what << (s.injectors.contains(w) ? injectName(s.injectors.value(w))
+                                                 : QStringLiteral("producer"));
+                // Marked on the name, not only spelled out beside it: the
+                // point is to find the segmented wells while reading down the
+                // column, before reading anything else.
+                const int nseg = s.mswSegments.value(w, 0);
+                if (nseg > 0) {
+                    wi->setIcon(0, segmentedIcon(GraphView::kindText(k)));
+                    what << QStringLiteral("%1 segments").arg(nseg);
+                    wi->setToolTip(0, QStringLiteral(
+                        "%1 is a multisegment well - %2 segments. Open it to see "
+                        "how it is put together.").arg(w).arg(nseg));
+                }
+                wi->setText(1, what.join(QStringLiteral(", ")));
                 wi->setForeground(1, QBrush(QColor(0x77, 0x7f, 0x88)));
             }
         };
