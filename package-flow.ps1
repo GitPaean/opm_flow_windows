@@ -234,6 +234,12 @@ Contents
   bin\flow.exe            reservoir simulator (all model variants,
                           including black-oil)
   bin\flow-gui.exe     graphical front end (job queue, live log)
+                          Optional: flow.exe is a complete simulator on its
+                          own, so bin\flow-gui.exe, bin\Qt6*.dll and the Qt
+                          plugin folders (platforms, styles, imageformats,
+                          generic, iconengines, networkinformation, tls) can
+                          be deleted if only the simulator is wanted. The
+                          installer offers the same choice as a component.
 $(if ($IntelMpi) { "  bin\flow-impi.cmd       runs flow with a pip-installed Intel MPI`n" })  redist\                 $(if ($IntelMpi) { 'Visual C++ runtime installer (fallback only)' }
                             else            { 'Microsoft runtime installers (see prerequisite below)' })
 

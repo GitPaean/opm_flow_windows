@@ -72,20 +72,69 @@ SignTool=opmsign
 SignedUninstaller=yes
 #endif
 
+; The graphical front end is an addition, not the way in: flow.exe is a
+; complete simulator on its own, driven from a terminal or through mpiexec.
+; Someone installing this on a cluster login node, or scripting it, has no use
+; for the GUI - and it is the larger half of the download, since it brings the
+; Qt runtime with it. So let it be deselected. (In the .zip the same choice is
+; made by deleting those files; only the installer needed telling.)
+[Types]
+Name: "full";      Description: "Simulator and graphical front end"
+Name: "simulator"; Description: "Simulator only"
+Name: "custom";    Description: "Custom installation"; Flags: iscustom
+
+[Components]
+Name: "sim"; Description: "OPM Flow simulator (flow.exe)"; \
+    Types: full simulator custom; Flags: fixed
+Name: "gui"; Description: "Graphical front end (flow-gui.exe and the Qt runtime)"; \
+    Types: full
+
 [Files]
-Source: "{#StageDir}\bin\*";    DestDir: "{app}\bin"; Flags: recursesubdirs
+; The simulator half: everything staged into bin\ except the GUI executable,
+; the Qt DLLs beside it and the Qt plugin folders.
+;
+; An Excludes pattern is matched against the END of a path, and a directory
+; matching one does not take its contents with it - so each plugin folder needs
+; two patterns: "tls" for the folder itself and "tls\*" for what is in it.
+; Naming only the folder would leave every plugin DLL in a simulator-only
+; install.
+Source: "{#StageDir}\bin\*";    DestDir: "{app}\bin"; Flags: recursesubdirs; \
+    Excludes: "flow-gui.exe,Qt6*.dll,platforms,platforms\*,styles,styles\*,imageformats,imageformats\*,generic,generic\*,iconengines,iconengines\*,networkinformation,networkinformation\*,tls,tls\*"; \
+    Components: sim
+; ... and the GUI half, listed by the same names package-flow.ps1 stages.
+Source: "{#StageDir}\bin\flow-gui.exe"; DestDir: "{app}\bin"; Components: gui
+Source: "{#StageDir}\bin\Qt6*.dll";     DestDir: "{app}\bin"; Components: gui
+Source: "{#StageDir}\bin\platforms\*";          DestDir: "{app}\bin\platforms"; \
+    Flags: recursesubdirs skipifsourcedoesntexist; Components: gui
+Source: "{#StageDir}\bin\styles\*";             DestDir: "{app}\bin\styles"; \
+    Flags: recursesubdirs skipifsourcedoesntexist; Components: gui
+Source: "{#StageDir}\bin\imageformats\*";       DestDir: "{app}\bin\imageformats"; \
+    Flags: recursesubdirs skipifsourcedoesntexist; Components: gui
+Source: "{#StageDir}\bin\generic\*";            DestDir: "{app}\bin\generic"; \
+    Flags: recursesubdirs skipifsourcedoesntexist; Components: gui
+Source: "{#StageDir}\bin\iconengines\*";        DestDir: "{app}\bin\iconengines"; \
+    Flags: recursesubdirs skipifsourcedoesntexist; Components: gui
+Source: "{#StageDir}\bin\networkinformation\*"; DestDir: "{app}\bin\networkinformation"; \
+    Flags: recursesubdirs skipifsourcedoesntexist; Components: gui
+Source: "{#StageDir}\bin\tls\*";                DestDir: "{app}\bin\tls"; \
+    Flags: recursesubdirs skipifsourcedoesntexist; Components: gui
+; Always: the documentation and the prerequisite runtimes, which flow.exe needs
+; whether or not the GUI is installed.
 Source: "{#StageDir}\README.txt";  DestDir: "{app}"
 Source: "{#StageDir}\LICENSE.txt"; DestDir: "{app}"
 Source: "{#StageDir}\redist\vc_redist.x64.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall
 Source: "{#StageDir}\redist\msmpisetup.exe";    DestDir: "{tmp}"; Flags: deleteafterinstall
 
 [Icons]
-Name: "{group}\OPM Flow GUI";  Filename: "{app}\bin\flow-gui.exe"
+Name: "{group}\OPM Flow GUI";  Filename: "{app}\bin\flow-gui.exe"; Components: gui
 Name: "{group}\README";        Filename: "{app}\README.txt"
-Name: "{autodesktop}\OPM Flow GUI"; Filename: "{app}\bin\flow-gui.exe"; Tasks: desktopicon
+Name: "{autodesktop}\OPM Flow GUI"; Filename: "{app}\bin\flow-gui.exe"; \
+    Tasks: desktopicon; Components: gui
 
 [Tasks]
-Name: "desktopicon"; Description: "Create a &desktop shortcut"; Flags: unchecked
+; Offered only when there is a GUI to put on the desktop.
+Name: "desktopicon"; Description: "Create a &desktop shortcut"; Flags: unchecked; \
+    Components: gui
 
 [Run]
 ; Both bundled runtimes install machine-wide and need administrator rights, so
@@ -101,7 +150,7 @@ Filename: "{tmp}\msmpisetup.exe"; Parameters: "-unattend"; \
     StatusMsg: "Installing Microsoft MPI runtime..."; \
     Check: InstallMsMpi
 Filename: "{app}\bin\flow-gui.exe"; Description: "Launch OPM Flow GUI"; \
-    Flags: nowait postinstall skipifsilent
+    Flags: nowait postinstall skipifsilent; Components: gui
 
 [Code]
 function VCRedistNeeded: Boolean;
