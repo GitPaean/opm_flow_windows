@@ -260,8 +260,6 @@ Structure snapshotAt(const Opm::Schedule& sched, std::size_t step,
                 n.eff     = nd.efficiency();
                 n.gasLift = nd.add_gas_lift_gas();
                 n.choke   = nd.as_choke();
-                if (nd.target_group().has_value())
-                    n.chokeTarget = QString::fromStdString(*nd.target_group());
                 if (nd.terminal_pressure().has_value()) {
                     n.fixedP = true;
                     n.press  = units.from_si(Opm::UnitSystem::measure::pressure,
@@ -1440,10 +1438,7 @@ void StructurePanel::refreshGraph()
             if (n.fixedP)
                 what << QStringLiteral("%1 %2")
                             .arg(n.press, 0, 'g', 4).arg(s.pressUnit);
-            if (n.choke)
-                what << (n.chokeTarget.isEmpty()
-                             ? QStringLiteral("choke")
-                             : QStringLiteral("choke on %1").arg(n.chokeTarget));
+            if (n.choke)                        what << QStringLiteral("choke");
             if (n.gasLift)                      what << QStringLiteral("gas lift");
             if (!qFuzzyCompare(n.eff, 1.0))     what << QStringLiteral("eff %1")
                                                             .arg(n.eff, 0, 'g', 3);

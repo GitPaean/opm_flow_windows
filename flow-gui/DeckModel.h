@@ -82,11 +82,14 @@ struct NetNode {
     QString name;
     bool    fixedP  = false;     // terminal pressure given, i.e. a root
     bool    leaf    = false;     // nothing feeds it - a group holding wells
-    bool    choke   = false;     // acts as an automatic choke
+    // An automatic choke. Node::target_group() is not kept beside it: opm-common
+    // rejects a NODEPROP whose choke group is not the node itself ("a manifold
+    // group must respond to its own target"), so the target is always the name
+    // already on the node and naming it again says nothing.
+    bool    choke   = false;
     bool    gasLift = false;     // gas lift gas is added here
     double  press   = 0;         // terminal pressure, in the deck's own unit
     double  eff     = 1.0;       // node efficiency factor
-    QString chokeTarget;         // the group the choke is controlled against
 };
 
 // The field's shape at one moment.
