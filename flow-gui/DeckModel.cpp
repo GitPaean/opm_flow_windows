@@ -56,6 +56,7 @@
 #include <opm/input/eclipse/Schedule/Well/Connection.hpp>
 #include <opm/input/eclipse/Schedule/Well/Well.hpp>
 #include <opm/input/eclipse/Schedule/Well/WellConnections.hpp>
+#include <opm/input/eclipse/Units/UnitSystem.hpp>
 
 #include <algorithm>
 #include <exception>
@@ -121,6 +122,12 @@ const GroupNode* Structure::find(const QString& name) const
     return nullptr;
 }
 
+const NetNode* Structure::netNode(const QString& name) const
+{
+    for (const auto& n : netNodes) if (n.name == name) return &n;
+    return nullptr;
+}
+
 int Structure::wellCount() const
 {
     int n = 0;
@@ -138,6 +145,15 @@ QString Structure::fingerprint() const
     QStringList nb;
     for (const auto& b : branches) nb << b.down + QStringLiteral("->") + b.up;
     nb.sort();
+    // The nodes' own properties count too. A step that only moved the terminal
+    // pressure leaves the branches untouched, and without this it would collapse
+    // into the step before it and the drawing would go on showing the old figure.
+    QStringList nn;
+    for (const auto& n : netNodes)
+        nn << QStringLiteral("%1=%2/%3%4%5%6").arg(n.name)
+                  .arg(n.fixedP ? n.press : 0.0).arg(n.eff)
+                  .arg(int(n.fixedP)).arg(int(n.choke)).arg(int(n.gasLift));
+    nn.sort();
     // Injectors count towards identity: converting a producer changes nothing
     // about the hierarchy but everything about what the picture says, and a
     // step that only did that would otherwise collapse into the one before it.
@@ -152,6 +168,7 @@ QString Structure::fingerprint() const
     for (auto it = mswSegments.cbegin(); it != mswSegments.cend(); ++it)
         seg << it.key() + QLatin1Char('=') + QString::number(it.value());
     return bits.join(QLatin1Char(';')) + QStringLiteral("|") + nb.join(QLatin1Char(';'))
+           + QStringLiteral("|") + nn.join(QLatin1Char(';'))
            + QStringLiteral("|") + inj.join(QLatin1Char(','))
            + QStringLiteral("|") + seg.join(QLatin1Char(','))
            + QStringLiteral("|%1%2").arg(int(netActive)).arg(int(netStandard));
@@ -174,7 +191,8 @@ Opm::ParseContext relaxedContext()
     });
 }
 
-Structure snapshotAt(const Opm::Schedule& sched, std::size_t step)
+Structure snapshotAt(const Opm::Schedule& sched, std::size_t step,
+                     const Opm::UnitSystem& units)
 {
     Structure s;
     s.step = int(step);
@@ -211,14 +229,46 @@ Structure snapshotAt(const Opm::Schedule& sched, std::size_t step)
     s.netActive   = net.active();
     s.netStandard = net.is_standard_network();
     if (s.netActive) {
+        QStringList order;               // nodes in the order the branches name them
+        QSet<QString> uptree;            // ... and which of them have something below
         for (const auto* b : net.branches()) {
             if (!b) continue;
             NetBranch nb{ QString::fromStdString(b->downtree_node()),
                           QString::fromStdString(b->uptree_node()),
                           b->vfp_table().value_or(-1) };
             s.branches.push_back(nb);
-            if (!s.netNodes.contains(nb.down)) s.netNodes << nb.down;
-            if (!s.netNodes.contains(nb.up))   s.netNodes << nb.up;
+            if (!order.contains(nb.down)) order << nb.down;
+            if (!order.contains(nb.up))   order << nb.up;
+            uptree.insert(nb.up);
+        }
+
+        s.pressUnit = QString::fromLatin1(units.name(Opm::UnitSystem::measure::pressure))
+                          .toLower();
+        for (const auto& name : order) {
+            NetNode n;
+            n.name = name;
+            // A leaf is a node nothing feeds. ExtNetwork::leaf_nodes() gets
+            // there by walking down from the roots, which means it finds
+            // nothing at all in a deck that gave no terminal pressure - and a
+            // deck like that is exactly the sort worth looking at a picture of.
+            // Reading it off the branches instead says the same thing wherever
+            // both are defined, and still says it where the walk cannot start.
+            n.leaf = !uptree.contains(name);
+            const std::string nm = name.toStdString();
+            if (net.has_node(nm)) {
+                const auto& nd = net.node(nm);
+                n.eff     = nd.efficiency();
+                n.gasLift = nd.add_gas_lift_gas();
+                n.choke   = nd.as_choke();
+                if (nd.target_group().has_value())
+                    n.chokeTarget = QString::fromStdString(*nd.target_group());
+                if (nd.terminal_pressure().has_value()) {
+                    n.fixedP = true;
+                    n.press  = units.from_si(Opm::UnitSystem::measure::pressure,
+                                             *nd.terminal_pressure());
+                }
+            }
+            s.netNodes.push_back(n);
         }
     }
     return s;
@@ -322,7 +372,7 @@ DeckStructure readDeckStructure(const QString& dataFile,
         QString last;
         for (std::size_t i = 0; i < sched.size(); ++i) {
             if (stop()) { out.problem = QStringLiteral("cancelled"); return out; }
-            Structure s = snapshotAt(sched, i);
+            Structure s = snapshotAt(sched, i, hold->es->getUnits());
             // Only when something actually changed. A schedule is mostly
             // repetition, and a picker with 248 identical entries hides the
             // three moments that matter.
@@ -360,9 +410,11 @@ GraphView::GraphView(QWidget* parent) : QWidget(parent)
 
 void GraphView::setGraph(const QStringList& nodes, const QVector<Edge>& edges,
                          const QString& emptyText,
-                         const QHash<QString, int>& kinds)
+                         const QHash<QString, int>& kinds,
+                         const QHash<QString, QString>& notes)
 {
     nodes_ = nodes; edges_ = edges; empty_ = emptyText; kinds_ = kinds;
+    notes_ = notes;
     relayout();
     update();
 }
@@ -456,13 +508,22 @@ void GraphView::relayout()
     }
 
     // How wide each node actually is, which is what the packing has to respect.
+    // A note is a second line inside the box, so every box grows to hold one -
+    // uniformly, since the row spacing is one height for the whole drawing and
+    // a single taller node would have to break that.
     const QFontMetricsF fm(nodeFont());
-    natBoxH_   = fm.height() + 10;
+    QFont sub = nodeFont();
+    sub.setPointSizeF(std::max(6.0, sub.pointSizeF() - 1.5));
+    const QFontMetricsF sfm(sub);
+    natBoxH_   = fm.height() + 10 + (notes_.isEmpty() ? 0.0 : sfm.height());
     natRowGap_ = natBoxH_ * 2.7;
     QHash<QString, double> W;
     for (const auto& n : nodes_) {
         const bool well = isWellKind(kinds_.value(n, KindGroup));
-        W[n] = std::max(54.0, fm.horizontalAdvance(n) + (well ? 20.0 : 34.0));
+        const double pad = well ? 20.0 : 34.0;
+        W[n] = std::max({ 54.0,
+                          fm.horizontalAdvance(n) + pad,
+                          sfm.horizontalAdvance(notes_.value(n)) + pad });
     }
 
     const double gap = 24.0;
@@ -518,7 +579,7 @@ void GraphView::relayout()
 // which matters on a projector, in a black-and-white print, and to a reader
 // who does not see colour the way the person who chose it does.
 void GraphView::paintNode(QPainter& p, const QRectF& r, const QString& text,
-                          int kind, double thin, bool hot) const
+                          const QString& note, int kind, double thin, bool hot) const
 {
     QColor fill, line, ink;
     kindColours(kind, fill, line, ink);
@@ -537,8 +598,35 @@ void GraphView::paintNode(QPainter& p, const QRectF& r, const QString& text,
     p.setBrush(fill);
     if (isWellKind(kind)) p.drawRect(r); else p.drawEllipse(r);
 
+    // The node the network hangs off gets a second outline just inside the
+    // first - dot's doubleoctagon, which is what opm-common's own network graph
+    // marks it with. Shape rather than only colour, so it survives a monochrome
+    // print and a reader who does not see the blue.
+    if (kind == KindNetFixed) {
+        p.setBrush(Qt::NoBrush);
+        p.setPen(QPen(line, 1.0 * thin));
+        p.drawEllipse(r.adjusted(3, 2.5, -3, -2.5));
+    }
+
     p.setPen(ink);
-    p.drawText(r, Qt::AlignCenter, text);
+    if (note.isEmpty()) {
+        p.drawText(r, Qt::AlignCenter, text);
+        return;
+    }
+    // Name above, note below, inside the one box - which relayout() has already
+    // made tall enough for both.
+    const QFont was = p.font();
+    const double half = r.height() / 2;
+    p.drawText(QRectF(r.left(), r.top(), r.width(), half),
+               Qt::AlignHCenter | Qt::AlignBottom, text);
+    QFont nf = was;
+    nf.setPointSizeF(std::max(6.0, was.pointSizeF() - 1.5));
+    nf.setBold(false);
+    p.setFont(nf);
+    p.setPen(QColor(0x4a, 0x51, 0x58));
+    p.drawText(QRectF(r.left(), r.top() + half, r.width(), half),
+               Qt::AlignHCenter | Qt::AlignTop, note);
+    p.setFont(was);
 }
 
 // Where a line from `towards` meets this node's outline. An ellipse is cut
@@ -595,6 +683,14 @@ void GraphView::kindColours(int kind, QColor& fill, QColor& line, QColor& ink)
         case KindInjWater:  line = QColor(0x00, 0x00, 0xd8); break;
         case KindInjGas:    line = QColor(0x00, 0x77, 0x2b); break;
         case KindInjOther:  line = QColor(0x7a, 0x1f, 0xa2); break;
+        // In the network, following the same PR that adds the .gv writer: the
+        // leaf nodes are orange, which is also the well groups' colour - and
+        // rightly so, since a network leaf IS a group holding wells. The node
+        // the network is anchored at gets a colour of its own; nothing else in
+        // either drawing is blue-on-blue, so it reads as the special one.
+        case KindNetLeaf:   fill = QColor(0xff, 0xa5, 0x00); break;
+        case KindNetFixed:  fill = QColor(0xcf, 0xe2, 0xf3);
+                            line = QColor(0x1f, 0x4e, 0x79); break;
         // Inside a well. The connection colour is opm-common's lightgreen, so
         // a picture drawn here and one drawn by plot_ms_wells read alike.
         case KindSegment:    fill = QColor(0xff, 0xff, 0xf0); break;
@@ -617,6 +713,8 @@ QColor GraphView::kindText(int kind)
         case KindInjWater:  return QColor(0x00, 0x00, 0xc8);
         case KindInjGas:    return QColor(0x00, 0x6b, 0x27);
         case KindInjOther:  return QColor(0x7a, 0x1f, 0xa2);
+        case KindNetLeaf:   return QColor(0xa8, 0x6a, 0x00);
+        case KindNetFixed:  return QColor(0x1f, 0x4e, 0x79);
         default:            return QColor(0x22, 0x26, 0x2b);
     }
 }
@@ -639,6 +737,9 @@ QString GraphView::kindName(int kind)
         case KindInjGas:    return QStringLiteral("gas injector");
         case KindInjOther:  return QStringLiteral("other injector");
         case KindWellGroup: return QStringLiteral("well group");
+        case KindNetwork:   return QStringLiteral("network node");
+        case KindNetFixed:  return QStringLiteral("fixed pressure (network anchor)");
+        case KindNetLeaf:   return QStringLiteral("leaf node - a group of wells");
         case KindSegment:    return QStringLiteral("segment");
         case KindSegDevice:  return QStringLiteral("segment with a device");
         case KindConnection: return QStringLiteral("connection");
@@ -719,7 +820,8 @@ void GraphView::render(QPainter& p, const QRectF& area) const
     }
 
     for (const auto& q : placed_)
-        paintNode(p, boxOf(q), q.name, kinds_.value(q.name, KindGroup), thin,
+        paintNode(p, boxOf(q), q.name, notes_.value(q.name),
+                  kinds_.value(q.name, KindGroup), thin,
                   !highlight_.isEmpty() && q.name == highlight_);
     p.restore();
 
@@ -744,7 +846,7 @@ void GraphView::render(QPainter& p, const QRectF& area) const
     double ky = kr.top() + 7;
     for (int k : kk) {
         paintNode(p, QRectF(kr.left() + 10, ky + (rowH - sh) / 2, sw, sh),
-                  QString(), k, std::clamp(sc, 1.0, 1.6), false);
+                  QString(), QString(), k, std::clamp(sc, 1.0, 1.6), false);
         p.setPen(QColor(0x33, 0x38, 0x3d));
         p.drawText(QRectF(kr.left() + 10 + sw + 9, ky, kr.width() - sw - 29, rowH),
                    Qt::AlignVCenter | Qt::AlignLeft, kindName(k));
@@ -794,7 +896,7 @@ QVector<int> GraphView::keyKinds() const
     QVector<int> kk;
     for (const auto& q : placed_) {
         const int k = kinds_.value(q.name, KindGroup);
-        if (k != KindNetwork && !kk.contains(k)) kk << k;
+        if (!kk.contains(k)) kk << k;
     }
     if (kk.size() < 2) return {};      // one kind tells nothing apart
     std::sort(kk.begin(), kk.end());
@@ -814,12 +916,15 @@ QRectF GraphView::keyRect(const QRectF& area, const QFontMetricsF& fm) const
 
     double x, y;
     if (keyPos_.x() < 0) {
-        // The drawing's top-right corner, not the pane's: in a window much
-        // bigger than the graph the pane corner is half a screen away from
-        // what it explains. The top row is usually one root in the middle, so
-        // the corner it lands in is free.
+        // By the drawing's top-right corner, not the pane's: in a window much
+        // bigger than the graph the pane corner is half a screen away from what
+        // it explains. Just outside it when the pane leaves room - a key wider
+        // than the graph is not rare (a network is a handful of short names and
+        // the key spells out what each shape means), and placed inside it would
+        // sit squarely on the node at the top.
         const QRectF drawn = drawnRect(area);
-        x = drawn.right() - w;
+        x = (drawn.right() + 8 + w <= area.right()) ? drawn.right() + 8
+                                                    : drawn.right() - w;
         y = drawn.top();
     } else {
         x = area.left() + keyPos_.x() * area.width();
@@ -934,8 +1039,8 @@ StructurePanel::StructurePanel(QWidget* parent) : QWidget(parent)
     showWells_ = new QCheckBox(QStringLiteral("wells"));
     showWells_->setChecked(true);
     showWells_->setToolTip(QStringLiteral(
-        "list the wells under their group. Turn off on a field with many of "
-        "them to read the group hierarchy on its own."));
+        "list the wells under their group, and under the network's leaf nodes. "
+        "Turn off on a field with many of them to read the hierarchy on its own."));
     viewBox_ = new QComboBox;
     viewBox_->addItem(QStringLiteral("group tree"));
     viewBox_->addItem(QStringLiteral("network"));
@@ -1249,12 +1354,24 @@ void StructurePanel::showShape(int index)
     tree_->resizeColumnToContents(0);
 
     refreshGraph();
-    netInfo_->setText(!s.netActive
-        ? QStringLiteral("no network defined at this date")
-        : QStringLiteral("%1 network: %2 node(s), %3 branch(es)")
-              .arg(s.netStandard ? QStringLiteral("standard (GRUPNET)")
-                                 : QStringLiteral("extended (BRANPROP)"))
-              .arg(s.netNodes.size()).arg(s.branches.size()));
+    if (!s.netActive) {
+        netInfo_->setText(QStringLiteral("no network defined at this date"));
+    } else {
+        int roots = 0, leaves = 0;
+        for (const auto& n : s.netNodes) { roots += n.fixedP; leaves += n.leaf; }
+        QString txt = QStringLiteral("%1 network: %2 node(s), %3 branch(es), "
+                                     "%4 leaf/leaves")
+                          .arg(s.netStandard ? QStringLiteral("standard (GRUPNET)")
+                                             : QStringLiteral("extended (BRANPROP)"))
+                          .arg(s.netNodes.size()).arg(s.branches.size()).arg(leaves);
+        // A network with no fixed pressure anywhere has nothing to solve
+        // against. opm-common's own leaf walk starts at those nodes and so
+        // finds nothing at all in that case - worth saying out loud rather
+        // than leaving the drawing to look merely unremarkable.
+        txt += roots ? QStringLiteral(", %1 fixed pressure").arg(roots)
+                     : QStringLiteral(", no fixed pressure node");
+        netInfo_->setText(txt);
+    }
     applyFilter(filter_->text().trimmed());
 }
 
@@ -1299,13 +1416,48 @@ void StructurePanel::refreshGraph()
         graph_->setGraph(nodes, edges,
                          QStringLiteral("this deck defines no groups"), kinds);
     } else {                                       // the network
-        nodes = s.netNodes;
-        for (const auto& n : nodes) kinds[n] = GraphView::KindNetwork;
+        QHash<QString, QString> notes;
+        for (const auto& n : s.netNodes) {
+            nodes << n.name;
+            kinds[n.name] = n.fixedP ? GraphView::KindNetFixed
+                          : n.leaf   ? GraphView::KindNetLeaf
+                                     : GraphView::KindNetwork;
+            // What NODEPROP said about the node, which the shape and the colour
+            // between them cannot carry: the pressure the network is anchored
+            // at, and the two switches that change how the node behaves.
+            QStringList what;
+            if (n.fixedP)
+                what << QStringLiteral("%1 %2")
+                            .arg(n.press, 0, 'g', 4).arg(s.pressUnit);
+            if (n.choke)
+                what << (n.chokeTarget.isEmpty()
+                             ? QStringLiteral("choke")
+                             : QStringLiteral("choke on %1").arg(n.chokeTarget));
+            if (n.gasLift)                      what << QStringLiteral("gas lift");
+            if (!qFuzzyCompare(n.eff, 1.0))     what << QStringLiteral("eff %1")
+                                                            .arg(n.eff, 0, 'g', 3);
+            if (!what.isEmpty())
+                notes[n.name] = what.join(QStringLiteral(" · "));
+        }
         for (const auto& b : s.branches)
             edges.push_back({ b.down, b.up,
                               b.vfp > 0 ? QStringLiteral("VFP %1").arg(b.vfp) : QString() });
+        // The wells below the leaf nodes, on the same switch as the group tree
+        // and for the same reason: they are what the network is ultimately
+        // about, and they are also what makes a big field unreadable.
+        if (showWells_->isChecked())
+            for (const auto& n : s.netNodes) {
+                if (!n.leaf) continue;
+                const GroupNode* g = s.find(n.name);
+                if (!g) continue;
+                for (const auto& w : g->wells) {
+                    nodes << w;
+                    kinds[w] = wellKind(s, w);
+                    edges.push_back({ w, n.name, {} });
+                }
+            }
         graph_->setGraph(nodes, edges,
-                         QStringLiteral("this deck defines no network"), kinds);
+                         QStringLiteral("this deck defines no network"), kinds, notes);
     }
 }
 

@@ -71,6 +71,24 @@ struct NetBranch {
     int     vfp = -1;            // VFP table the branch is lifted through, or -1
 };
 
+// One node of the network, with what NODEPROP (or GRUPNET) says about it.
+//
+// A node given a terminal pressure is what opm-common calls a root: it is where
+// the network is anchored, and that pressure is the one number a picture of the
+// network most wants to carry - everything upstream of it is solved against it.
+// The rest are facts that change how a node behaves and are invisible in a plain
+// node-and-arrow drawing, which is the whole reason for collecting them here.
+struct NetNode {
+    QString name;
+    bool    fixedP  = false;     // terminal pressure given, i.e. a root
+    bool    leaf    = false;     // nothing feeds it - a group holding wells
+    bool    choke   = false;     // acts as an automatic choke
+    bool    gasLift = false;     // gas lift gas is added here
+    double  press   = 0;         // terminal pressure, in the deck's own unit
+    double  eff     = 1.0;       // node efficiency factor
+    QString chokeTarget;         // the group the choke is controlled against
+};
+
 // The field's shape at one moment.
 struct Structure {
     QDateTime         when;
@@ -90,11 +108,15 @@ struct Structure {
     // the structure is worth opening.
     QMap<QString, int> mswSegments;
     QVector<NetBranch> branches;
-    QStringList        netNodes;
+    QVector<NetNode>   netNodes;
     bool               netActive = false;
     bool               netStandard = false;   // GRUPNET rather than BRANPROP
+    // What the deck measures pressure in, so a node's terminal pressure can be
+    // shown the way the deck wrote it rather than in Pascal.
+    QString            pressUnit;
 
     const GroupNode* find(const QString& name) const;
+    const NetNode*   netNode(const QString& name) const;
     int  wellCount() const;
     // Everything that decides whether two moments look the same, so a run of
     // identical steps can collapse to one entry.
@@ -170,7 +192,10 @@ public:
     // from one that holds groups, so it is worth telling apart at a glance.
     // In the order the key lists them: the hierarchy, then what hangs off it.
     enum Kind { KindGroup = 0, KindWellGroup, KindProducer,
-                KindInjWater, KindInjGas, KindInjOther, KindNetwork,
+                KindInjWater, KindInjGas, KindInjOther,
+                // The network: a plain node, the one the network is anchored at
+                // by a fixed terminal pressure, and one with nothing feeding it.
+                KindNetwork, KindNetFixed, KindNetLeaf,
                 // ... and inside one well: its segments, the ones carrying a
                 // device, and the connections that reach the grid.
                 KindSegment, KindSegDevice, KindConnection };
@@ -184,9 +209,13 @@ signals:
 
 public:
     // `from` points at its parent/uptree node, so edges run child -> parent.
+    // `notes` is a short second line drawn under a node's name - a terminal
+    // pressure, say. Nodes stay identified by name, so the note is kept beside
+    // the graph rather than folded into the label.
     void setGraph(const QStringList& nodes, const QVector<Edge>& edges,
                   const QString& emptyText,
-                  const QHash<QString, int>& kinds = {});
+                  const QHash<QString, int>& kinds = {},
+                  const QHash<QString, QString>& notes = {});
     void setHighlight(const QString& node);
     // Which node is under a point in widget coordinates, or empty. The drawing
     // is scaled to fit, so this undoes that rather than testing raw geometry.
@@ -211,7 +240,7 @@ private:
     // `thin` scales pen widths up when the drawing is scaled down, so lines
     // do not vanish on a field that has to be fitted into a small pane.
     void paintNode(QPainter& p, const QRectF& r, const QString& text,
-                   int kind, double thin, bool hot) const;
+                   const QString& note, int kind, double thin, bool hot) const;
     // Which kinds are on screen, in the order the key lists them; empty when
     // there is only one and so nothing to tell apart.
     QVector<int> keyKinds() const;
@@ -237,7 +266,8 @@ private:
 
     // In the layout's own units: x is the node's centre, w its width.
     struct Placed { QString name; int depth = 0; double x = 0; double w = 0; };
-    QHash<QString, int> kinds_;
+    QHash<QString, int>     kinds_;
+    QHash<QString, QString> notes_;
     QStringList     nodes_;
     QVector<Edge>   edges_;
     QVector<Placed> placed_;
