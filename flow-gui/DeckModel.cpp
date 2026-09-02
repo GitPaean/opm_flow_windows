@@ -444,6 +444,18 @@ QFont GraphView::nodeFont() const
     return f;
 }
 
+// Barely smaller than the name and not bold, which is enough to rank the two.
+// It does not also need to be faint: a note is drawn on whatever fill its node
+// has - orange, most often - and grey on orange is the one combination in the
+// palette that cannot be read.
+QFont GraphView::noteFont() const
+{
+    QFont f = nodeFont();
+    f.setPointSizeF(8.0);
+    f.setBold(false);
+    return f;
+}
+
 // The layout, in units of its own rather than fractions of the pane. Spreading
 // each layer evenly across the whole width is what put two children of one node
 // at opposite edges of the window: the drawing has a natural size, and render()
@@ -512,9 +524,7 @@ void GraphView::relayout()
     // uniformly, since the row spacing is one height for the whole drawing and
     // a single taller node would have to break that.
     const QFontMetricsF fm(nodeFont());
-    QFont sub = nodeFont();
-    sub.setPointSizeF(std::max(6.0, sub.pointSizeF() - 1.5));
-    const QFontMetricsF sfm(sub);
+    const QFontMetricsF sfm(noteFont());
     natBoxH_   = fm.height() + 10 + (notes_.isEmpty() ? 0.0 : sfm.height());
     natRowGap_ = natBoxH_ * 2.7;
     QHash<QString, double> W;
@@ -619,11 +629,8 @@ void GraphView::paintNode(QPainter& p, const QRectF& r, const QString& text,
     const double half = r.height() / 2;
     p.drawText(QRectF(r.left(), r.top(), r.width(), half),
                Qt::AlignHCenter | Qt::AlignBottom, text);
-    QFont nf = was;
-    nf.setPointSizeF(std::max(6.0, was.pointSizeF() - 1.5));
-    nf.setBold(false);
-    p.setFont(nf);
-    p.setPen(QColor(0x4a, 0x51, 0x58));
+    p.setFont(noteFont());
+    p.setPen(QColor(0x1c, 0x22, 0x28));
     p.drawText(QRectF(r.left(), r.top() + half, r.width(), half),
                Qt::AlignHCenter | Qt::AlignTop, note);
     p.setFont(was);
@@ -786,7 +793,11 @@ void GraphView::render(QPainter& p, const QRectF& area) const
     };
 
     // Edges first, so a node always sits on top of the lines that reach it.
-    QFont ef = nf; ef.setPointSizeF(7.5); ef.setBold(false);
+    // Bold, and only a shade smaller than a node's name: a VFP number on a
+    // branch is as much a fact about the network as the node names are, and at
+    // 7.5pt in tan it was the first thing to become unreadable as the drawing
+    // shrank to fit.
+    QFont ef = nf; ef.setPointSizeF(8.0);
     for (const auto& e : edges_) {
         const Placed* a = find(e.from);
         const Placed* b = find(e.to);
@@ -813,7 +824,7 @@ void GraphView::render(QPainter& p, const QRectF& area) const
             p.setPen(Qt::NoPen);
             p.setBrush(Qt::white);
             p.drawRect(lr);
-            p.setPen(QColor(0x8a, 0x6d, 0x3b));
+            p.setPen(QColor(0x6b, 0x43, 0x00));
             p.drawText(lr, Qt::AlignCenter, e.label);
             p.setFont(nf);
         }

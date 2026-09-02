@@ -251,6 +251,10 @@ private:
     double fitScale(const QRectF& area) const;
     QRectF drawnRect(const QRectF& area) const;
     QFont  nodeFont() const;
+    // The note's font, in one place: relayout() measures with it and paintNode()
+    // draws with it, and a box sized to one font and filled with another is a
+    // note that runs out of its node.
+    QFont  noteFont() const;
     static QString kindName(int kind);
     static bool    isWellKind(int kind);
     static QPointF edgePoint(const QRectF& r, bool rect, const QPointF& towards);
