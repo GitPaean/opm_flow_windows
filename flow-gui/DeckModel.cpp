@@ -30,6 +30,9 @@
 #include <QMouseEvent>
 #include <QProgressBar>
 #include <QPushButton>
+#include <QRegularExpression>
+#include <QSet>
+#include <QSignalBlocker>
 #include <QSplitter>
 #include <QThread>
 #include <QTimeZone>
@@ -113,6 +116,26 @@ int wellKind(const Structure& s, const QString& well)
         case Inject::Gas:   return GraphView::KindInjGas;
         default:            return GraphView::KindInjOther;
     }
+}
+
+// `root` and everything hanging off it. Both graphs store an edge as
+// {from = the node below, to = the one above}, so descending means collecting
+// every `from` whose `to` is already in - which is the edge list read
+// backwards. Breadth-first over a `seen` set, so a network that loops back on
+// itself is walked once rather than forever.
+QSet<QString> descendants(const QString& root, const QVector<GraphView::Edge>& edges)
+{
+    QHash<QString, QStringList> below;
+    for (const auto& e : edges) below[e.to] << e.from;
+
+    QSet<QString> seen{ root };
+    QStringList   queue{ root };
+    while (!queue.isEmpty()) {
+        const QString n = queue.takeFirst();
+        for (const auto& c : below.value(n))
+            if (!seen.contains(c)) { seen.insert(c); queue << c; }
+    }
+    return seen;
 }
 } // namespace
 
@@ -1056,6 +1079,14 @@ StructurePanel::StructurePanel(QWidget* parent) : QWidget(parent)
     viewBox_->setToolTip(QStringLiteral(
         "which graph to draw. The tree on the left is always the group "
         "hierarchy; this is what the picture beside it shows."));
+    rootBox_ = new QComboBox;
+    rootBox_->setToolTip(QStringLiteral(
+        "draw only this node and what hangs off it. A field with a few hundred "
+        "groups is one grey smear at fit-to-pane size,\nand the part being asked "
+        "about is usually one branch of it - so pick that branch and the rest "
+        "goes away.\n(or double-click a group or network node in either pane; "
+        "come back with \"whole graph\")"));
+    rootBox_->setSizeAdjustPolicy(QComboBox::AdjustToContents);
     picBtn_ = new QPushButton(QStringLiteral("Save picture..."));
     picBtn_->setEnabled(false);
     picBtn_->setToolTip(QStringLiteral(
@@ -1075,6 +1106,8 @@ StructurePanel::StructurePanel(QWidget* parent) : QWidget(parent)
     row->addWidget(showWells_);
     row->addWidget(new QLabel(QStringLiteral("Draw:")));
     row->addWidget(viewBox_);
+    row->addWidget(new QLabel(QStringLiteral("from:")));
+    row->addWidget(rootBox_);
     wellBtn_ = new QPushButton(QStringLiteral("Well structure..."));
     wellBtn_->setToolTip(QStringLiteral(
         "draw the selected well's own structure: its segments, and the "
@@ -1181,6 +1214,7 @@ StructurePanel::StructurePanel(QWidget* parent) : QWidget(parent)
             [this](bool) { showShape(shapeBox_->currentIndex()); });
     connect(picBtn_, &QPushButton::clicked, this, [this] { exportPicture(); });
     connect(viewBox_, &QComboBox::currentIndexChanged, this, [this](int) { refreshGraph(); });
+    connect(rootBox_, &QComboBox::currentIndexChanged, this, [this](int) { refreshGraph(); });
     // Selecting in the tree marks the same node in the drawing, which is the
     // cheapest way to tie a name in a list to a box in a picture.
     connect(tree_, &QTreeWidget::itemSelectionChanged, this, [this] {
@@ -1192,12 +1226,20 @@ StructurePanel::StructurePanel(QWidget* parent) : QWidget(parent)
     // its own drawing says how it is put together. Double-click either pane.
     connect(tree_, &QTreeWidget::itemDoubleClicked, this,
             [this](QTreeWidgetItem* it, int) {
-                if (it && it->data(0, Qt::UserRole).toBool()) showWellStructure(it->text(0));
+                if (!it) return;
+                if (it->data(0, Qt::UserRole).toBool()) showWellStructure(it->text(0));
+                else                                    focusOn(it->text(0));
             });
     connect(graph_, &GraphView::nodeActivated, this, [this](const QString& n) {
         const int i = shapeBox_->currentIndex();
         if (i < 0 || i >= model_.shapes.size()) return;
-        if (!model_.shapes[i].find(n)) showWellStructure(n);   // not a group: a well
+        const Structure& s = model_.shapes[i];
+        // Whether a name is a well depends on which graph it was clicked in:
+        // in the network view the boxes are nodes, and the wells are only the
+        // ones hanging below the leaves.
+        const bool well = viewBox_->currentIndex() == 0 ? !s.find(n) : !s.netNode(n);
+        if (well) showWellStructure(n);
+        else      focusOn(n);
     });
     connect(wellBtn_, &QPushButton::clicked, this, [this] {
         auto* it = tree_->currentItem();
@@ -1362,9 +1404,8 @@ void StructurePanel::showShape(int index)
     else            tree_->expandToDepth(1);
     tree_->resizeColumnToContents(0);
 
-    refreshGraph();
     if (!s.netActive) {
-        netInfo_->setText(QStringLiteral("no network defined at this date"));
+        netInfoBase_ = QStringLiteral("no network defined at this date");
     } else {
         int roots = 0, leaves = 0;
         for (const auto& n : s.netNodes) { roots += n.fixedP; leaves += n.leaf; }
@@ -1379,9 +1420,19 @@ void StructurePanel::showShape(int index)
         // than leaving the drawing to look merely unremarkable.
         txt += roots ? QStringLiteral(", %1 fixed pressure").arg(roots)
                      : QStringLiteral(", no fixed pressure node");
-        netInfo_->setText(txt);
+        netInfoBase_ = txt;
     }
+    // After netInfoBase_, which it appends to.
+    refreshGraph();
     applyFilter(filter_->text().trimmed());
+}
+
+// Root the drawing at one node. Just a nudge to the picker, so the two ways in
+// - this and the combo box - cannot end up disagreeing about what is drawn.
+void StructurePanel::focusOn(const QString& node)
+{
+    const int at = node.isEmpty() ? 0 : rootBox_->findData(node);
+    if (at >= 0) rootBox_->setCurrentIndex(at);
 }
 
 // Feed the drawing from whichever graph is asked for. Both come out of the
@@ -1398,6 +1449,9 @@ void StructurePanel::refreshGraph()
     QVector<GraphView::Edge> edges;
 
     QHash<QString, int> kinds;
+    QHash<QString, QString> notes;
+    QStringList focusable;      // what the "from:" picker may root the drawing at
+    QString     empty;
 
     if (viewBox_->currentIndex() == 0) {          // the group hierarchy
         for (const auto& g : s.groups) {
@@ -1422,10 +1476,9 @@ void StructurePanel::refreshGraph()
                     kinds[w] = wellKind(s, w);
                     edges.push_back({ w, g.name, {} });
                 }
-        graph_->setGraph(nodes, edges,
-                         QStringLiteral("this deck defines no groups"), kinds);
+        empty = QStringLiteral("this deck defines no groups");
+        for (const auto& g : s.groups) focusable << g.name;
     } else {                                       // the network
-        QHash<QString, QString> notes;
         for (const auto& n : s.netNodes) {
             nodes << n.name;
             kinds[n.name] = n.fixedP ? GraphView::KindNetFixed
@@ -1462,9 +1515,48 @@ void StructurePanel::refreshGraph()
                     edges.push_back({ w, n.name, {} });
                 }
             }
-        graph_->setGraph(nodes, edges,
-                         QStringLiteral("this deck defines no network"), kinds, notes);
+        empty = QStringLiteral("this deck defines no network");
+        for (const auto& n : s.netNodes) focusable << n.name;
     }
+
+    // The picker offers the nodes of whichever graph is on screen - groups and
+    // network nodes, never wells, since a well has nothing hanging off it. It
+    // is rebuilt here because it changes with the view and with the date, and
+    // the current choice is kept whenever the new graph still has that node.
+    const QString want = rootBox_->currentData().toString();
+    {
+        const QSignalBlocker block(rootBox_);
+        rootBox_->clear();
+        rootBox_->addItem(QStringLiteral("whole graph"), QString());
+        for (const auto& n : focusable) rootBox_->addItem(n, n);
+        const int at = want.isEmpty() ? 0 : rootBox_->findData(want);
+        rootBox_->setCurrentIndex(at < 0 ? 0 : at);
+    }
+
+    const QString root = rootBox_->currentData().toString();
+    const int total = nodes.size();
+    if (!root.isEmpty() && nodes.contains(root)) {
+        const QSet<QString> keep = descendants(root, edges);
+        nodes.removeIf([&keep](const QString& n) { return !keep.contains(n); });
+        edges.removeIf([&keep](const GraphView::Edge& e) {
+            return !keep.contains(e.from) || !keep.contains(e.to);
+        });
+    }
+
+    // Say what is on screen when it is not all of it, so a partial picture is
+    // never mistaken for the whole field.
+    netInfo_->setText(
+        root.isEmpty() || nodes.size() == total
+            ? netInfoBase_
+            : QStringLiteral("%1%2drawing the %3 from %4: %5 of %6 node(s)")
+                  .arg(netInfoBase_,
+                       netInfoBase_.isEmpty() ? QString() : QStringLiteral("   |   "),
+                       viewBox_->currentIndex() == 0 ? QStringLiteral("group tree")
+                                                     : QStringLiteral("network"),
+                       root)
+                  .arg(nodes.size()).arg(total));
+
+    graph_->setGraph(nodes, edges, empty, kinds, notes);
 }
 
 // Straight to PNG or PDF, from the painter that draws the screen - so the file
@@ -1584,9 +1676,15 @@ void StructurePanel::exportPicture()
         status_->setText(QStringLiteral("nothing drawn to save"));
         return;
     }
-    const QString base = QFileInfo(model_.deckPath).completeBaseName()
+    QString base = QFileInfo(model_.deckPath).completeBaseName()
                          + (viewBox_->currentIndex() == 0 ? QStringLiteral("_groups")
                                                           : QStringLiteral("_network"));
+    // Name the root in the file too: saving one sub-graph after another is
+    // exactly what the picker is for, and they would otherwise all land on the
+    // same suggested name.
+    if (const QString root = rootBox_->currentData().toString(); !root.isEmpty())
+        base += QLatin1Char('_') + QString(root).replace(QRegularExpression(
+                    QStringLiteral("[^A-Za-z0-9_-]")), QStringLiteral("_"));
     QString sel;
     QString f = QFileDialog::getSaveFileName(
         this, QStringLiteral("Save picture"),

@@ -314,6 +314,9 @@ private:
     void refreshGraph();
     // Pop up (or raise) the drawing of one well's own structure.
     void showWellStructure(const QString& well);
+    // Draw `node` and everything hanging off it, or the whole graph when it is
+    // empty. A no-op for a node the current view does not contain.
+    void focusOn(const QString& node);
 
     QPushButton*  openBtn_ = nullptr;
     QPushButton*  picBtn_ = nullptr;
@@ -327,10 +330,18 @@ private:
     QTreeWidget*  tree_ = nullptr;
     GraphView*    graph_ = nullptr;
     QComboBox*    viewBox_ = nullptr;   // group tree, or network
+    // Which node the drawing starts from. Empty data = the whole graph. A field
+    // with a few hundred groups is one grey smear at fit-to-pane size, and the
+    // part anyone is actually asking about is one branch of it.
+    QComboBox*    rootBox_ = nullptr;
     QTimer*       poll_ = nullptr;
     QThread*      worker_ = nullptr;
 
     DeckStructure     model_;
+    // What netInfo_ says about the whole network, before refreshGraph() adds
+    // what is actually on screen. Kept because the two are written by different
+    // calls and the second must not eat the first.
+    QString           netInfoBase_;
     // Open well drawings by well name, so asking twice raises the one that is
     // already up rather than stacking another on it.
     QHash<QString, QDialog*> wellWindows_;
