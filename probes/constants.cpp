@@ -8,9 +8,11 @@
   criticalMolarVolume as constants on the Windows branch of opm-common
   (Evaluation arithmetic is not a constant expression under MSVC). This
   evaluates the old in-Scalar expressions at run time for
-  Evaluation<float, 3> and prints them beside the constants: the three
-  "old" and "new" columns must agree to the last digit, and match the
-  plain float column.
+  Evaluation<float, 3> and prints them beside the constants: the "old"
+  and "new" columns must agree to the last digit, and match the plain
+  float column. opm-common's tests/material/test_constants.cpp checks the
+  same for float, double and an Evaluation on each; this stays as the
+  one-file version.
 
   Build (from the harness root, after setup-env.ps1):
     cl /nologo /std:c++20 /permissive- /EHsc /MD /DNDEBUG /Isrc\opm-common
@@ -21,6 +23,7 @@
 #include <opm/material/components/iapws/Common.hpp>
 
 #include <cstdio>
+#include <numbers>
 
 int main()
 {
@@ -30,6 +33,7 @@ int main()
     const auto oldRs     = Opm::Constants<E>::R / C::molarMass;
     const auto oldVolume = C::molarMass / C::criticalDensity;
     const auto oldKb     = Opm::Constants<E>::R / Opm::Constants<E>::Na;
+    const auto oldHRed   = Opm::Constants<E>::h / (E(2) * E(std::numbers::pi_v<float>));
 
     std::printf("Rs:                  old=%.12g new=%.12g scalar=%.12g\n",
                 oldRs.value(), C::Rs.value(), Opm::IAPWS::Common<float>::Rs);
@@ -38,4 +42,6 @@ int main()
                 Opm::IAPWS::Common<float>::criticalMolarVolume);
     std::printf("kb:                  old=%.12g new=%.12g scalar=%.12g\n",
                 oldKb.value(), Opm::Constants<E>::kb.value(), Opm::Constants<float>::kb);
+    std::printf("hRed:                old=%.12g new=%.12g scalar=%.12g\n",
+                oldHRed.value(), Opm::Constants<E>::hRed.value(), Opm::Constants<float>::hRed);
 }
