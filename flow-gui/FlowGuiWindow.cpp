@@ -471,6 +471,7 @@ FlowGuiWindow::FlowGuiWindow()
         // being browsed to, dropped on the window or restored with a project,
         // and having to find it a second time through the tab's own file
         // dialog is the sort of errand a queue exists to save.
+#ifdef FLOWGUI_HAVE_DECKMODEL
         connect(bstru, &QPushButton::clicked, this, [this] {
             const int r = jobTable_->currentRow();
             if (r < 0 || r >= jobs_.size() || !structure_) return;
@@ -482,6 +483,15 @@ FlowGuiWindow::FlowGuiWindow()
                 structure_->openDeck(jobs_[r].deck);
             tabs_->setCurrentWidget(structure_);
         });
+#else
+        // A build whose opm-common link check failed has no Well Hierarchy
+        // tab (see CMakeLists.txt); the button stays, greyed, so the layout
+        // is the same and the tooltip says why it does nothing.
+        bstru->setEnabled(false);
+        bstru->setToolTip(QStringLiteral(
+            "not available in this build: flow-gui was built without the "
+            "deck model (opm-common's Parser/Schedule did not link)"));
+#endif
         // queue management on top; the result viewers (used after a run
         // finishes) grouped below
         for (auto* b : { badd, bedit, bstru, brem, bclr }) col->addWidget(b);

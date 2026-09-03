@@ -93,6 +93,13 @@ if(EXISTS "${FLOWGUI_OPM_PREFIX}/include/opm/input/eclipse/Schedule/Schedule.hpp
     endif()
     set(CMAKE_REQUIRED_INCLUDES  "${FLOWGUI_OPM_PREFIX}/include")
     set(CMAKE_REQUIRED_LIBRARIES ${_dm_libs})
+    # The test program must be built in this project's configuration: left to
+    # itself try_compile builds it as Debug, which on MSVC links /MDd objects
+    # against the Release opmcommon.lib and fails on the runtime-library
+    # mismatch alone. And the answer is re-asked every configure rather than
+    # taken from the cache, since it changes when opm-common is rebuilt.
+    set(CMAKE_TRY_COMPILE_CONFIGURATION "${CMAKE_BUILD_TYPE}")
+    unset(FLOWGUI_DECKMODEL_LINKS CACHE)
     check_cxx_source_compiles("
         #include <opm/input/eclipse/Parser/Parser.hpp>
         #include <opm/input/eclipse/EclipseState/EclipseState.hpp>
@@ -105,6 +112,7 @@ if(EXISTS "${FLOWGUI_OPM_PREFIX}/include/opm/input/eclipse/Schedule/Schedule.hpp
         }" FLOWGUI_DECKMODEL_LINKS)
     unset(CMAKE_REQUIRED_INCLUDES)
     unset(CMAKE_REQUIRED_LIBRARIES)
+    unset(CMAKE_TRY_COMPILE_CONFIGURATION)
     if(FLOWGUI_DECKMODEL_LINKS)
         set(FLOWGUI_HAVE_DECKMODEL ON)
         set(FLOWGUI_DECKMODEL_LIBS ${_dm_libs})
