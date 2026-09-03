@@ -1,10 +1,11 @@
 # Copyright (C) 2026 SINTEF Digital, Mathematics & Cybernetics; GPL-3.0-or-later (see LICENSE).
 #
 # Can a C++-only project consume the installed opm-common package?
-# No: with C not enabled, the exported opmcommon target's link interface
-# fails on OpenMP::OpenMP_C (and on MPI::MPI_C on Windows, where the series
-# links MPI directly), and its c_std_11 compile feature needs C too - all of
-# it upstream's export. This is the failing case; the control below passes.
+# Not this OpenMP-enabled one: with C not enabled, the exported opmcommon
+# target's link interface fails on MPI::MPI_C (the series links MPI directly
+# on Windows) and, that aside, on OpenMP::OpenMP_C from upstream's
+# UseOpenMP.cmake. The exported c_std_11 compile feature alone is no such
+# requirement. This is the failing case; the control below passes.
 #
 #   cmake -S probes\cxx-consumer -B build-consumer -G Ninja -DCMAKE_CXX_COMPILER=cl
 #         "-DCMAKE_PREFIX_PATH=<harness>/install-mpi;<harness>/vcpkg/installed/x64-windows"

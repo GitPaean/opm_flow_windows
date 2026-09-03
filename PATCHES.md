@@ -209,10 +209,12 @@ Patches made so far:
   (default ON on Windows, OFF elsewhere, overridable). When ON and the target
   does not already get MPI transitively, `mpi_checks()` runs
   `find_package(MPI COMPONENTS C)` and links `MPI::MPI_C` directly. A consumer
-  of the installed package must therefore have enabled C - which upstream's
-  export already demands through the `c_std_11` compile feature and
-  `OpenMP::OpenMP_C`, so a CXX-only project could not consume opm-common
-  before this either (`probes/cxx-consumer/` shows both). Needed
+  of the installed package must therefore have enabled C - which the
+  OpenMP-enabled package this harness builds already demands through
+  `OpenMP::OpenMP_C` in the same exported interface (upstream's
+  `UseOpenMP.cmake`), so a CXX-only project could not consume it before this
+  either (`probes/cxx-consumer/` shows both). The exported `c_std_11` compile
+  feature is not such a requirement on its own. Needed
   because DUNE does not export MPI on its installed targets (MPI lives only in
   DUNE build-time ALL_PKG_FLAGS) and this build consumes installed modules
   rather than using dunecontrol. This makes mpi_checks() define HAVE_MPI=1 for

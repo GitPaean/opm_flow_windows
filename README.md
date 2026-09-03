@@ -77,7 +77,10 @@ trees so the MS-MPI build is untouched. Two reasons to prefer it:
   measurement is only reproducible when the laptop starts cold: after an hour
   of builds the same binaries ranged from 170 s to 253 s run to run, MS-MPI
   and Intel MPI overlapping, and an eight-minute idle did not restore the
-  cold-start pace. Measure before relying on the difference.
+  cold-start pace. On the charger but already warm (CPU clocks 68-83 % of
+  base under the 8-thread load), a same-day pair gave 272 s for MS-MPI and
+  258 s for Intel MPI: the same ordering, 5 % apart, far off the cold pace.
+  Measure before relying on the difference.
 
 ```powershell
 python -m pip install --user impi-rt impi-devel   # no administrator needed
