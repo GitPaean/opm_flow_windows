@@ -318,7 +318,7 @@ it is enforced — the same applies to vcpkg's `qtbase` port):
 ```powershell
 winget install -e --id Python.Python.3.12
 python -m pip install aqtinstall
-python -m aqt install-qt windows desktop 6.8.3 win64_msvc2022_64 -m qtcharts --archives qtbase qtcharts -O C:\Qt
+python -m aqt install-qt windows desktop 6.8.3 win64_msvc2022_64 -m qtcharts --archives qtbase qtcharts opengl32sw -O C:\Qt
 
 . .\setup-env.ps1
 cmake -S flow-gui -B build-gui -G Ninja -DCMAKE_BUILD_TYPE=Release `
@@ -327,8 +327,21 @@ cmake --build build-gui
 C:\Qt\6.8.3\msvc2022_64\bin\windeployqt --release --no-translations build-gui\flow-gui.exe
 build-gui\flow-gui.exe
 ```
-`windeployqt` copies the required Qt DLLs and the platform plugin next to
-the executable.
+`windeployqt` copies the required Qt DLLs, the platform plugin, and
+`opengl32sw.dll` next to the executable. Keep the `opengl32sw` archive in the
+install command: Qt uses this software OpenGL fallback when the graphics
+driver does not provide OpenGL 2.0. Without it, the GUI can open as an empty
+white window, including its ordinary controls and plots, because the 3D
+widget makes the window use OpenGL composition.
+
+To repair a Qt installation made with the earlier command, install just
+the missing archive and deploy again (no GUI rebuild is needed):
+```powershell
+python -m aqt install-qt windows desktop 6.8.3 win64_msvc2022_64 --archives opengl32sw -O C:\Qt
+C:\Qt\6.8.3\msvc2022_64\bin\windeployqt --release --no-translations build-gui\flow-gui.exe
+```
+See [Qt's Windows graphics documentation](https://doc.qt.io/qt-6.8/windows-graphics.html)
+for how the renderer is selected.
 
 **Summary plotting** is enabled automatically when the harness'
 `install-mpi` (opm-common with `EclIO::ESmry`) and Qt Charts are found at

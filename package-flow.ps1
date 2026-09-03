@@ -41,6 +41,14 @@ $SimBin = if ($IntelMpi) { Join-Path $Root 'build-impi\opm-simulators\bin' }
 # Where the pip wheels (impi-rt / impi-devel) put the Intel MPI runtime.
 $ImpiRoot = Join-Path $env:APPDATA 'Python\Library'
 $GuiBin = Join-Path $Root 'build-gui'
+# Validate this before replacing the staged package. Qt's OpenGL fallback is
+# loaded dynamically, so it is not included by the Qt6*.dll copy below. Without
+# it the GUI can open blank on machines whose driver lacks OpenGL 2.0.
+$GuiOpenGLRuntime = Join-Path $GuiBin 'opengl32sw.dll'
+if ((Test-Path (Join-Path $GuiBin 'flow-gui.exe') -PathType Leaf) -and
+    -not (Test-Path $GuiOpenGLRuntime -PathType Leaf)) {
+    throw 'Missing build-gui\opengl32sw.dll. Install Qt''s opengl32sw archive and rerun windeployqt (see flow-gui/README.md) before packaging.'
+}
 # The Intel MPI package has to carry its own name. Both variants stage into
 # dist\opm-flow-<Version>\ and zip to opm-flow-<Version>-win64.zip, so sharing
 # a version means the second build silently overwrites the first - and the two
@@ -152,6 +160,7 @@ if ($ompDll) { Copy-Item $ompDll $Bin } else { Write-Warning "libomp140.x86_64.d
 if (Test-Path (Join-Path $GuiBin 'flow-gui.exe')) {
     Copy-Item (Join-Path $GuiBin 'flow-gui.exe') $Bin
     Copy-Item (Join-Path $GuiBin 'Qt6*.dll') $Bin
+    Copy-Item -LiteralPath $GuiOpenGLRuntime -Destination $Bin
     foreach ($d in 'platforms','styles','imageformats','generic','iconengines',
                    'networkinformation','tls') {
         $p = Join-Path $GuiBin $d
