@@ -69,11 +69,15 @@ trees so the MS-MPI build is untouched. Two reasons to prefer it:
   profile, where installing MS-MPI needs an administrator — which is what
   otherwise stops OPM Flow running at all on a managed work laptop, since the
   simulator links an MPI library even for serial runs.
-- **It measured faster.** On Norne, 4 ranks × 2 threads: 125 s of simulation
-  time against 157 s for MS-MPI, with identical iteration counts. Note that
-  the assembly time fell by about as much as the linear solve did, and assembly
-  is local compute — so some of that gain is likely Intel MPI's default process
-  pinning rather than faster message passing.
+- **It measured faster — on a cool machine.** On Norne, 4 ranks × 2 threads:
+  125 s of simulation time against 157 s for MS-MPI, with identical iteration
+  counts. Note that the assembly time fell by about as much as the linear solve
+  did, and assembly is local compute — so some of that gain is likely Intel
+  MPI's default process pinning rather than faster message passing. The
+  measurement is only reproducible when the laptop starts cold: after an hour
+  of builds the same binaries ranged from 170 s to 253 s run to run, MS-MPI
+  and Intel MPI overlapping, and an eight-minute idle did not restore the
+  cold-start pace. Measure before relying on the difference.
 
 ```powershell
 python -m pip install --user impi-rt impi-devel   # no administrator needed

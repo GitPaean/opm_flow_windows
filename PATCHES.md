@@ -3,6 +3,29 @@
 Patches applied to the source trees to build OPM-flow natively on Windows with
 MSVC. Kept here so they can be upstreamed as PRs.
 
+## The series as it stands (2026-09-03)
+
+The sections below are the working record, in the order things were found.
+What is on the branches is the folded result: one commit per topic, each
+message saying what it changes and why, with no fix-up commits. The trees
+are exactly what the record below describes.
+
+| repository (`windows` branch of GitPaean/...) | commits |
+|---|---|
+| opm-common | Portability and cross-platform fixes exposed by a Windows build · Pin LF line endings for Eclipse test data · Windows/MSVC enablement · Link MPI directly when the DUNE modules do not propagate it · Share the FCMacros.h fallback through opm-common |
+| opm-grid | Enable Fortran only when a compiler exists, and fall back for FCMacros.h · Make cpgrid compile with MSVC · Index-based chunk access so OpenMP loops build on MSVC · Use unsigned rather than the POSIX uint typedef in tests · Pin LF line endings for Eclipse test data |
+| opm-simulators | Portability fixes and bugs exposed by a Windows build · Work around MSVC front-end limitations · Provide Windows equivalents for the POSIX interfaces used · Exempt the simulator from Windows power throttling · Pin LF line endings for Eclipse test data · Harden reservoir coupling slave spawning for process-manager launch contexts |
+| opm-upscaling | Build on MSVC: Fortran only when a compiler exists, fall back for FCMacros.h · Disambiguate FieldMatrix operator*= for MSVC · Pin LF line endings for the Eclipse test data |
+
+Review vehicles: GitPaean/opm-common#7, opm-grid#2, opm-simulators#4,
+opm-upscaling#1 - each `windows` against `master` in the fork; `master`
+mirrors upstream, so they are not meant to be merged there.
+
+What still relies on this harness's `compat/include` shims: opm-common's
+`examples/` and `test_util/` tools (`getopt.h`) and `EclipseGridTests.cpp`
+(`unistd.h`); opm-upscaling's `examples/` and `benchmarks/` (`sys/utsname.h`,
+`unistd.h`). The libraries, opm-grid and opm-simulators build without them.
+
 ## Global build flags (not a source patch)
 Configured via `build-module.ps1` `CMAKE_CXX_FLAGS`:
 `/permissive- /Zc:__cplusplus /Zc:preprocessor /bigobj /EHsc /wd4068 -D_USE_MATH_DEFINES`
