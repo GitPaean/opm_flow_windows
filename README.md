@@ -137,6 +137,7 @@ uses its own build trees:
 | `setup-env.ps1` | Loads MSVC (vcvars64) + vcpkg (+ MS-MPI) into the shell |
 | `compat/include/` | POSIX/Fortran shim headers MSVC lacks (getopt, unistd, sys/*, FCMacros) |
 | `patches/` | DUNE Windows patches, auto-applied after the DUNE checkout |
+| `probes/` | Stand-alone programs that each settle one question about the build (MS-MPI spawning, autodiff constants, C++-only package consumption); see its README |
 | `flow-gui/` | The Qt 6 graphical workbench for flow (Windows/Linux/macOS): run/monitor with live progress, summary plotting & case comparison, 3D results viewer, deck editor, projects (see its README) |
 | `package-flow.ps1` | Stage a redistributable package (bin + runtimes + prerequisites) and zip it |
 | `installer/` | Inno Setup script producing `OPM-Flow-<ver>-Setup.exe` (see [PACKAGING.md](PACKAGING.md)) |

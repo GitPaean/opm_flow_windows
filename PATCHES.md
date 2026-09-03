@@ -208,7 +208,11 @@ Patches made so far:
 - opm-common `cmake/Modules/UseMPI.cmake`: new option `OPM_LINK_MPI_DIRECTLY`
   (default ON on Windows, OFF elsewhere, overridable). When ON and the target
   does not already get MPI transitively, `mpi_checks()` runs
-  `find_package(MPI COMPONENTS C)` and links `MPI::MPI_C` directly. Needed
+  `find_package(MPI COMPONENTS C)` and links `MPI::MPI_C` directly. A consumer
+  of the installed package must therefore have enabled C - which upstream's
+  export already demands through the `c_std_11` compile feature and
+  `OpenMP::OpenMP_C`, so a CXX-only project could not consume opm-common
+  before this either (`probes/cxx-consumer/` shows both). Needed
   because DUNE does not export MPI on its installed targets (MPI lives only in
   DUNE build-time ALL_PKG_FLAGS) and this build consumes installed modules
   rather than using dunecontrol. This makes mpi_checks() define HAVE_MPI=1 for
@@ -374,20 +378,17 @@ Remaining, not code bugs:
   exes with BAD_COMMAND; it has no exclusion mechanism — disable it on build
   machines (Windows Security > App & browser control), or accept blocked tests.
 
-## Known MS-MPI limitation: reservoir coupling (MPI_Comm_spawn)
-MS-MPI does not implement MPI dynamic process management (`MPI_Comm_spawn`,
-`MPI_Comm_connect`/`accept`, `MPI_Open_port`) and will not gain it. Coupled
-reservoir runs (master decks with the `SLAVES` keyword) therefore cannot work
-under MS-MPI: the code compiles and links (the symbols exist in msmpi.dll)
-but spawning slaves fails at runtime with a clean error
-(`ReservoirCouplingSpawnSlaves.cpp` logs the MPI error strings and throws
-"Failed to spawn slave process"). Ordinary domain-decomposed `mpiexec` runs
-are unaffected — MS-MPI fully covers point-to-point, collectives and
-communicators. Possible future routes: **Intel MPI may bridge this under
-Windows** — it ships natively for Windows (free, oneAPI HPC toolkit),
-implements dynamic process management incl. `MPI_Comm_spawn` (needs its Hydra
-service), and should slot in via the plain `find_package(MPI)` path by
-rebuilding the MPI tree against it instead of MS-MPI; promising but unverified
-with OPM, so test spawn before relying on it. Otherwise an upstream MPMD
-redesign of the coupling that avoids spawn. Worth stating in any upstream PR
-text and, ideally, as a hint appended to that runtime error message.
+## Reservoir coupling (MPI_Comm_spawn) under MS-MPI: untested, not unsupported
+An earlier version of this section said MS-MPI lacks MPI dynamic process
+management. That is not so: MS-MPI 10.1 documents `MPI_Comm_spawn`, and a
+parent/child probe (`probes/mpi-spawn.c`) started with
+`mpiexec -n 1` spawns its child, which reaches `MPI_Init`, and both finalize
+cleanly. What the spawn needs is the launch context: `MPI_Comm_spawn` is
+carried out by the MPI process manager, so the master must itself have been
+started through `mpiexec` (a program started directly has no process manager
+and the spawn fails), and the command must be reachable from that manager.
+The spawn-failure message in `ReservoirCouplingSpawnSlaves.cpp` reports the
+MPI error string and that context. A complete coupled master/slave run (a
+master deck with the `SLAVES` keyword) has not been exercised on Windows under
+either MS-MPI or Intel MPI; until it has, reservoir coupling is untested here,
+not known to work and not known to fail.
