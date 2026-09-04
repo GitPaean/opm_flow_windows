@@ -9,6 +9,7 @@
 #define _CRT_NONSTDC_NO_WARNINGS
 #endif
 #include <io.h>
+#include <fcntl.h>
 #include <process.h>
 #include <direct.h>
 #include <stdlib.h>
@@ -38,6 +39,11 @@
 extern "C" {
 #endif
 __declspec(dllimport) void __stdcall Sleep(unsigned long dwMilliseconds);
+/* kernel32; reports installed RAM in kilobytes, or fails on a machine whose
+   firmware does not say. Used by sysconf() below, and declared here rather
+   than through <windows.h>, which this header must not drag into every
+   translation unit that wants sleep(). */
+__declspec(dllimport) int __stdcall GetPhysicallyInstalledSystemMemory(unsigned long long* TotalMemoryInKilobytes);
 #ifdef __cplusplus
 }
 #endif
@@ -51,4 +57,41 @@ static __inline int gethostname(char* name, size_t namelen) {
     strncpy_s(name, namelen, cn ? cn : "localhost", _TRUNCATE);
     return 0;
 }
+/* POSIX getlogin(): the user name, from the environment. */
+static __inline char* getlogin(void) { return getenv("USERNAME"); }
+/* The two sysconf() values OPM asks for, chosen so that their product is the
+   installed memory in bytes. Zero when the firmware does not report it, which
+   is what sysconf() returns for an unknown name anyway. */
+#ifndef _SC_PAGESIZE
+#define _SC_PAGESIZE   30
+#define _SC_PAGE_SIZE  _SC_PAGESIZE
+#define _SC_PHYS_PAGES 85
+#endif
+static __inline long sysconf(int name) {
+    unsigned long long kb = 0;
+    if (name == _SC_PAGESIZE) { return 1024; }
+    if (name == _SC_PHYS_PAGES) {
+        return GetPhysicallyInstalledSystemMemory(&kb) ? (long)kb : 0L;
+    }
+    return -1;
+}
+/* POSIX setenv()/unsetenv() over _putenv_s, which always overwrites, so the
+   overwrite flag is honoured by looking first. */
+static __inline int setenv(const char* name, const char* value, int overwrite) {
+    if (!overwrite && getenv(name)) { return 0; }
+    return _putenv_s(name, value ? value : "");
+}
+static __inline int unsetenv(const char* name) { return _putenv_s(name, ""); }
+/* _fileno() returns -2 for a standard stream attached to nothing - a process
+   started by a service or by a process manager without a console - and the
+   CRT treats such a descriptor as an invalid parameter, which by default ends
+   the process. Answer as the POSIX calls do for a bad descriptor instead.
+   Macros: the names are already declared by <io.h> above. */
+static __inline int opm_compat_isatty(int fd) { return (fd >= 0) ? _isatty(fd) : 0; }
+static __inline int opm_compat_dup2(int fd1, int fd2) {
+    if (fd1 < 0 || fd2 < 0) { errno = EBADF; return -1; }
+    return _dup2(fd1, fd2);
+}
+#define isatty opm_compat_isatty
+#define dup2   opm_compat_dup2
 #endif /* OPM_COMPAT_UNISTD_H */
