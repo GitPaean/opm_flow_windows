@@ -131,6 +131,21 @@ uses its own build trees:
 .\package-flow.ps1 -IntelMpi -Zip         # package that build (runtime not bundled)
 ```
 
+## Continuous integration
+
+The [weekly Windows workflow](.github/workflows/windows-weekly.yml) builds
+opm-common, opm-grid and opm-simulators against both MPI implementations. It runs
+Norne with **4 MS-MPI ranks x 1 OpenMP thread** and **2 Intel MPI ranks x 2 OpenMP
+threads**. The two decompositions exercise MPI and hybrid MPI/OpenMP execution;
+the workflow does not compare output arrays with a Linux reference.
+
+Each run records the harness commit and each OPM module's cloned fork commit,
+fetched upstream commit and resolved commit after any rebase in
+`source-revisions.json`. Download it from the `opm-source-revisions` artifact;
+it is also included with a successful `flow-windows-x64` binary artifact. Once
+source resolution has completed, the revision artifact is uploaded even if a
+rebase conflict or later build failure prevents a binary from being produced.
+
 ## What's in this repo
 | Path | Purpose |
 |------|---------|
@@ -148,6 +163,7 @@ uses its own build trees:
 | `PACKAGING.md` | Distribution guide: portable zip, installer, MSIX/Store, licensing notes |
 | `release-notes/` | Per-release notes shown on the GitHub Releases page (e.g. `v2026.10-pre.md`); published with `gh release edit --notes-file` (see [PACKAGING.md](PACKAGING.md)) |
 | `ci/windows.yml` | GitHub Actions workflow |
+| `.github/workflows/windows-weekly.yml` | Weekly build and Norne runs against both MPI implementations, with source revision records |
 | `BUILD_WINDOWS.md` | Full step-by-step guide (§1–14): toolchain, deps, flags, MPI, patches, CI |
 | `PATCHES.md` | Record of every source-level Windows/MSVC fix |
 | `VALIDATION.md` | Clean-room validation walkthrough + results |

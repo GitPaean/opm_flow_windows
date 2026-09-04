@@ -5,8 +5,8 @@
 #
 # It builds the configurations the packages ship - hybrid MPI+OpenMP against
 # MS-MPI, and the same against Intel MPI for the no-administrator package - and
-# runs Norne on 4 ranks under each, rather than a serial build on a ten-cell
-# tutorial. That costs build time (two chains, Zoltan from Trilinos twice) and
+# runs Norne with MS-MPI at 4 ranks x 1 thread and Intel MPI at 2 ranks x 2
+# threads. That costs build time (two chains, Zoltan from Trilinos twice) and
 # buys coverage of the parallel path: partitioning, the linear solver across
 # ranks, and the rank-0 output gather, none of which a serial smoke test can
 # break on - and it answers the question for both released packages rather than
@@ -158,8 +158,15 @@ jobs:
           $doRebase = '${{ inputs.rebase }}' -ne 'false'
           New-Item -ItemType Directory -Force -Path src | Out-Null
 
+          function Get-SourceRevision($dir, $ref) {
+            $sha = git -C $dir rev-parse --verify "${ref}^{commit}"
+            if ($LASTEXITCODE -ne 0) { throw "could not resolve $ref in $dir" }
+            return $sha.Trim()
+          }
+
           $conflicted = @()
           $summary = @()
+          $revisions = @()
           foreach ($m in 'opm-common', 'opm-grid', 'opm-simulators') {
             Write-Host "::group::$m"
             git clone --quiet -c core.autocrlf=false `
@@ -169,6 +176,8 @@ jobs:
             git -C "src/$m" fetch --quiet upstream master
             if ($LASTEXITCODE -ne 0) { throw "could not fetch upstream/$m" }
 
+            $forkHead = Get-SourceRevision "src/$m" HEAD
+            $upstreamHead = Get-SourceRevision "src/$m" upstream/master
             $behind = (git -C "src/$m" rev-list --count 'HEAD..upstream/master').Trim()
             $ahead  = (git -C "src/$m" rev-list --count 'upstream/master..HEAD').Trim()
             Write-Host "$m : $ahead patch commit(s), $behind upstream commit(s) not yet in $env:FORK_BRANCH"
@@ -179,16 +188,38 @@ jobs:
                 # Leave nothing half-rebased behind; the report is the output.
                 git -C "src/$m" rebase --abort
                 $conflicted += $m
+                $rebaseResult = 'conflict'
                 $summary += "| $m | $ahead | $behind | **conflict** |"
                 Write-Host "::warning title=Rebase conflict::$m does not rebase cleanly onto upstream/master"
               } else {
+                $rebaseResult = 'rebased'
                 $summary += "| $m | $ahead | $behind | rebased |"
               }
             } else {
-              $summary += "| $m | $ahead | $behind | up to date |"
+              $rebaseResult = if ($behind -eq '0') { 'up to date' } else { 'rebase disabled' }
+              $summary += "| $m | $ahead | $behind | $rebaseResult |"
             }
+            $resolvedHead = Get-SourceRevision "src/$m" HEAD
+            $revisions += [ordered]@{
+              name = $m
+              forkHead = $forkHead
+              upstreamHead = $upstreamHead
+              resolvedHead = $resolvedHead
+              rebaseResult = $rebaseResult
+            }
+            Write-Host "$m revisions: fork=$forkHead upstream=$upstreamHead resolved=$resolvedHead ($rebaseResult)"
             Write-Host '::endgroup::'
           }
+
+          # Save both the branch that was cloned and the tree selected for the
+          # build: a successful rebase changes the commit IDs. Preserve this
+          # record even when a later build fails or a rebase conflict stops it.
+          [ordered]@{
+            harnessHead = Get-SourceRevision . HEAD
+            runUrl = "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
+            rebaseRequested = $doRebase
+            repositories = $revisions
+          } | ConvertTo-Json -Depth 4 | Set-Content -Encoding utf8 source-revisions.json
 
           "## Rebase onto upstream master`n"                      | Out-File -Append $env:GITHUB_STEP_SUMMARY
           "| module | patch commits | upstream commits behind | result |" | Out-File -Append $env:GITHUB_STEP_SUMMARY
@@ -240,7 +271,7 @@ jobs:
           $inc = @(Get-ChildItem 'opm-tests\norne\INCLUDE' -Recurse -File).Count
           Write-Host "deck plus $inc INCLUDE files"
 
-      - name: Run Norne on 4 MPI ranks
+      - name: Run Norne on 4 MS-MPI ranks x 1 OpenMP thread
         run: |
           $target = '${{ inputs.sim_target }}'
           if (-not $target) { $target = 'flow_blackoil' }
@@ -325,7 +356,7 @@ jobs:
           .\build-intelmpi.ps1 -SimTarget $target -Jobs 4
           if ($LASTEXITCODE -ne 0) { throw 'Intel MPI build failed' }
 
-      - name: Run Norne on 4 Intel MPI ranks
+      - name: Run Norne on 2 Intel MPI ranks x 2 OpenMP threads
         run: |
           $target = '${{ inputs.sim_target }}'
           if (-not $target) { $target = 'flow_blackoil' }
@@ -380,6 +411,15 @@ jobs:
               @{n='FreeGB';e={[math]::Round($_.Free/1GB,1)}} |
             Format-Table -AutoSize | Out-String | Write-Host
 
+      - name: Upload source revisions
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: opm-source-revisions
+          retention-days: 14
+          path: source-revisions.json
+          if-no-files-found: warn
+
       - name: Upload the binary
         if: success()
         uses: actions/upload-artifact@v4
@@ -387,6 +427,7 @@ jobs:
           name: flow-windows-x64
           retention-days: 14
           path: |
+            source-revisions.json
             build-mpi/opm-simulators/bin/*.exe
             build-mpi/opm-simulators/bin/*.dll
             build-impi/opm-simulators/bin/*.exe
