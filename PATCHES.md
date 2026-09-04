@@ -385,9 +385,13 @@ Remaining, not code bugs:
 
 ## A second, smaller series: the `windows_clang` branches
 The four forks also carry `windows_clang`: the same port built with clang-cl
-rather than MSVC, which lets a third of the series go (110 files and 2021
-added lines become 83 and 1138; 20 commits become 9). What goes is what MSVC
-alone needed - chiefly the index-based chunk access, since MSVC's
+rather than MSVC, together with moving what the harness can supply out of the
+repositories. Measured from the same base, 104 files and 1571 added lines
+become 83 and 1138, and 19 commits become 9. Two thirds of that reduction
+needs no compiler change at all - the line-ending files, the FCMacros
+fallbacks, the reservoir-coupling hardening, a smaller MPI change - and could
+be applied to the MSVC branch as it stands. The remaining third is what clang
+buys, chiefly the index-based chunk access, since MSVC's
 `/openmp:llvm` is OpenMP 2.0 and cannot take a range-based `for` in a parallel
 region while clang-cl compiles OpenMP 5.0 - plus a handful of front-end
 workarounds. What stays is everything the *platform* needs, and everything
