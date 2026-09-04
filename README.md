@@ -156,6 +156,7 @@ rebase conflict or later build failure prevents a binary from being produced.
 | `compat/include/` | POSIX/Fortran shim headers MSVC lacks (getopt, unistd, sys/*, FCMacros) |
 | `patches/` | DUNE Windows patches, auto-applied after the DUNE checkout |
 | `probes/` | Stand-alone programs that each settle one question about the build (MS-MPI spawning, autodiff constants, C++-only package consumption); see its README |
+| `build-clang.ps1` | Build one module with clang-cl instead of MSVC, against the same DUNE/vcpkg tree; what the forks' smaller `windows_clang` branches are built with |
 | `flow-gui/` | The Qt 6 graphical workbench for flow (Windows/Linux/macOS): run/monitor with live progress, summary plotting & case comparison, 3D results viewer, deck editor, projects (see its README) |
 | `package-flow.ps1` | Stage a redistributable package (bin + runtimes + prerequisites) and zip it |
 | `installer/` | Inno Setup script producing `OPM-Flow-<ver>-Setup.exe` (see [PACKAGING.md](PACKAGING.md)) |

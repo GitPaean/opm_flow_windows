@@ -383,6 +383,28 @@ Remaining, not code bugs:
   exes with BAD_COMMAND; it has no exclusion mechanism — disable it on build
   machines (Windows Security > App & browser control), or accept blocked tests.
 
+## A second, smaller series: the `windows_clang` branches
+The four forks also carry `windows_clang`: the same port built with clang-cl
+rather than MSVC, which lets a third of the series go (110 files and 2021
+added lines become 83 and 1138; 20 commits become 9). What goes is what MSVC
+alone needed - chiefly the index-based chunk access, since MSVC's
+`/openmp:llvm` is OpenMP 2.0 and cannot take a range-based `for` in a parallel
+region while clang-cl compiles OpenMP 5.0 - plus a handful of front-end
+workarounds. What stays is everything the *platform* needs, and everything
+that comes from Microsoft's standard library, which clang-cl uses too.
+
+Three things clang adds rather than removes: `<windows.h>` included inside a
+namespace in a vendored ResInsight file (MSVC accepts it, clang does not - now
+fixed on both branches); a clang-cl crash on `FlowGenericProblem.cpp` whenever
+OpenMP is on, worked around per-file; and OPM's AVX2 probe, which clang passes
+and MSVC fails, pulling in `bslv.c` and its `aligned_alloc()` that the
+Microsoft CRT lacks (disabled in `build-clang.ps1` for now).
+
+Build it with `build-clang.ps1`; the full comparison, with the numbers and
+what was and was not verified, is in
+`src/review-windows-20260903/SMALLER-BRANCHES.md`. The MSVC `windows`
+branches remain the ones the packages are built from.
+
 ## Reservoir coupling (MPI_Comm_spawn) under MS-MPI: untested, not unsupported
 An earlier version of this section said MS-MPI lacks MPI dynamic process
 management. That is not so: MS-MPI 10.1 documents `MPI_Comm_spawn`, and a
