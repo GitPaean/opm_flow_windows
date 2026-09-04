@@ -368,7 +368,10 @@ Source fixes committed on the `windows` branches:
   Now `std::filesystem::path::is_absolute()`.
 - opm-common `TimeService.cpp`: `*std::gmtime(&t)` without a null check; the
   Windows CRT returns nullptr past year ~3000 (test_timer's deck reaches ~7014)
-  → access violation. Falls back to an explicit civil-from-days conversion.
+  → access violation. Both conversions (`portable_timegm`, and the new
+  `portable_gmtime` that replaces `std::gmtime`) are now written on the C++20
+  `<chrono>` calendar types, as upstream's reviewer asked for on
+  OPM/opm-common#5271; accepted years are `std::chrono::year`'s ±32767.
 - opm-simulators `test_outputdir.cpp`: fixture removed its own cwd while
   OpmLog held files in it open → throw in noexcept dtor → 0xC0000409.
   chdir out + drop log backends + non-throwing remove_all.
