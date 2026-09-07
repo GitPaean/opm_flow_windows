@@ -65,7 +65,7 @@ public:
     }
 };
 
-const char* kVert = R"(#version 130
+const char* kVertBody = R"(
 in vec3 aPos;
 in vec3 aNrm;
 in vec3 aCol;
@@ -105,7 +105,7 @@ void main() {
 }
 )";
 
-const char* kFrag = R"(#version 130
+const char* kFragBody = R"(
 in vec3 vCol;
 in float vLight;
 uniform bool uFlat;
@@ -229,14 +229,30 @@ void GridGLWidget::setWells(const QVector<WellPath>& wells)
 
 void GridGLWidget::setZScale(double s)
 {
+    // The camera stands off by the model's size, and exaggerating Z changes
+    // that size - so hold the standoff in proportion, or turning the dial up
+    // walks the camera into the grid it is looking at.
+    if (zscale_ > 0.0 && s > 0.0 && vertCount_ > 0) {
+        const QVector3D d = bboxMax_ - bboxMin_;
+        const auto diag = [&d](double z) {
+            return QVector3D(d.x(), d.y(), d.z() * float(z)).length();
+        };
+        const float before = diag(zscale_), after = diag(s);
+        if (before > 1e-6f) dist_ *= after / before;
+    }
     zscale_ = s;
     update();
 }
 
 void GridGLWidget::resetCamera()
 {
+    // Measured on the grid AS DRAWN: the shader stretches Z by uZScale, so a
+    // standoff taken from the raw box puts the camera inside anything with a
+    // thin footprint and an exaggerated depth - a 1x1x20 column at 10x lands
+    // the eye well inside the rock.
     const QVector3D d = bboxMax_ - bboxMin_;
-    dist_ = std::max(1.0f, d.length()) * 1.3f;
+    const QVector3D drawn(d.x(), d.y(), d.z() * float(zscale_));
+    dist_ = std::max(1.0f, drawn.length()) * 1.3f;
     // Like looking at a mountain from afar: the long axis of the grid across
     // the screen (homeYaw_, from the mesh PCA), seen from the side and a
     // little above. In this camera parameterization negative pitch views
@@ -267,12 +283,32 @@ void GridGLWidget::initializeGL()
     initializeOpenGLFunctions();
     glClearColor(0.96f, 0.97f, 0.98f, 1.0f);
     prog_ = std::make_unique<QOpenGLShaderProgram>();
-    prog_->addShaderFromSourceCode(QOpenGLShader::Vertex, kVert);
-    prog_->addShaderFromSourceCode(QOpenGLShader::Fragment, kFrag);
+    // Which GLSL to speak is the context's choice, not ours. On Wayland the
+    // NVIDIA driver hands Qt an OpenGL ES context, and ES rejects "#version
+    // 130" outright - and has no default precision for a float in a fragment
+    // shader, so it must be stated. The bodies are already in/out style, which
+    // GLSL 1.30 and ES 3.00 both accept, so only the preamble differs.
+    const bool es = context() && context()->isOpenGLES();
+    const QString head = es
+        ? QStringLiteral("#version 300 es\nprecision highp float;\n")
+        : QStringLiteral("#version 130\n");
+    prog_->addShaderFromSourceCode(QOpenGLShader::Vertex,
+                                   head + QLatin1String(kVertBody));
+    prog_->addShaderFromSourceCode(QOpenGLShader::Fragment,
+                                   head + QLatin1String(kFragBody));
     prog_->bindAttributeLocation("aPos", 0);
     prog_->bindAttributeLocation("aNrm", 1);
     prog_->bindAttributeLocation("aCol", 2);
-    prog_->link();
+    // A viewport with nothing in it is the one failure this widget used to
+    // report by staying empty. Keep the reason and draw it instead.
+    if (!prog_->link()) {
+        const char* r = reinterpret_cast<const char*>(glGetString(GL_RENDERER));
+        const char* v = reinterpret_cast<const char*>(glGetString(GL_VERSION));
+        shaderErr_ = QStringLiteral("the graphics driver refused the shaders\n%1\n%2\n\n%3")
+                         .arg(QString::fromLatin1(r ? r : "?"),
+                              QString::fromLatin1(v ? v : "?"),
+                              prog_->log().trimmed());
+    }
     vboPos_.create(); vboNrm_.create(); vboCol_.create();
     glReady_ = true;
 }
@@ -374,6 +410,14 @@ void GridGLWidget::paintGL()
     p.setRenderHint(QPainter::Antialiasing);
     p.setRenderHint(QPainter::TextAntialiasing);
 
+    // Said in the viewport, because that is where the grid is missing from.
+    if (!shaderErr_.isEmpty()) {
+        p.setPen(QColor(0xb3, 0x1f, 0x1f));
+        p.drawText(QRect(16, 16, std::max(200, width() - 32), height() - 32),
+                   Qt::AlignLeft | Qt::AlignTop | Qt::TextWordWrap, shaderErr_);
+        return;
+    }
+
     if (hasValues_) {
         const int x = 14, y = 40, w = 18, h = 180;
         QLinearGradient gr(x, y + h, x, y);
@@ -384,8 +428,16 @@ void GridGLWidget::paintGL()
         p.fillRect(x, y, w, h, gr);
         p.setPen(Qt::black);
         p.drawRect(x, y, w, h);
-        p.drawText(x + w + 6, y + 12,      QString::number(vmax_, 'g', 5));
-        p.drawText(x + w + 6, y + h,       QString::number(vmin_, 'g', 5));
+        // A constant field has no range to label, and printing the same number
+        // at both ends reads as a bug in the legend rather than as a fact about
+        // the data. Say the value once, and say that it does not vary.
+        if (vmax_ > vmin_) {
+            p.drawText(x + w + 6, y + 12, QString::number(vmax_, 'g', 5));
+            p.drawText(x + w + 6, y + h,  QString::number(vmin_, 'g', 5));
+        } else {
+            p.drawText(x + w + 6, y + h / 2,
+                       QStringLiteral("%1 (uniform)").arg(vmax_, 0, 'g', 5));
+        }
         p.drawText(x, y - 10, legendTitle_);
     }
     if (!stepText_.isEmpty()) {

@@ -100,6 +100,10 @@ private:
 
     // scalar/legend state
     QString legendTitle_, stepText_;
+    // Why the grid is not on screen, when it is not. An unlit viewport says
+    // nothing; a driver that refuses the shaders should say so where the grid
+    // would have been.
+    QString shaderErr_;
     float   vmin_ = 0.f, vmax_ = 0.f;
     bool    hasValues_ = false;
 
