@@ -936,6 +936,28 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
             "not at all while another tab is shown"));
         dateAxis_ = new QCheckBox(QStringLiteral("date axis"));
         dateAxis_->setChecked(true);   // calendar dates by default
+        spanBox_ = new QComboBox;
+        spanBox_->addItem(QStringLiteral("whole run"));
+        spanBox_->addItem(QStringLiteral("common"));
+        spanBox_->addItem(QStringLiteral("custom"));
+        spanBox_->setToolTip(QStringLiteral(
+            "how much of the time axis to plot.\n\n"
+            "whole run - everything every case has, so the axis spans the "
+            "longest of them\n"
+            "common - only the stretch every plotted case covers, which is what "
+            "makes a 30-day run\nand a 130-day one comparable instead of "
+            "squeezing the short one into a corner\n"
+            "custom - the two boxes beside this one; leave one empty to leave "
+            "that side open\n\n"
+            "Samples outside the span are dropped, not just hidden, so the "
+            "value axis rescales to what is left."));
+        spanFrom_ = new QLineEdit;
+        spanTo_   = new QLineEdit;
+        for (auto* e : { spanFrom_, spanTo_ }) {
+            e->setMaximumWidth(96);
+            e->setClearButtonEnabled(true);
+            e->setVisible(false);              // custom only
+        }
         markers_  = new QCheckBox(QStringLiteral("markers"));
         markers_->setToolTip(QStringLiteral("mark the data points on each curve"));
         // Cases marked at the same points stack their markers exactly, so a
@@ -1052,6 +1074,10 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
         row->addWidget(brefresh);
         row->addWidget(autoRef_);
         row->addWidget(dateAxis_);
+        row->addWidget(new QLabel(QStringLiteral("Span:")));
+        row->addWidget(spanBox_);
+        row->addWidget(spanFrom_);
+        row->addWidget(spanTo_);
         row->addWidget(markers_);
         row->addWidget(new QLabel(QStringLiteral("Line:")));
         row->addWidget(lineWidthSpin_);
@@ -1109,7 +1135,20 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
 
         connect(bbrowse,  &QPushButton::clicked, this, [this] { browseCase(); });
         connect(brefresh, &QPushButton::clicked, this, [this] { reload(true); });
-        connect(dateAxis_, &QCheckBox::toggled, this, [this](bool) { replot(); });
+        connect(dateAxis_, &QCheckBox::toggled, this, [this](bool) {
+            syncSpanBoxes();                   // the boxes read dates or days
+            replot();
+        });
+        connect(spanBox_, &QComboBox::currentIndexChanged, this, [this](int) {
+            syncSpanBoxes();
+            replot();
+        });
+        // Not on every keystroke: a half-typed date is not a range anyone asked
+        // to see, and replotting on each character would fight the typing.
+        for (auto* e : { spanFrom_, spanTo_ }) {
+            connect(e, &QLineEdit::editingFinished, this, [this] { replot(); });
+            connect(e, &QLineEdit::returnPressed,   this, [this] { replot(); });
+        }
         // Staggering needs markers to be on, and needs "every" to be above 1 -
         // with every sample marked there is no gap for an offset to move into.
         // Greyed out rather than silently doing nothing, so the box says which
@@ -1765,6 +1804,9 @@ QJsonObject SummaryPlotWidget::uiState() const
     o[QStringLiteral("legend")]    = legendBox_ ? legendBox_->currentIndex() : 0;
 
     o[QStringLiteral("dateAxis")]    = dateAxis_ && dateAxis_->isChecked();
+    o[QStringLiteral("span")]        = spanBox_ ? spanBox_->currentIndex() : 0;
+    o[QStringLiteral("spanFrom")]    = spanFrom_ ? spanFrom_->text() : QString();
+    o[QStringLiteral("spanTo")]      = spanTo_   ? spanTo_->text()   : QString();
     o[QStringLiteral("markers")]     = markers_  && markers_->isChecked();
     o[QStringLiteral("markerStagger")] = stagger_ && stagger_->isChecked();
     o[QStringLiteral("autoRefresh")] = autoRef_  && autoRef_->isChecked();
@@ -1804,6 +1846,12 @@ void SummaryPlotWidget::restoreUiState(const QJsonObject& state)
     // Drawing options first: they are cheap, and everything restored below is
     // then plotted with them already in force instead of being replotted.
     if (dateAxis_ && has("dateAxis")) dateAxis_->setChecked(val("dateAxis").toBool(true));
+    if (spanFrom_ && has("spanFrom")) spanFrom_->setText(val("spanFrom").toString());
+    if (spanTo_   && has("spanTo"))   spanTo_->setText(val("spanTo").toString());
+    // After the boxes, so syncSpanBoxes() shows them already filled in.
+    if (spanBox_  && has("span"))
+        spanBox_->setCurrentIndex(std::clamp(val("span").toInt(0), 0, 2));
+    syncSpanBoxes();
     if (markers_  && has("markers"))  markers_->setChecked(val("markers").toBool(false));
     if (stagger_  && has("markerStagger"))
         stagger_->setChecked(val("markerStagger").toBool(false));
@@ -3009,22 +3057,43 @@ void SummaryPlotWidget::applyTreeSelection()
     replot();
 }
 
+// A replot gets a new chart rather than a cleaned-out one.
+//
+// Emptying a chart in place looks like it works and does not: removing an axis
+// and deleting it leaves its tick labels in the scene, so a replot that CHANGES
+// the x range - a different time span, the date axis switched to days, a case
+// added or dropped - draws the new labels straight over the old ones and the
+// axis becomes an unreadable overstrike. Only when the range happens to come
+// out the same do the two sets land on top of each other and hide the fault.
+//
+// A fresh chart cannot inherit what it never had. QChartView::setChart hands
+// back the old one, which is ours to destroy.
+QChart* SummaryPlotWidget::freshChart(int i)
+{
+    auto* c = new QChart;
+    c->legend()->setVisible(true);
+    c->legend()->setAlignment(Qt::AlignBottom);
+    styleChart(c);
+    connect(c, &QChart::plotAreaChanged, this,
+            [this, c](const QRectF&) { placeLegend(c); });
+    QChart* old = chartViews_[i]->chart();
+    // Recorded before the swap: setChart can emit plotAreaChanged, and the
+    // handler above looks the chart up in charts_ to find its view.
+    charts_[i] = c;
+    chartViews_[i]->setChart(c);        // ownership of `old` comes back here
+    delete old;
+    return c;
+}
+
 void SummaryPlotWidget::replot()
 {
     applyChartLayout(layoutRows_, layoutCols_);
 
     for (int i = 0; i < charts_.size(); ++i) {
-        QChart* c = charts_[i];
         // a rubber-band zoom is in effect: remember it so the refresh does
         // not yank the view (sticky until Reset zoom)
-        if (c->isZoomed()) zoomSnap_[i] = captureZoom(c);
-        c->removeAllSeries();          // series are deleted by Qt
-        const auto oldAxes = c->axes();
-        for (auto* a : oldAxes) {
-            c->removeAxis(a);          // removeAxis returns ownership: delete
-            delete a;
-        }
-        c->setTitle(QString());
+        if (charts_[i]->isZoomed()) zoomSnap_[i] = captureZoom(charts_[i]);
+        freshChart(i);
     }
     if (!smry_) {
         // The vector list comes from the ACTIVE case, so nothing can be drawn
@@ -3057,6 +3126,11 @@ void SummaryPlotWidget::replot()
         }
     }
     QStringList notes;
+    {
+        double lo = 0, hi = 0; QString sn;
+        spanLimits(plotCases, useDates, lo, hi, sn);
+        if (!sn.isEmpty()) notes << sn;
+    }
     // A checked case that could not be read is simply absent from the plot,
     // which looks exactly like a run that has no such curve. Name it.
     if (!unreadable_.isEmpty())
@@ -3116,6 +3190,115 @@ void SummaryPlotWidget::applyZoom(QChart* chart, const ZoomSnap& z)
         if (auto* l = qobject_cast<QValueAxis*>(vs[0])) l->setRange(z.lmin, z.lmax);
     if (z.hasR && vs.size() >= 2)
         if (auto* r = qobject_cast<QValueAxis*>(vs[1])) r->setRange(z.rmin, z.rmax);
+}
+
+// The custom boxes only mean anything in custom mode, and what they accept
+// depends on which axis is showing - so say so in the placeholder rather than
+// leaving the user to guess and get a silent no-op.
+void SummaryPlotWidget::syncSpanBoxes()
+{
+    if (!spanBox_ || !spanFrom_ || !spanTo_) return;
+    const bool custom = spanBox_->currentIndex() == 2;
+    const bool useDates = dateAxis_ && dateAxis_->isChecked();
+    spanFrom_->setVisible(custom);
+    spanTo_->setVisible(custom);
+    spanFrom_->setPlaceholderText(useDates ? QStringLiteral("from yyyy-mm-dd")
+                                           : QStringLiteral("from day"));
+    spanTo_->setPlaceholderText(useDates ? QStringLiteral("to yyyy-mm-dd")
+                                         : QStringLiteral("to day"));
+}
+
+// The x window to keep. "whole run" keeps everything; "common" is the stretch
+// every plotted case actually covers, which is what makes two runs of very
+// different length comparable at all; "custom" is whatever was typed, with an
+// empty box meaning open on that side.
+//
+// Bounds are in the axis's own units, so a date axis works in milliseconds
+// since the epoch and cases that started on different dates line up by date
+// rather than by how far into their own run they are.
+void SummaryPlotWidget::spanLimits(
+    const std::vector<std::pair<QString, Opm::EclIO::ESmry*>>& plotCases,
+    bool useDates, double& lo, double& hi, QString& what) const
+{
+    lo = -std::numeric_limits<double>::infinity();
+    hi =  std::numeric_limits<double>::infinity();
+    what.clear();
+    const int mode = spanBox_ ? spanBox_->currentIndex() : 0;
+    if (mode == 0 || plotCases.empty()) return;
+
+    if (mode == 1) {                              // common to every case
+        for (const auto& pc : plotCases) {
+            std::vector<float> time;
+            try {
+                if (pc.second->hasKey("TIME")) time = pc.second->get(std::string("TIME"));
+            } catch (...) {}
+            if (time.empty()) continue;
+            double startMs = 0.0;
+            if (useDates) {
+                try {
+                    const auto tp = pc.second->startdate();
+                    startMs = double(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                         tp.time_since_epoch()).count());
+                } catch (...) {}
+            }
+            const auto x = [&](float d) {
+                return useDates ? startMs + double(d) * 86400.0e3 : double(d);
+            };
+            // The latest start and the earliest end: the overlap, not the union.
+            lo = std::max(lo, x(time.front()));
+            hi = std::min(hi, x(time.back()));
+        }
+        if (!(lo < hi)) {                         // no overlap at all - say so
+            lo = -std::numeric_limits<double>::infinity();
+            hi =  std::numeric_limits<double>::infinity();
+            what = QStringLiteral("the cases share no time span - showing all of it");
+            return;
+        }
+        what = useDates
+            ? QStringLiteral("time span: common to all cases, %1 to %2")
+                  .arg(QDateTime::fromMSecsSinceEpoch(qint64(lo), QTimeZone::utc())
+                           .toString(QStringLiteral("yyyy-MM-dd")),
+                       QDateTime::fromMSecsSinceEpoch(qint64(hi), QTimeZone::utc())
+                           .toString(QStringLiteral("yyyy-MM-dd")))
+            : QStringLiteral("time span: common to all cases, %1 to %2 days")
+                  .arg(lo, 0, 'g', 6).arg(hi, 0, 'g', 6);
+        return;
+    }
+
+    // Custom. A box is read as a date when the axis shows dates and as a number
+    // of days when it does not, which is the only reading that matches what the
+    // axis is labelled with. Anything unparsable leaves that side open rather
+    // than silently clamping to something the user did not ask for.
+    QStringList bad;
+    auto parse = [&](QLineEdit* e, double& out) {
+        if (!e) return;
+        const QString s = e->text().trimmed();
+        if (s.isEmpty()) return;
+        if (useDates) {
+            QDateTime d = QDateTime::fromString(s, Qt::ISODate);
+            if (!d.isValid()) d = QDateTime(QDate::fromString(s, QStringLiteral("yyyy-MM-dd")),
+                                            QTime(0, 0), QTimeZone::utc());
+            if (!d.isValid()) { bad << s; return; }
+            d.setTimeZone(QTimeZone::utc());
+            out = double(d.toMSecsSinceEpoch());
+        } else {
+            bool ok = false;
+            const double v = s.toDouble(&ok);
+            if (!ok) { bad << s; return; }
+            out = v;
+        }
+    };
+    parse(spanFrom_, lo);
+    parse(spanTo_, hi);
+    if (!bad.isEmpty())
+        what = QStringLiteral("time span: could not read %1 (expected %2)")
+                   .arg(bad.join(QStringLiteral(", ")),
+                        useDates ? QStringLiteral("a date, yyyy-mm-dd")
+                                 : QStringLiteral("a number of days"));
+    else if (lo > hi)
+        what = QStringLiteral("time span: 'from' is after 'to' - nothing to show");
+    else if (std::isfinite(lo) || std::isfinite(hi))
+        what = QStringLiteral("time span: custom");
 }
 
 void SummaryPlotWidget::styleChart(QChart* chart)
@@ -3453,6 +3636,15 @@ int SummaryPlotWidget::plotChart(QChart* chart, const QList<int>& sel,
     };
     constexpr int kShapeCount = int(sizeof(kShapes) / sizeof(kShapes[0]));
 
+    // Samples outside the chosen span are dropped rather than merely hidden by
+    // an axis range: the y axis autoscales to the points it is given, so
+    // clipping the data is what actually zooms the comparison in. It also means
+    // xmin/xmax below come out of the surviving points, so no separate axis
+    // range is needed.
+    double spanLo = 0, spanHi = 0;
+    QString ignored;
+    spanLimits(plotCases, useDates, spanLo, spanHi, ignored);
+
     for (int ci = 0; ci < int(plotCases.size()); ++ci) {
         const auto& pc = plotCases[ci];    // (label, reader)
         std::vector<float> time;
@@ -3497,6 +3689,7 @@ int SummaryPlotWidget::plotChart(QChart* chart, const QList<int>& sel,
             const size_t n = std::min(time.size(), data.size());
             for (size_t k = 0; k < n; ++k) {
                 const double x = xval(time[k]);
+                if (x < spanLo || x > spanHi) continue;
                 s->append(x, data[k]);
                 xmin = xset ? std::min(xmin, x) : x;
                 xmax = xset ? std::max(xmax, x) : x;

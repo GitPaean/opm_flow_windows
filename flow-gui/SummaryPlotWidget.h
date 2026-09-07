@@ -178,8 +178,26 @@ private:
     QPointF chartPos(int idx, const QPoint& viewportPos) const;
     ZoomSnap captureZoom(QChart* chart) const;
     void applyZoom(QChart* chart, const ZoomSnap& z);
+    // The stretch of x the plot should keep, in the axis's own units - days, or
+    // milliseconds since the epoch when the date axis is on. Either bound may
+    // come back infinite, which means "as far as the data goes" on that side.
+    // `what` gets a phrase for the status line, empty when nothing was limited.
+    // Put a brand-new chart in view `i` and destroy the one it had. Clearing a
+    // chart in place is not enough - see the definition.
+    QChart* freshChart(int i);
+    // Show or hide the custom boxes, and label them for the axis in force.
+    void syncSpanBoxes();
+    void spanLimits(const std::vector<std::pair<QString, Opm::EclIO::ESmry*>>& plotCases,
+                    bool useDates, double& lo, double& hi, QString& what) const;
     QCheckBox*   autoRef_   = nullptr;
     QCheckBox*   dateAxis_  = nullptr;
+    // Which stretch of time the plot covers. Two runs of different length draw
+    // the shorter one into a corner - the axis spans the union, so the case
+    // that stopped at 30 days occupies a quarter of a 130-day plot and the
+    // part where they can actually be compared is squeezed out of readability.
+    QComboBox*   spanBox_   = nullptr;   // whole run / common to all / custom
+    QLineEdit*   spanFrom_  = nullptr;   // custom only; empty = open-ended
+    QLineEdit*   spanTo_    = nullptr;
     QCheckBox*   markers_   = nullptr;   // show data points on the curves
     QCheckBox*   stagger_   = nullptr;   // offset each case's marked points
     QCheckBox*   autoScale_ = nullptr;   // sizes follow the chart's own size
