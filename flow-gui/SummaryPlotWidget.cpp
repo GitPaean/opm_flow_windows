@@ -1743,7 +1743,14 @@ void SummaryPlotWidget::caseItemChanged(QListWidgetItem* it)
     if (!it) return;
     const QString prev = it->data(RoleCaseLabel).toString();
     QString now = it->text().trimmed();
-    if (now == prev) { replot(); return; }        // a check toggle, not a rename
+    if (now == prev) {                            // a check toggle, not a rename
+        // What counts as all-zero is decided by the checked cases, so the tree
+        // has to be rebuilt when they change; replot alone would leave it
+        // listing the set from before.
+        if (hideZero_ && hideZero_->isChecked()) rebuildTree({});
+        replot();
+        return;
+    }
 
     if (now.isEmpty()) now = prev;                // refuse to blank a name
     // Keep names unique: the legend shows "case | vector", so duplicates
