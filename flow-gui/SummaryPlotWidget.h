@@ -69,6 +69,8 @@ public:
     struct CaseInfo { QString label; QString path; bool checked; };
     QList<CaseInfo> caseInfos() const;
     void clearCases();
+    // Drop cases by path; the run queue uses it to take back what it added.
+    int  removeCasesByPath(const QStringList& smspecPaths);
 
     // Everything needed to come back to this plot in a later session: the
     // cases and which one is active, the vector filters, what each subplot
@@ -241,6 +243,9 @@ private:
     // Folder over file, for an item's tooltip.
     static QString caseTip(const QString& smspecPath);
     void removeCurrentCase();
+    void removeUncheckedCases();
+    void removeAllCases();
+    int  removeRows(QList<int> rows);   // the one place a case is taken out
     void clearActiveCase();
     void browseCase();
     void reload(bool keepSelection);

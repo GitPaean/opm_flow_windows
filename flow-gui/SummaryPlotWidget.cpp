@@ -74,6 +74,7 @@
 #include <QValueAxis>
 
 #include <algorithm>
+#include <numeric>
 #include <chrono>
 #include <cmath>
 #include <memory>
@@ -1341,10 +1342,21 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
             "rename the highlighted case - the new name is what the plot "
             "legend shows (double-click the case, or F2)"));
         crow->addWidget(brename);
-        auto* bremove = new QPushButton(QStringLiteral("Remove"));
+        // A study leaves the list holding runs from the one before it, and
+        // picking those out by hand is the tedious part - so the bulk cases
+        // sit under the button that already does one at a time.
+        auto* bremove = new QToolButton;
+        bremove->setText(QStringLiteral("Remove"));
+        bremove->setPopupMode(QToolButton::MenuButtonPopup);
         bremove->setToolTip(QStringLiteral(
             "remove the selected cases from the list (Ctrl or Shift to pick "
             "several); the files themselves are untouched"));
+        auto* rmMenu = new QMenu(bremove);
+        rmMenu->addAction(QStringLiteral("Remove unchecked"), this,
+                          [this] { removeUncheckedCases(); });
+        rmMenu->addAction(QStringLiteral("Remove all"), this,
+                          [this] { removeAllCases(); });
+        bremove->setMenu(rmMenu);
         crow->addWidget(bremove);
         ll->addLayout(crow);
 
@@ -1372,10 +1384,15 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
             QAction* open = m.addAction(QStringLiteral("Open containing folder"));
             QAction* copy = m.addAction(QStringLiteral("Copy path"));
             QAction* copyDir = m.addAction(QStringLiteral("Copy folder"));
+            m.addSeparator();
+            QAction* rm = m.addAction(QStringLiteral("Remove"));
             const QFileInfo fi(path);
             open->setEnabled(fi.dir().exists());
             QAction* chosen = m.exec(caseList_->viewport()->mapToGlobal(at));
-            if (chosen == open) {
+            if (chosen == rm) {
+                if (!it->isSelected()) caseList_->setCurrentItem(it);
+                removeCurrentCase();
+            } else if (chosen == open) {
                 QDesktopServices::openUrl(QUrl::fromLocalFile(fi.absolutePath()));
             } else if (chosen == copy) {
                 QGuiApplication::clipboard()->setText(QDir::toNativeSeparators(path));
@@ -1415,7 +1432,7 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
         downKey->setContext(Qt::WidgetShortcut);
         connect(downKey, &QShortcut::activated, this, [this] { moveCase(1); });
 
-        connect(bremove, &QPushButton::clicked, this, [this] { removeCurrentCase(); });
+        connect(bremove, &QToolButton::clicked, this, [this] { removeCurrentCase(); });
         connect(brename, &QPushButton::clicked, this, [this] {
             if (auto* it = caseList_->currentItem()) caseList_->editItem(it);
             else setStatus(QStringLiteral("highlight a case in the list first"));
@@ -2027,11 +2044,47 @@ void SummaryPlotWidget::syncRefreshTimer()
 
 void SummaryPlotWidget::removeCurrentCase()
 {
-    // Bottom up, so the rows still to be taken keep the indices they had.
     QList<int> rows;
     for (auto* it : caseList_->selectedItems()) rows << caseList_->row(it);
     if (rows.isEmpty() && caseList_->currentRow() >= 0) rows << caseList_->currentRow();
-    if (rows.isEmpty()) return;
+    if (removeRows(std::move(rows)) == 0)
+        setStatus(QStringLiteral("highlight the cases to remove first"));
+}
+
+void SummaryPlotWidget::removeUncheckedCases()
+{
+    QList<int> rows;
+    for (int i = 0; i < caseList_->count(); ++i)
+        if (caseList_->item(i)->checkState() != Qt::Checked) rows << i;
+    if (removeRows(std::move(rows)) == 0)
+        setStatus(QStringLiteral("every case is checked - nothing to remove"));
+}
+
+void SummaryPlotWidget::removeAllCases()
+{
+    QList<int> rows(caseList_->count());
+    std::iota(rows.begin(), rows.end(), 0);
+    removeRows(std::move(rows));
+}
+
+int SummaryPlotWidget::removeCasesByPath(const QStringList& smspecPaths)
+{
+    QList<int> rows;
+    for (int i = 0; i < caseList_->count(); ++i) {
+        const QString have = caseList_->item(i)->data(Qt::UserRole).toString();
+        const bool hit = std::any_of(smspecPaths.cbegin(), smspecPaths.cend(),
+                                     [&have](const QString& p) {
+                                         return flowgui::sameCasePath(have, p);
+                                     });
+        if (hit) rows << i;
+    }
+    return removeRows(std::move(rows));
+}
+
+int SummaryPlotWidget::removeRows(QList<int> rows)
+{
+    if (rows.isEmpty()) return 0;
+    // Bottom up, so the rows still to be taken keep the indices they had.
     std::sort(rows.begin(), rows.end(), std::greater<int>());
 
     QStringList gone;
@@ -2048,11 +2101,12 @@ void SummaryPlotWidget::removeCurrentCase()
     // do it half way through a list that is still shrinking.
     for (const QString& path : std::as_const(gone)) emit caseRemoved(path);
 
-    if (caseList_->count() == 0) { clearActiveCase(); return; }
+    if (caseList_->count() == 0) { clearActiveCase(); return int(gone.size()); }
     relabelCases();    // a case left alone with its name drops the tag again
     replot();          // plotted set may have changed even if active did not
     if (gone.size() > 1)
         setStatus(QStringLiteral("removed %1 cases").arg(gone.size()));
+    return int(gone.size());
 }
 
 

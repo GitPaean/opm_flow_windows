@@ -418,8 +418,26 @@ FlowGuiWindow::FlowGuiWindow()
         connect(bclr, &QPushButton::clicked, this, [this] {
             if (proc_) { QMessageBox::information(this, QLatin1String(kAppName),
                 QStringLiteral("Stop the running job first.")); return; }
+            // Take back the cases these jobs put in the other tabs, or a new
+            // study starts with the last one's runs still listed. Only jobs
+            // that actually ran have an outdir, and a case opened by hand
+            // never matches one - those stay.
+            QStringList produced;
+            for (const Job& j : std::as_const(jobs_)) {
+                if (j.outdir.isEmpty()) continue;
+                produced << j.outdir + '/'
+                            + flowgui::outputBaseName(
+                                  j.outdir, QFileInfo(j.deck).completeBaseName())
+                            + QStringLiteral(".SMSPEC");
+            }
             jobs_.clear(); current_ = -1;
             jobTable_->setRowCount(0);
+#ifdef FLOWGUI_HAVE_SUMMARY
+            if (summary_ && !produced.isEmpty())
+                if (const int n = summary_->removeCasesByPath(produced); n > 0)
+                    appendLog(QStringLiteral(
+                        "cleared the queue; removed %1 case(s) it had produced\n").arg(n));
+#endif
         });
         connect(bopen, &QPushButton::clicked, this, [this] { openJobFolder(jobTable_->currentRow()); });
         connect(bprt,  &QPushButton::clicked, this,
@@ -717,6 +735,7 @@ FlowGuiWindow::FlowGuiWindow()
     const QString impi = flowgui::intelMpiRuntimeDir();
     if (!impi.isEmpty())
         appendLog(QStringLiteral("Intel MPI runtime: %1\n").arg(impi));
+
 }
 
 // ---------------------------------------------------------------------------
