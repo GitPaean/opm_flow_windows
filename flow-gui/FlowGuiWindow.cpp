@@ -735,7 +735,6 @@ FlowGuiWindow::FlowGuiWindow()
     const QString impi = flowgui::intelMpiRuntimeDir();
     if (!impi.isEmpty())
         appendLog(QStringLiteral("Intel MPI runtime: %1\n").arg(impi));
-
 }
 
 // ---------------------------------------------------------------------------

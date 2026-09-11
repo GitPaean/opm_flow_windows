@@ -1202,10 +1202,22 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
         subItemBox_ = new QComboBox; subItemBox_->setMinimumWidth(110);
         subLabel_->hide(); subItemBox_->hide();
         row->addWidget(subLabel_); row->addWidget(subItemBox_);
+        // A run writes a vector for everything it might have reported, and on
+        // a big deck a fifth of them never leave zero. Deciding that means
+        // reading the case through, so it is asked for rather than assumed.
+        hideZero_ = new QCheckBox(QStringLiteral("hide all-zero"));
+        hideZero_->setToolTip(QStringLiteral(
+            "hide vectors that are zero at every step of every checked case.\n"
+            "Reads each case through the first time it is ticked (about two "
+            "seconds for a few thousand vectors), then costs nothing."));
+        row->addWidget(hideZero_);
         filter_ = new QLineEdit;
         filter_->setPlaceholderText(QStringLiteral(
             "search or wildcard filter, e.g.  WBHP:B*, WOPR*  (comma = or)"));
         filter_->setClearButtonEnabled(true);
+        // It has the row's stretch, so without a floor it is the one widget
+        // that gives when the row runs out of width - down to nothing.
+        filter_->setMinimumWidth(200);
         filter_->setToolTip(QStringLiteral(
             "plain text matches anywhere (keyword, item or quantity name);\n"
             "with * or ? the comma-separated patterns match the KEYWORD:ITEM "
@@ -1432,6 +1444,17 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
         downKey->setContext(Qt::WidgetShortcut);
         connect(downKey, &QShortcut::activated, this, [this] { moveCase(1); });
 
+        connect(hideZero_, &QCheckBox::toggled, this, [this](bool on) {
+            if (on && !zeroScanValid_) {
+                QGuiApplication::setOverrideCursor(Qt::WaitCursor);
+                rescanZeroVectors();
+                QGuiApplication::restoreOverrideCursor();
+            }
+            rebuildTree({});
+            if (on)
+                setStatus(QStringLiteral("hiding %1 all-zero vector(s)")
+                              .arg(zeroKeys_.size()));
+        });
         connect(bremove, &QToolButton::clicked, this, [this] { removeCurrentCase(); });
         connect(brename, &QPushButton::clicked, this, [this] {
             if (auto* it = caseList_->currentItem()) caseList_->editItem(it);
@@ -1591,6 +1614,7 @@ void SummaryPlotWidget::addCase(const QString& label, const QString& rawPath,
     caseList_->blockSignals(true);       // no premature replot from itemChanged
     caseList_->addItem(it);
     caseList_->blockSignals(false);
+    zeroScanValid_ = false;
     relabelCases();                      // tag this one and its twins, if any
     if (caseList_->count() == 1) caseList_->setCurrentItem(it);
     emit caseAdded(it->text(), smspecPath);
@@ -1715,6 +1739,7 @@ void SummaryPlotWidget::relabelCases()
 
 void SummaryPlotWidget::caseItemChanged(QListWidgetItem* it)
 {
+    zeroScanValid_ = false;   // the case set or its data moved
     if (!it) return;
     const QString prev = it->data(RoleCaseLabel).toString();
     QString now = it->text().trimmed();
@@ -2087,6 +2112,7 @@ int SummaryPlotWidget::removeRows(QList<int> rows)
     // Bottom up, so the rows still to be taken keep the indices they had.
     std::sort(rows.begin(), rows.end(), std::greater<int>());
 
+    zeroScanValid_ = false;
     QStringList gone;
     for (int row : std::as_const(rows)) {
         QListWidgetItem* it = caseList_->takeItem(row);   // fires currentItemChanged
@@ -2170,6 +2196,7 @@ QString SummaryPlotWidget::plottedStamp() const
 
 void SummaryPlotWidget::reload(bool keepSelection)
 {
+    zeroScanValid_ = false;   // the case set or its data moved
     const QString path = activePath();
     if (path.isEmpty()) return;
     if (!QFileInfo::exists(path)) {
@@ -2542,8 +2569,43 @@ void SummaryPlotWidget::populateSubItemBox()
     subItemBox_->blockSignals(false);
 }
 
+void SummaryPlotWidget::rescanZeroVectors()
+{
+    zeroKeys_.clear();
+    zeroScanValid_ = true;
+
+    auto cases = checkedCases();
+    if (cases.empty() && smry_) cases.push_back({ QString(), smry_.get() });
+    if (cases.empty()) return;
+
+    // One bulk read per case: ESmry loads lazily, and a few thousand
+    // single-key loads cost far more than reading the case through once.
+    for (const auto& [label, smry] : cases)
+        if (smry) { try { smry->loadData(); } catch (...) {} }
+
+    std::vector<float> vals;
+    for (const Vec& v : vecs_) {
+        if (!v.expr.isEmpty()) continue;      // an expression is the user's own
+        bool seen = false, allZero = true;
+        for (const auto& [label, smry] : cases) {
+            if (!smry || !seriesData(v, smry, smry == smry_.get(), vals)) continue;
+            seen = true;
+            if (std::any_of(vals.cbegin(), vals.cend(),
+                            [](float f) { return f != 0.0f; })) {
+                allZero = false;
+                break;
+            }
+        }
+        if (seen && allZero) zeroKeys_.insert(v.key);
+    }
+}
+
 void SummaryPlotWidget::rebuildTree(const QStringList& reselect)
 {
+    // Kept honest here rather than at every place the case set can change.
+    const bool hideZero = hideZero_ && hideZero_->isChecked();
+    if (hideZero && !zeroScanValid_) rescanZeroVectors();
+
     const int     selCat  = catBox_->currentData().toInt();
     const int     selType = typeBox_->currentData().toInt();
     const QString selItem = itemBox_->currentData().toString();
@@ -2626,6 +2688,7 @@ void SummaryPlotWidget::rebuildTree(const QStringList& reselect)
             }
             if (!hit) continue;
         }
+        if (hideZero && zeroKeys_.contains(v.key)) continue;
         if (!byKeyword.contains(v.keyword)) keywordOrder << v.keyword;
         byKeyword[v.keyword] << i;
     }

@@ -134,6 +134,7 @@ private:
     QComboBox*   catBox_     = nullptr;
     QComboBox*   typeBox_    = nullptr;
     QComboBox*   itemBox_    = nullptr;
+    QCheckBox*   hideZero_   = nullptr;   // drop vectors that never leave zero
     QLabel*      subLabel_   = nullptr;
     QComboBox*   subItemBox_ = nullptr;
     QLineEdit*   filter_    = nullptr;
@@ -253,6 +254,11 @@ private:
     void populateItemBox();
     void populateSubItemBox();
     void rebuildTree(const QStringList& reselect);
+    // Keys that stay zero in every checked case that carries them. Worked out
+    // once and kept, since deciding it means reading the case through.
+    void rescanZeroVectors();
+    QSet<QString> zeroKeys_;
+    bool          zeroScanValid_ = false;
     // Start, stop or re-pace the auto-refresh timer for the current state.
     void syncRefreshTimer();
     // The tree's selection -> the focused subplot's curve list.
