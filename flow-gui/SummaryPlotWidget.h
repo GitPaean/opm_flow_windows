@@ -188,6 +188,11 @@ private:
     // Put a brand-new chart in view `i` and destroy the one it had. Clearing a
     // chart in place is not enough - see the definition.
     QChart* freshChart(int i);
+    // Which cases a bulk check action applies to. Ticking is how the plotted
+    // set is chosen, so after a batch of runs it is the thing done in bulk.
+    enum CheckScope { CheckAll, CheckNone, CheckInvert,
+                      CheckSelectedOnly, CheckSelected, UncheckSelected };
+    void setCheckedCases(CheckScope scope);
     // Show or hide the custom boxes, and label them for the axis in force.
     void syncSpanBoxes();
     void spanLimits(const std::vector<std::pair<QString, Opm::EclIO::ESmry*>>& plotCases,

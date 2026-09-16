@@ -41,6 +41,7 @@
 #include <QJsonObject>
 #include <QTextStream>
 #include <QLabel>
+#include <QKeyEvent>
 #include <QLineEdit>
 #include <QLegendMarker>
 #include <QLineSeries>
@@ -1341,6 +1342,31 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
                             [this] { sortCases(SortLoadOrder); });
         bsort->setMenu(sortMenu);
         crow->addWidget(bsort);
+        // A batch of runs arrives checked, and picking the two worth looking at
+        // meant unticking the rest one at a time.
+        auto* bcheck = new QToolButton;
+        bcheck->setText(QStringLiteral("Check"));
+        bcheck->setPopupMode(QToolButton::InstantPopup);
+        bcheck->setToolTip(QStringLiteral(
+            "tick or untick cases in bulk - ticked is what gets plotted.\n"
+            "Space toggles every selected case at once (Ctrl or Shift to pick "
+            "several)"));
+        auto* ckMenu = new QMenu(bcheck);
+        ckMenu->addAction(QStringLiteral("Check all"), this,
+                          [this] { setCheckedCases(CheckAll); });
+        ckMenu->addAction(QStringLiteral("Uncheck all"), this,
+                          [this] { setCheckedCases(CheckNone); });
+        ckMenu->addAction(QStringLiteral("Invert"), this,
+                          [this] { setCheckedCases(CheckInvert); });
+        ckMenu->addSeparator();
+        ckMenu->addAction(QStringLiteral("Check selected only"), this,
+                          [this] { setCheckedCases(CheckSelectedOnly); });
+        ckMenu->addAction(QStringLiteral("Check selected"), this,
+                          [this] { setCheckedCases(CheckSelected); });
+        ckMenu->addAction(QStringLiteral("Uncheck selected"), this,
+                          [this] { setCheckedCases(UncheckSelected); });
+        bcheck->setMenu(ckMenu);
+        crow->addWidget(bcheck);
         auto* bup = new QToolButton;
         bup->setArrowType(Qt::UpArrow);
         bup->setToolTip(QStringLiteral("move the highlighted case up (Ctrl+Up)"));
@@ -1384,6 +1410,7 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
         caseList_->setDragDropMode(QAbstractItemView::InternalMove);
         caseList_->setDefaultDropAction(Qt::MoveAction);
         caseList_->viewport()->installEventFilter(this);   // to catch the drop
+        caseList_->installEventFilter(this);               // and Space on a range
         // Where the run actually is, for the times a tooltip is not enough -
         // to paste the path somewhere, or to go and look at the files.
         caseList_->setContextMenuPolicy(Qt::CustomContextMenu);
@@ -2105,6 +2132,52 @@ void SummaryPlotWidget::removeCurrentCase()
     if (rows.isEmpty() && caseList_->currentRow() >= 0) rows << caseList_->currentRow();
     if (removeRows(std::move(rows)) == 0)
         setStatus(QStringLiteral("highlight the cases to remove first"));
+}
+
+// One replot for the whole batch, not one per case: itemChanged fires per item
+// and each would rebuild the tree and redraw every chart.
+void SummaryPlotWidget::setCheckedCases(CheckScope scope)
+{
+    const int n = caseList_->count();
+    if (n == 0) return;
+    const auto sel = caseList_->selectedItems();
+    if (sel.isEmpty() && scope != CheckAll && scope != CheckNone && scope != CheckInvert) {
+        setStatus(QStringLiteral("no case selected - pick one or more in the list first"));
+        return;
+    }
+
+    int changed = 0;
+    caseList_->blockSignals(true);
+    for (int i = 0; i < n; ++i) {
+        auto* it = caseList_->item(i);
+        const Qt::CheckState was = it->checkState();
+        Qt::CheckState want = was;
+        const bool picked = sel.contains(it);
+        switch (scope) {
+            case CheckAll:          want = Qt::Checked;   break;
+            case CheckNone:         want = Qt::Unchecked; break;
+            case CheckInvert:       want = was == Qt::Checked ? Qt::Unchecked : Qt::Checked;
+                                    break;
+            case CheckSelectedOnly: want = picked ? Qt::Checked : Qt::Unchecked; break;
+            case CheckSelected:     if (picked) want = Qt::Checked;   break;
+            case UncheckSelected:   if (picked) want = Qt::Unchecked; break;
+        }
+        if (want != was) { it->setCheckState(want); ++changed; }
+    }
+    caseList_->blockSignals(false);
+
+    if (changed == 0) {
+        setStatus(QStringLiteral("nothing to change - the cases are already as asked"));
+        return;
+    }
+    zeroScanValid_ = false;
+    // What counts as all-zero is decided by the checked cases, so the tree has
+    // to follow them - the same reason caseItemChanged() rebuilds it.
+    if (hideZero_ && hideZero_->isChecked()) rebuildTree({});
+    replot();
+    int on = 0;
+    for (int i = 0; i < n; ++i) on += caseList_->item(i)->checkState() == Qt::Checked;
+    setStatus(QStringLiteral("%1 of %2 case(s) plotted").arg(on).arg(n));
 }
 
 void SummaryPlotWidget::removeUncheckedCases()
@@ -3101,6 +3174,19 @@ QPointF SummaryPlotWidget::chartPos(int idx, const QPoint& viewportPos) const
 
 bool SummaryPlotWidget::eventFilter(QObject* obj, QEvent* ev)
 {
+    // Space ticks the current row only, which is no use once a range has been
+    // picked out to turn off. Toggle the whole selection, away from whatever
+    // the current row is showing.
+    if (caseList_ && obj == caseList_ && ev->type() == QEvent::KeyPress) {
+        auto* ke = static_cast<QKeyEvent*>(ev);
+        if (ke->key() == Qt::Key_Space && ke->modifiers() == Qt::NoModifier
+            && caseList_->selectedItems().size() > 1) {
+            auto* cur = caseList_->currentItem();
+            setCheckedCases(cur && cur->checkState() == Qt::Checked
+                                ? UncheckSelected : CheckSelected);
+            return true;
+        }
+    }
     // A case was dragged to a new place in the list: Qt moves the item, and
     // the plot follows once it has finished doing so.
     if (caseList_ && obj == caseList_->viewport() && ev->type() == QEvent::Drop) {
