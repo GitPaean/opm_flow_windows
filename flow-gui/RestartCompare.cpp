@@ -143,6 +143,64 @@ namespace flowgui {
 // closer than that and the row of them reads as a band, not as points.
 constexpr double kMarkerPitch = 2.5;
 
+// A tolerance runs over decades, so one fixed step is wrong everywhere: from
+// the 1e-4 default a single press down used to land on zero. Step by decade,
+// and read and write the exponent form - which is also the only way to enter
+// 1e-9 by hand, the stock editor taking neither an exponent nor the other
+// decimal mark.
+class ToleranceSpin : public QDoubleSpinBox
+{
+public:
+    explicit ToleranceSpin(QWidget* parent = nullptr) : QDoubleSpinBox(parent)
+    {
+        setDecimals(15);              // or the small end is rounded away to zero
+        setKeyboardTracking(false);   // interpret when the edit is finished
+    }
+
+    void stepBy(int steps) override
+    {
+        const double v = value();
+        if (v <= 0.0) {
+            if (steps > 0) setValue(1e-12);   // off zero, not stuck on it
+            return;
+        }
+        setValue(std::clamp(v * std::pow(10.0, steps), minimum(), maximum()));
+    }
+
+protected:
+    QString textFromValue(double v) const override
+    {
+        return v == 0.0 ? QStringLiteral("0") : QString::number(v, 'g', 6);
+    }
+
+    double valueFromText(const QString& t) const override
+    {
+        bool ok = false;
+        const double v = plain(t).toDouble(&ok);
+        return ok ? v : value();
+    }
+
+    QValidator::State validate(QString& t, int&) const override
+    {
+        const QString s = plain(t);
+        // Half-typed exponents are not wrong yet, only unfinished.
+        if (s.isEmpty() || s == QLatin1String("-") || s == QLatin1String(".")
+            || s.endsWith(QLatin1Char('e')) || s.endsWith(QLatin1String("e-"))
+            || s.endsWith(QLatin1String("e+")))
+            return QValidator::Intermediate;
+        bool ok = false;
+        s.toDouble(&ok);
+        return ok ? QValidator::Acceptable : QValidator::Intermediate;
+    }
+
+private:
+    // Take either decimal mark, so the box accepts what the locale shows.
+    static QString plain(const QString& t)
+    {
+        return QString(t).trimmed().replace(QLatin1Char(','), QLatin1Char('.'));
+    }
+};
+
 // An overview plot of A against B never spans less than this share of the
 // property's own magnitude. It is what decides how loud a difference looks:
 // a gap of one part in a hundred fills about a fifteenth of the frame, so it
@@ -757,20 +815,24 @@ RestartComparePanel::RestartComparePanel(QWidget* parent)
     caseA_->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
     caseB_->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
 
-    absTol_ = new QDoubleSpinBox;
-    absTol_->setDecimals(10); absTol_->setRange(0.0, 1e6);
-    absTol_->setValue(1e-4); absTol_->setSingleStep(1e-4);
+    absTol_ = new ToleranceSpin;
+    absTol_->setRange(0.0, 1e6);
+    absTol_->setValue(1e-4);
     absTol_->setToolTip(QStringLiteral(
         "absolute tolerance, as compareECL takes it. A pair of values differs "
         "only when BOTH this and the relative tolerance are exceeded - which "
-        "is what keeps floating-point noise on a large value from counting."));
-    relTol_ = new QDoubleSpinBox;
-    relTol_->setDecimals(10); relTol_->setRange(0.0, 1.0);
-    relTol_->setValue(1e-4); relTol_->setSingleStep(1e-4);
+        "is what keeps floating-point noise on a large value from counting.\n\n"
+        "The arrows step by a decade; type a value for anything else, in plain "
+        "or exponent form (1e-6)."));
+    relTol_ = new ToleranceSpin;
+    relTol_->setRange(0.0, 1.0);
+    relTol_->setValue(1e-4);
     relTol_->setToolTip(QStringLiteral(
         "relative tolerance (0..1). Ignored for a pair where one value is "
         "zero: there is no ratio to take, so the absolute tolerance decides "
-        "on its own."));
+        "on its own.\n\n"
+        "The arrows step by a decade; type a value for anything else, in plain "
+        "or exponent form (1e-6)."));
 
     // Its own way in. Mirroring the Summary tab is how the list is kept in
     // step, but a tab you cannot put anything into reads as broken when it is
