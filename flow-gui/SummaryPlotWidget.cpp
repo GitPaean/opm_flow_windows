@@ -2013,10 +2013,19 @@ void SummaryPlotWidget::restoreUiState(const QJsonObject& state)
 
 void SummaryPlotWidget::clearCases()
 {
+    // The Compare and 3D tabs hold this list only through caseRemoved, so a
+    // silent clear left them showing every case a project had ever opened.
+    QStringList gone;
+    for (int i = 0; i < caseList_->count(); ++i)
+        gone << caseList_->item(i)->data(Qt::UserRole).toString();
+
     caseList_->blockSignals(true);
     caseList_->clear();
     caseList_->blockSignals(false);
+    zeroScanValid_ = false;
     clearActiveCase();
+
+    for (const QString& path : std::as_const(gone)) emit caseRemoved(path);
 }
 
 void SummaryPlotWidget::activateCase(const QString& smspecPath)
