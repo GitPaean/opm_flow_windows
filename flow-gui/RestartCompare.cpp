@@ -167,6 +167,13 @@ public:
         setValue(std::clamp(v * std::pow(10.0, steps), minimum(), maximum()));
     }
 
+    // QDoubleSpinBox widths itself from textFromValue() at the range ends, and
+    // ours renders those as "0" and "1" - so the relative box came out one
+    // character wide and clipped the value it was showing. Budget for what a
+    // tolerance actually displays instead.
+    QSize sizeHint() const override        { return grown(QDoubleSpinBox::sizeHint()); }
+    QSize minimumSizeHint() const override { return grown(QDoubleSpinBox::minimumSizeHint()); }
+
 protected:
     QString textFromValue(double v) const override
     {
@@ -194,6 +201,15 @@ protected:
     }
 
 private:
+    QSize grown(QSize s) const
+    {
+        const QFontMetrics fm(fontMetrics());
+        const int want = fm.horizontalAdvance(QStringLiteral("0.000123457"));
+        const int had  = fm.horizontalAdvance(textFromValue(maximum()));
+        s.setWidth(s.width() + std::max(0, want - had));
+        return s;
+    }
+
     // Take either decimal mark, so the box accepts what the locale shows.
     static QString plain(const QString& t)
     {
