@@ -207,6 +207,17 @@ private:
 // is plainly there and plainly not a catastrophe.
 constexpr double kMinRelSpan = 0.15;
 
+// The worst difference as a proportion. Blank where nothing was over the
+// absolute tolerance, so a clean property does not show a figure drawn from
+// noise.
+QString relText(double rel)
+{
+    if (rel <= 0.0) return QStringLiteral("-");
+    const double pct = rel * 100.0;
+    return pct < 0.001 ? QStringLiteral("< 0.001%")
+                       : QStringLiteral("%1%").arg(pct, 0, 'g', 3);
+}
+
 bool CompareResult::sameEnd() const
 {
     return endA.isValid() && endB.isValid() && endA == endB;
@@ -424,6 +435,10 @@ CompareResult compareRestarts(const QString& smspecA, const QString& smspecB,
                             sd.aWorst = a; sd.bWorst = b;
                         }
                         if (diffIsSignificant(a, b, tol)) ++sd.nBad;
+                        if (d > tol.abs) {
+                            const double den = std::max(std::abs(a), std::abs(b));
+                            if (den > 0.0) sd.maxRel = std::max(sd.maxRel, d / den);
+                        }
                         const double w = weight ? porv[i] : 1.0;
                         sumA += a * w; sumB += b * w; wsum += w;
                     }
@@ -437,6 +452,7 @@ CompareResult compareRestarts(const QString& smspecA, const QString& smspecB,
             if (sd.nBad > 0 && !kd.firstBad.isValid()) kd.firstBad = when;
             kd.totalBad += sd.nBad;
             kd.maxAbsOverall = std::max(kd.maxAbsOverall, sd.maxAbs);
+            kd.maxRelOverall = std::max(kd.maxRelOverall, sd.maxRel);
             kd.steps.push_back(sd);
             tick(2 + int(96.0 * double(++done) / double(std::max(1, totalUnits))));
         }
@@ -1011,11 +1027,12 @@ RestartComparePanel::RestartComparePanel(QWidget* parent)
     views_->addTab(cellView_, QStringLiteral("Cell values"));
     views_->addTab(histView_, QStringLiteral("Cell history"));
 
-    table_ = new QTableWidget(0, 4);
+    table_ = new QTableWidget(0, 5);
     table_->setHorizontalHeaderLabels({ QStringLiteral("Property"),
                                         QStringLiteral("First differs"),
                                         QStringLiteral("Cells outside tol"),
-                                        QStringLiteral("max |A-B|") });
+                                        QStringLiteral("max |A-B|"),
+                                        QStringLiteral("max rel") });
     table_->horizontalHeader()->setStretchLastSection(true);
     table_->setEditTriggers(QAbstractItemView::NoEditTriggers);
     table_->setSelectionBehavior(QAbstractItemView::SelectRows);
@@ -1798,11 +1815,12 @@ void RestartComparePanel::showKeywordDetail(const QString& keyword)
     const KeywordDiff* kd = nullptr;
     for (const auto& k : result_.keywords) if (k.keyword == keyword) { kd = &k; break; }
     if (!kd) return;
-    detail_->setColumnCount(8);
+    detail_->setColumnCount(9);
     detail_->setHorizontalHeaderLabels({ QStringLiteral("Date"),
                                          QStringLiteral("Step A/B"),
                                          QStringLiteral("Cells outside tol"),
                                          QStringLiteral("max |A-B|"),
+                                         QStringLiteral("max rel"),
                                          QStringLiteral("RMS"),
                                          QStringLiteral("Worst cell"),
                                          QStringLiteral("A / B there"),
@@ -1816,17 +1834,18 @@ void RestartComparePanel::showKeywordDetail(const QString& keyword)
             QStringLiteral("%1 / %2").arg(sd.seqA).arg(sd.seqB)));
         detail_->setItem(row, 2, new QTableWidgetItem(QString::number(sd.nBad)));
         detail_->setItem(row, 3, new QTableWidgetItem(QStringLiteral("%1").arg(sd.maxAbs, 0, 'g', 6)));
-        detail_->setItem(row, 4, new QTableWidgetItem(QStringLiteral("%1").arg(sd.rms, 0, 'g', 6)));
-        detail_->setItem(row, 5, new QTableWidgetItem(
-            sd.worstCell < 0 ? QStringLiteral("-") : QString::number(sd.worstCell)));
+        detail_->setItem(row, 4, new QTableWidgetItem(relText(sd.maxRel)));
+        detail_->setItem(row, 5, new QTableWidgetItem(QStringLiteral("%1").arg(sd.rms, 0, 'g', 6)));
         detail_->setItem(row, 6, new QTableWidgetItem(
+            sd.worstCell < 0 ? QStringLiteral("-") : QString::number(sd.worstCell)));
+        detail_->setItem(row, 7, new QTableWidgetItem(
             sd.worstCell < 0 ? QStringLiteral("-")
                              : QStringLiteral("%1  /  %2").arg(sd.aWorst, 0, 'g', 8)
                                                           .arg(sd.bWorst, 0, 'g', 8)));
-        detail_->setItem(row, 7, new QTableWidgetItem(
+        detail_->setItem(row, 8, new QTableWidgetItem(
             QStringLiteral("%1  /  %2").arg(sd.aggA, 0, 'g', 6).arg(sd.aggB, 0, 'g', 6)));
         if (sd.nBad > 0)
-            for (int c = 0; c < 8; ++c)
+            for (int c = 0; c < 9; ++c)
                 detail_->item(row, c)->setForeground(QBrush(QColor(0xa8, 0x50, 0x0d)));
     }
     detail_->resizeColumnsToContents();
@@ -1839,10 +1858,11 @@ void RestartComparePanel::showKeywordDetail(const QString& keyword)
 // Every property at one report step: what else went wrong where this did.
 void RestartComparePanel::showStepDetail(const QDateTime& when)
 {
-    detail_->setColumnCount(7);
+    detail_->setColumnCount(8);
     detail_->setHorizontalHeaderLabels({ QStringLiteral("Property"),
                                          QStringLiteral("Cells outside tol"),
                                          QStringLiteral("max |A-B|"),
+                                         QStringLiteral("max rel"),
                                          QStringLiteral("RMS"),
                                          QStringLiteral("Worst cell"),
                                          QStringLiteral("A / B there"),
@@ -1858,18 +1878,19 @@ void RestartComparePanel::showStepDetail(const QDateTime& when)
         detail_->setItem(row, 0, new QTableWidgetItem(k.keyword));
         detail_->setItem(row, 1, new QTableWidgetItem(QString::number(sd->nBad)));
         detail_->setItem(row, 2, new QTableWidgetItem(QStringLiteral("%1").arg(sd->maxAbs, 0, 'g', 6)));
-        detail_->setItem(row, 3, new QTableWidgetItem(QStringLiteral("%1").arg(sd->rms, 0, 'g', 6)));
-        detail_->setItem(row, 4, new QTableWidgetItem(
-            sd->worstCell < 0 ? QStringLiteral("-") : QString::number(sd->worstCell)));
+        detail_->setItem(row, 3, new QTableWidgetItem(relText(sd->maxRel)));
+        detail_->setItem(row, 4, new QTableWidgetItem(QStringLiteral("%1").arg(sd->rms, 0, 'g', 6)));
         detail_->setItem(row, 5, new QTableWidgetItem(
+            sd->worstCell < 0 ? QStringLiteral("-") : QString::number(sd->worstCell)));
+        detail_->setItem(row, 6, new QTableWidgetItem(
             sd->worstCell < 0 ? QStringLiteral("-")
                               : QStringLiteral("%1  /  %2").arg(sd->aWorst, 0, 'g', 8)
                                                            .arg(sd->bWorst, 0, 'g', 8)));
-        detail_->setItem(row, 6, new QTableWidgetItem(
+        detail_->setItem(row, 7, new QTableWidgetItem(
             QStringLiteral("%1  /  %2").arg(sd->aggA, 0, 'g', 6).arg(sd->aggB, 0, 'g', 6)));
         if (sd->nBad > 0) {
             ++differing;
-            for (int c = 0; c < 7; ++c)
+            for (int c = 0; c < 8; ++c)
                 detail_->item(row, c)->setForeground(QBrush(QColor(0xa8, 0x50, 0x0d)));
         }
     }
@@ -1964,8 +1985,9 @@ void RestartComparePanel::showResult()
         table_->setItem(row, 2, new QTableWidgetItem(QString::number(k.totalBad)));
         table_->setItem(row, 3, new QTableWidgetItem(
             QStringLiteral("%1").arg(k.maxAbsOverall, 0, 'g', 4)));
+        table_->setItem(row, 4, new QTableWidgetItem(relText(k.maxRelOverall)));
         if (!k.clean())
-            for (int c = 0; c < 4; ++c)
+            for (int c = 0; c < 5; ++c)
                 table_->item(row, c)->setForeground(QBrush(QColor(0xa8, 0x50, 0x0d)));
     }
     syncCombos();

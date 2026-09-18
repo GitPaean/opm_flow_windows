@@ -83,6 +83,11 @@ struct StepDiff {
     QDateTime when;
     int    seqA = -1, seqB = -1;   // the two files' own step numbers, as labels
     double maxAbs   = 0.0;
+    // The same worst difference in proportion, over cells whose absolute
+    // difference is itself over tolerance: below that the values are noise,
+    // and a cell passing through zero makes a negligible difference look
+    // enormous.
+    double maxRel   = 0.0;
     double rms      = 0.0;
     int    nBad     = 0;
     int    worstCell = -1;
@@ -100,6 +105,7 @@ struct KeywordDiff {
     QDateTime firstBad;            // invalid when it never differs
     long   totalBad       = 0;
     double maxAbsOverall  = 0.0;
+    double maxRelOverall  = 0.0;
     bool   clean() const { return totalBad == 0; }
 };
 
