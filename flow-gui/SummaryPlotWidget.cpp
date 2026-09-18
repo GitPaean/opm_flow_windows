@@ -1589,8 +1589,22 @@ QString SummaryPlotWidget::activeLabel() const
 QString SummaryPlotWidget::caseTip(const QString& smspecPath)
 {
     const QFileInfo fi(smspecPath);
-    return QDir::toNativeSeparators(fi.absolutePath())
-           + QLatin1Char('\n') + fi.fileName();
+    QString tip = QDir::toNativeSeparators(fi.absolutePath())
+                  + QLatin1Char('\n') + fi.fileName();
+    // Which run this is says nothing about how current it is.
+    if (const QDateTime w = flowgui::caseWritten(smspecPath); w.isValid())
+        tip += QStringLiteral("\nwritten %1  (%2)")
+                   .arg(w.toString(QStringLiteral("yyyy-MM-dd HH:mm")),
+                        flowgui::ageText(w));
+    return tip;
+}
+
+void SummaryPlotWidget::refreshCaseTips()
+{
+    for (int i = 0; i < caseList_->count(); ++i) {
+        auto* it = caseList_->item(i);
+        it->setToolTip(caseTip(it->data(Qt::UserRole).toString()));
+    }
 }
 
 void SummaryPlotWidget::addCase(const QString& label, const QString& rawPath,
@@ -2043,6 +2057,7 @@ void SummaryPlotWidget::caseFinished(const QString& rawPath)
     // The job's output path is spelled its own way; match and key the reader
     // map by the one spelling the list stores.
     const QString smspecPath = flowgui::normalizeCasePath(rawPath);
+    refreshCaseTips();           // it has just written; the tip said otherwise
     if (flowgui::sameCasePath(activePath(), smspecPath)) { reload(true); return; }
     others_.erase(smspecPath);   // drop a possibly stale comparison reader
     replot();

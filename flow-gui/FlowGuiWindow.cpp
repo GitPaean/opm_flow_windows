@@ -208,22 +208,12 @@ QString FlowGuiWindow::resolveSimulator() const
 
 namespace {
 
-// How old a binary is. A path says WHICH build will run; only a date says
-// whether it is still the source you think you are testing - and with a list
-// of builds to switch between, the stale one looks exactly like the fresh one.
-// The file's own timestamp is used rather than a stamp compiled into it: it
-// needs no cooperation from the thing being measured, so it is just as good
-// for a flow built elsewhere, and it cannot go stale when one translation
-// unit is rebuilt and another is not.
-QString ageOf(const QDateTime& built)
-{
-    const qint64 mins = built.secsTo(QDateTime::currentDateTime()) / 60;
-    if (mins < 2)          return QStringLiteral("just now");
-    if (mins < 60)         return QStringLiteral("%1 minutes ago").arg(mins);
-    if (mins < 60 * 48)    return QStringLiteral("%1 hours ago").arg(mins / 60);
-    return QStringLiteral("%1 days ago").arg(mins / (60 * 24));
-}
-
+// A path says WHICH build will run; only a date says whether it is still the
+// source you think you are testing, and with a list of builds to switch
+// between the stale one looks exactly like the fresh one. The date comes from
+// the file itself rather than a stamp compiled in: that needs no cooperation
+// from the thing being measured, so it works for a flow built elsewhere.
+//
 // Past this, a build is old enough to be worth a second look before trusting
 // a result that came out of it.
 constexpr qint64 kStaleDays = 30;
@@ -246,7 +236,7 @@ void FlowGuiWindow::updateSimulatorAge()
     const qint64 days = built.daysTo(QDateTime::currentDateTime());
     simAge_->setText(QStringLiteral("built %1  (%2)")
                          .arg(built.toString(QStringLiteral("yyyy-MM-dd HH:mm")),
-                              ageOf(built)));
+                              flowgui::ageText(built)));
     simAge_->setStyleSheet(days >= kStaleDays ? QStringLiteral("color:#a8500d;")
                                               : QStringLiteral("color:#555b61;"));
     simAge_->setToolTip(QStringLiteral(
@@ -734,7 +724,7 @@ FlowGuiWindow::FlowGuiWindow()
                                   " - queue OPM Flow simulations and watch them run.\n")
                   .arg(QLatin1String(kAppName), QLatin1String(kVersion),
                        guiBuilt.toString(QStringLiteral("yyyy-MM-dd HH:mm")),
-                       ageOf(guiBuilt)));
+                       flowgui::ageText(guiBuilt)));
     if (!moved.isEmpty())
         appendLog(QStringLiteral("NOTE: the directory this was started from is gone; "
                                  "working from %1 instead\n")

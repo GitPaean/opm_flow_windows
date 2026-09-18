@@ -16,6 +16,7 @@
 */
 #pragma once
 
+#include <QDateTime>
 #include <QDir>
 #include <QFileInfo>
 #include <QString>
@@ -65,6 +66,35 @@ inline QString outputBaseName(const QString& dir, const QString& deckBase)
         }
     }
     return deckBase;
+}
+
+// When a run last wrote its results: the newest of the files a case is read
+// from. Which one is touched last is not fixed - a run appends to the UNSMRY
+// while the SMSPEC is written once at the start, and copying a case can leave
+// either newer - so the latest of them is the honest answer.
+inline QDateTime caseWritten(const QString& smspecPath)
+{
+    const QFileInfo fi(smspecPath);
+    const QString stem = fi.absolutePath() + QLatin1Char('/') + fi.completeBaseName();
+    QDateTime newest;
+    for (const auto* ext : { ".SMSPEC", ".UNSMRY", ".ESMRY",
+                             ".smspec", ".unsmry", ".esmry" }) {
+        const QFileInfo f(stem + QLatin1String(ext));
+        if (f.exists() && (!newest.isValid() || f.lastModified() > newest))
+            newest = f.lastModified();
+    }
+    return newest;
+}
+
+// How long ago, in the coarsest unit that still says something.
+inline QString ageText(const QDateTime& when)
+{
+    if (!when.isValid()) return {};
+    const qint64 mins = when.secsTo(QDateTime::currentDateTime()) / 60;
+    if (mins < 2)       return QStringLiteral("just now");
+    if (mins < 60)      return QStringLiteral("%1 minutes ago").arg(mins);
+    if (mins < 60 * 48) return QStringLiteral("%1 hours ago").arg(mins / 60);
+    return QStringLiteral("%1 days ago").arg(mins / (60 * 24));
 }
 
 inline bool sameCasePath(const QString& a, const QString& b)

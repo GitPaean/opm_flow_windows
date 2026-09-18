@@ -243,6 +243,7 @@ private:
     void relabelCases();
     // Folder over file, for an item's tooltip.
     static QString caseTip(const QString& smspecPath);
+    void refreshCaseTips();     // the written-at line goes stale as runs write
     void removeCurrentCase();
     void removeUncheckedCases();
     void removeAllCases();
