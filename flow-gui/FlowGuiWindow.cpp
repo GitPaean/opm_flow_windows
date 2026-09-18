@@ -114,6 +114,18 @@ static const char* kVersion = FLOWGUI_VERSION;
 namespace {
 enum Col { ColDeck = 0, ColStatus, ColProgress, ColElapsed, ColEta, ColCount };
 
+// Where a run writes when the output is left "next to deck". The rank count is
+// part of the name because runs at different ranks otherwise share a folder and
+// the later one overwrites the earlier - which is exactly the pair being kept
+// when a parallel run is checked against a serial one. One rank keeps the plain
+// name, so output already on disk is still found where it was.
+QString defaultRunDir(const QFileInfo& deck, int ranks)
+{
+    const QString base = deck.absolutePath() + '/' + deck.completeBaseName()
+                       + QStringLiteral("_run");
+    return ranks > 1 ? base + QStringLiteral("_np%1").arg(ranks) : base;
+}
+
 QString fmtDuration(qint64 ms)
 {
     const qint64 s = ms / 1000;
@@ -547,6 +559,15 @@ FlowGuiWindow::FlowGuiWindow()
         grid->addWidget(bout, 1, 5);
         connect(outdirMode_, &QComboBox::currentIndexChanged, this,
                 [this](int i) { outdirEdit_->setEnabled(i == 1); });
+        // The first entry names the folder a run will actually write to, which
+        // the rank count is now part of.
+        const auto showDefaultDir = [this](int ranks) {
+            outdirMode_->setItemText(0, ranks > 1
+                ? QStringLiteral("next to deck (<deck>_run_np%1)").arg(ranks)
+                : QStringLiteral("next to deck (<deck>_run)"));
+        };
+        connect(ranksSpin_, &QSpinBox::valueChanged, this, showDefaultDir);
+        showDefaultDir(ranksSpin_->value());
         connect(bout, &QPushButton::clicked, this, [this] { onBrowseOutdir(); });
 
         grid->addWidget(new QLabel(QStringLiteral("Extra options:")), 2, 0);
@@ -914,13 +935,18 @@ void FlowGuiWindow::addDecks(const QStringList& files)
         // case so its results are immediately available in the Results tab.
         if (summary_) {
             const QFileInfo di(f);
-            const QString prevDir = di.absolutePath() + '/' + di.completeBaseName()
-                + QStringLiteral("_run");
-            const QString prev = prevDir + '/'
-                + flowgui::outputBaseName(prevDir, di.completeBaseName())
-                + QStringLiteral(".SMSPEC");
-            if (QFileInfo::exists(prev))
-                summary_->addCase(di.completeBaseName(), prev);
+            // Where this deck would write now, then the plain name: output from
+            // before the rank count was in it is still worth picking up.
+            for (const QString& prevDir : { defaultRunDir(di, ranksSpin_->value()),
+                                            defaultRunDir(di, 1) }) {
+                const QString prev = prevDir + '/'
+                    + flowgui::outputBaseName(prevDir, di.completeBaseName())
+                    + QStringLiteral(".SMSPEC");
+                if (QFileInfo::exists(prev)) {
+                    summary_->addCase(di.completeBaseName(), prev);
+                    break;
+                }
+            }
         }
 #endif
         jobs_.push_back(j);
@@ -1231,7 +1257,7 @@ void FlowGuiWindow::startNextJob()
     if (outdirMode_->currentIndex() == 1 && !outdirEdit_->text().isEmpty())
         j.outdir = outdirEdit_->text();
     else
-        j.outdir = deckInfo.absolutePath() + '/' + deckInfo.completeBaseName() + "_run";
+        j.outdir = defaultRunDir(deckInfo, ranksSpin_->value());
     if (!QDir().mkpath(j.outdir)) {
         appendLog(QStringLiteral("FAILED to create output directory %1\n").arg(j.outdir));
         j.state = Job::Failed;
