@@ -131,6 +131,7 @@ GridGLWidget::GridGLWidget(QWidget* parent)
     , vboPos_(QOpenGLBuffer::VertexBuffer)
     , vboNrm_(QOpenGLBuffer::VertexBuffer)
     , vboCol_(QOpenGLBuffer::VertexBuffer)
+    , vboWell_(QOpenGLBuffer::VertexBuffer)
 {
     QSurfaceFormat fmt = format();
     fmt.setSamples(4);
@@ -142,7 +143,8 @@ GridGLWidget::GridGLWidget(QWidget* parent)
 GridGLWidget::~GridGLWidget()
 {
     makeCurrent();
-    vboPos_.destroy(); vboNrm_.destroy(); vboCol_.destroy();
+    vboPos_.destroy(); vboNrm_.destroy(); vboCol_.destroy(); vboWell_.destroy();
+    vao_.destroy();
     prog_.reset();
     doneCurrent();
 }
@@ -288,10 +290,14 @@ void GridGLWidget::initializeGL()
     // 130" outright - and has no default precision for a float in a fragment
     // shader, so it must be stated. The bodies are already in/out style, which
     // GLSL 1.30 and ES 3.00 both accept, so only the preamble differs.
+    // macOS only offers modern OpenGL through a core profile (3.2 / GLSL
+    // 1.50), which also requires a vertex array object for every draw.
     const bool es = context() && context()->isOpenGLES();
     const QString head = es
         ? QStringLiteral("#version 300 es\nprecision highp float;\n")
-        : QStringLiteral("#version 130\n");
+        : context()->format().profile() == QSurfaceFormat::CoreProfile
+              ? QStringLiteral("#version 150\n")
+              : QStringLiteral("#version 130\n");
     prog_->addShaderFromSourceCode(QOpenGLShader::Vertex,
                                    head + QLatin1String(kVertBody));
     prog_->addShaderFromSourceCode(QOpenGLShader::Fragment,
@@ -309,7 +315,8 @@ void GridGLWidget::initializeGL()
                               QString::fromLatin1(v ? v : "?"),
                               prog_->log().trimmed());
     }
-    vboPos_.create(); vboNrm_.create(); vboCol_.create();
+    vao_.create();
+    vboPos_.create(); vboNrm_.create(); vboCol_.create(); vboWell_.create();
     glReady_ = true;
 }
 
@@ -341,6 +348,10 @@ void GridGLWidget::paintGL()
     glDisable(GL_CULL_FACE);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     if (!prog_ || vertCount_ == 0) return;
+
+    // Required by OpenGL core profiles, including macOS. Keep it bound for
+    // both grid triangles and well lines; QPainter takes over only afterward.
+    vao_.bind();
 
     if (meshDirty_) {
         vboPos_.bind(); vboPos_.allocate(pos_.data(), int(pos_.size() * sizeof(float)));
@@ -387,7 +398,7 @@ void GridGLWidget::paintGL()
         prog_->disableAttributeArray(1);
         prog_->disableAttributeArray(2);
         prog_->setAttributeValue(1, QVector3D(0, 0, 1));
-        vboPos_.release();
+        vboWell_.bind();
         for (const WellPath& w : wells_) {
             if (w.points.size() < 2) continue;
             prog_->setAttributeValue(2, QVector3D(float(w.color.redF()),
@@ -396,14 +407,17 @@ void GridGLWidget::paintGL()
             std::vector<float> tmp;
             tmp.reserve(size_t(w.points.size()) * 3);
             for (const auto& p : w.points) { tmp.push_back(p.x()); tmp.push_back(p.y()); tmp.push_back(p.z()); }
+            vboWell_.allocate(tmp.data(), int(tmp.size() * sizeof(float)));
             prog_->enableAttributeArray(0);
-            prog_->setAttributeArray(0, GL_FLOAT, tmp.data(), 3);
+            prog_->setAttributeBuffer(0, GL_FLOAT, 0, 3);
             glDrawArrays(GL_LINE_STRIP, 0, w.points.size());
             prog_->disableAttributeArray(0);
         }
+        vboWell_.release();
         glEnable(GL_DEPTH_TEST);
     }
     prog_->release();
+    vao_.release();
 
     // ---- 2D overlay: legend, step text, well names -------------------------
     QPainter p(this);

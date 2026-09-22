@@ -108,7 +108,11 @@ static void exemptFromPowerThrottling(qint64 pid)
 
 static const char* kAppName = "flow-gui";
 // First entry of the simulator box: the empty choice, spelled out.
+#ifdef Q_OS_WIN
 static const char* kShippedSimulator = "(the flow shipped with the GUI)";
+#else
+static const char* kShippedSimulator = "(default flow)";
+#endif
 static const char* kVersion = FLOWGUI_VERSION;
 
 namespace {
@@ -249,6 +253,10 @@ void FlowGuiWindow::updateSimulatorAge()
 
 QString FlowGuiWindow::findFlowExe()
 {
+#ifdef FLOWGUI_DEFAULT_SIMULATOR
+    const QString configured = QStringLiteral(FLOWGUI_DEFAULT_SIMULATOR);
+    if (QFileInfo(configured).isExecutable()) return configured;
+#endif
 #ifdef Q_OS_WIN
     const QString exeName = QStringLiteral("flow.exe");
 #else

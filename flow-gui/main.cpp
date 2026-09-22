@@ -16,6 +16,7 @@
 #include <QIcon>
 #include <QPalette>
 #include <QStyleHints>
+#include <QSurfaceFormat>
 
 #include <cstdio>
 #include <cstring>
@@ -30,6 +31,14 @@ int main(int argc, char** argv)
         }
     }
 
+#ifdef Q_OS_MACOS
+    // macOS's compatibility context stops at OpenGL 2.1. Request the 3.2
+    // core context before QApplication creates any shared widget contexts.
+    QSurfaceFormat glFormat;
+    glFormat.setVersion(3, 2);
+    glFormat.setProfile(QSurfaceFormat::CoreProfile);
+    QSurfaceFormat::setDefaultFormat(glFormat);
+#endif
     QApplication app(argc, argv);
     QApplication::setOrganizationName(QStringLiteral("OPM"));
     QApplication::setApplicationName(QStringLiteral("flow-gui"));

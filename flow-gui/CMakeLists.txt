@@ -33,19 +33,46 @@ endif()
 # -DFLOWGUI_FMT_LIB=<fmt library>.
 set(FLOWGUI_OPM_PREFIX "${CMAKE_CURRENT_SOURCE_DIR}/../install-mpi"
     CACHE PATH "opm-common install prefix providing EclIO::ESmry")
+set(FLOWGUI_OPM_SOURCE_DIR "" CACHE PATH
+    "opm-common source directory (for an uninstalled build)")
+set(FLOWGUI_OPM_BUILD_DIR "" CACHE PATH
+    "opm-common build directory (for an uninstalled build)")
+set(FLOWGUI_DEFAULT_SIMULATOR "" CACHE FILEPATH
+    "Existing flow executable to use when no simulator override is selected")
 
 if(WIN32)
     set(_opmlib "${FLOWGUI_OPM_PREFIX}/lib/opmcommon.lib")
     set(_fmt_default "${CMAKE_CURRENT_SOURCE_DIR}/../vcpkg/installed/x64-windows/lib/fmt.lib")
 else()
     set(_opmlib "${FLOWGUI_OPM_PREFIX}/lib/libopmcommon.a")
-    set(_fmt_default "fmt")
+    find_package(fmt CONFIG QUIET)
+    if(fmt_FOUND)
+        set(_fmt_default "fmt::fmt")
+    else()
+        set(_fmt_default "fmt")
+    endif()
 endif()
 set(FLOWGUI_FMT_LIB "${_fmt_default}" CACHE STRING "fmt library for opmcommon")
 
+if(FLOWGUI_OPM_SOURCE_DIR OR FLOWGUI_OPM_BUILD_DIR)
+    if(WIN32)
+        message(FATAL_ERROR "Uninstalled opm-common build trees are supported on Unix only")
+    endif()
+    if(NOT FLOWGUI_OPM_SOURCE_DIR OR NOT FLOWGUI_OPM_BUILD_DIR)
+        message(FATAL_ERROR "Set both FLOWGUI_OPM_SOURCE_DIR and FLOWGUI_OPM_BUILD_DIR")
+    endif()
+    set(_opm_include "${FLOWGUI_OPM_SOURCE_DIR}")
+    set(_opmlib "${FLOWGUI_OPM_BUILD_DIR}/lib/libopmcommon.a")
+    if(NOT EXISTS "${_opmlib}")
+        message(FATAL_ERROR "opm-common library not found: ${_opmlib}")
+    endif()
+else()
+    set(_opm_include "${FLOWGUI_OPM_PREFIX}/include")
+endif()
+
 set(FLOWGUI_HAVE_SUMMARY OFF)
 if(Qt6Charts_FOUND AND EXISTS "${_opmlib}"
-   AND EXISTS "${FLOWGUI_OPM_PREFIX}/include/opm/io/eclipse/ESmry.hpp")
+   AND EXISTS "${_opm_include}/opm/io/eclipse/ESmry.hpp")
     set(FLOWGUI_HAVE_SUMMARY ON)
     # RestartCompare rides along with the summary option: it needs opm-common
     # for ERst and Qt Charts to draw the divergence, which is exactly the pair
@@ -59,7 +86,7 @@ message(STATUS "flow-gui summary plotting: ${FLOWGUI_HAVE_SUMMARY}")
 # (part of qtbase on every platform).
 set(FLOWGUI_HAVE_3D OFF)
 if(Qt6OpenGLWidgets_FOUND AND EXISTS "${_opmlib}"
-   AND EXISTS "${FLOWGUI_OPM_PREFIX}/include/opm/io/eclipse/EGrid.hpp")
+   AND EXISTS "${_opm_include}/opm/io/eclipse/EGrid.hpp")
     set(FLOWGUI_HAVE_3D ON)
     list(APPEND FLOWGUI_SOURCES Viewer3D.cpp Viewer3D.h)
 endif()
@@ -74,7 +101,7 @@ message(STATUS "flow-gui 3D viewer: ${FLOWGUI_HAVE_3D}")
 # A package built without those libraries simply has no Structure tab, which
 # is better than a build that will not link.
 set(FLOWGUI_HAVE_DECKMODEL OFF)
-if(EXISTS "${FLOWGUI_OPM_PREFIX}/include/opm/input/eclipse/Schedule/Schedule.hpp")
+if(EXISTS "${_opm_include}/opm/input/eclipse/Schedule/Schedule.hpp" AND EXISTS "${_opmlib}")
     include(CheckCXXSourceCompiles)
     set(_dm_libs "${_opmlib}" "${FLOWGUI_FMT_LIB}")
     find_library(FLOWGUI_CJSON_LIB NAMES cjson libcjson)
@@ -91,7 +118,7 @@ if(EXISTS "${FLOWGUI_OPM_PREFIX}/include/opm/input/eclipse/Schedule/Schedule.hpp
             list(APPEND _dm_libs OpenMP::OpenMP_CXX)
         endif()
     endif()
-    set(CMAKE_REQUIRED_INCLUDES  "${FLOWGUI_OPM_PREFIX}/include")
+    set(CMAKE_REQUIRED_INCLUDES "${_opm_include}" "${FLOWGUI_OPM_BUILD_DIR}")
     set(CMAKE_REQUIRED_LIBRARIES ${_dm_libs})
     # The test program must be built in this project's configuration: left to
     # itself try_compile builds it as Debug, which on MSVC links /MDd objects
@@ -123,6 +150,13 @@ message(STATUS "flow-gui deck model (group tree / network): ${FLOWGUI_HAVE_DECKM
 
 qt_add_executable(flow-gui WIN32 MACOSX_BUNDLE ${FLOWGUI_SOURCES})
 target_compile_definitions(flow-gui PRIVATE FLOWGUI_VERSION="${PROJECT_VERSION}")
+if(FLOWGUI_DEFAULT_SIMULATOR)
+    if(NOT EXISTS "${FLOWGUI_DEFAULT_SIMULATOR}")
+        message(FATAL_ERROR "flow executable not found: ${FLOWGUI_DEFAULT_SIMULATOR}")
+    endif()
+    target_compile_definitions(flow-gui PRIVATE
+        FLOWGUI_DEFAULT_SIMULATOR="${FLOWGUI_DEFAULT_SIMULATOR}")
+endif()
 target_link_libraries(flow-gui PRIVATE Qt6::Widgets)
 
 # The application icon, compiled into the binary so it is there whether
@@ -162,7 +196,10 @@ if(FLOWGUI_HAVE_SUMMARY OR FLOWGUI_HAVE_3D)
         target_compile_definitions(flow-gui PRIVATE FLOWGUI_HAVE_SUMMARY)
         target_link_libraries(flow-gui PRIVATE Qt6::Charts)
     endif()
-    target_include_directories(flow-gui PRIVATE "${FLOWGUI_OPM_PREFIX}/include")
+    target_include_directories(flow-gui PRIVATE "${_opm_include}")
+    if(FLOWGUI_OPM_BUILD_DIR)
+        target_include_directories(flow-gui PRIVATE "${FLOWGUI_OPM_BUILD_DIR}")
+    endif()
     target_link_libraries(flow-gui PRIVATE "${_opmlib}" "${FLOWGUI_FMT_LIB}")
     if(MSVC)
         # opm-common headers need the conformance switches; the static lib was

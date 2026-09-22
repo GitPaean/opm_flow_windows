@@ -18,6 +18,7 @@
 #include <QOpenGLBuffer>
 #include <QOpenGLFunctions>
 #include <QOpenGLShaderProgram>
+#include <QOpenGLVertexArrayObject>
 #include <QOpenGLWidget>
 #include <QPoint>
 #include <QString>
@@ -88,7 +89,8 @@ private:
     QMatrix4x4 viewMatrix() const;
 
     std::unique_ptr<QOpenGLShaderProgram> prog_;
-    QOpenGLBuffer vboPos_, vboNrm_, vboCol_;
+    QOpenGLBuffer vboPos_, vboNrm_, vboCol_, vboWell_;
+    QOpenGLVertexArrayObject vao_;
     bool  shaded_ = true;
     bool  glReady_ = false;
     bool  meshDirty_ = false, colorDirty_ = false;

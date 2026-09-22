@@ -208,15 +208,16 @@ results, animate them in 3D, and edit decks — all in one window.
   (`plot_ms_wells`), so the two pictures read alike. Decks already in the
   queue are one press away: *Well hierarchy* on the Run tab reads the selected
   deck here and comes to this tab.
-- **Simulator** — by default the `flow`(`.exe`) shipped next to the GUI (in a
+- **Simulator** — by default the `flow`(`.exe`) shipped next to the GUI, or
+  the existing executable configured for a local build (otherwise, in a
   development checkout it falls back to the harness build tree); the resolved
   path is shown in the log at startup. `flow` contains every model variant,
   so end users never need to change it. For **developers** the *Simulator*
   box overrides this: point it at a freshly built executable to test your own
   build. It is a **list** — every build you browse to or type joins it, most
   recent first, so comparing a release against your own build is a pick from
-  the drop-down rather than a path to retype; the first entry is the flow
-  shipped with the GUI, i.e. no override. The choice and the list are
+  the drop-down rather than a path to retype; the first entry is the default
+  flow, i.e. no override. The choice and the list are
   remembered between sessions and stored in the project file. Beside the box
   is **when that executable was built** — its own file date, so it holds for a
   build made anywhere — turning amber past a month, since with several builds
@@ -385,19 +386,30 @@ the *Simulator* field at your own build
 (e.g. `.../build/opm-simulators/bin/flow`).
 
 ### macOS
+For an existing OPM checkout beside this repository, with opm-common already
+built in `codex-release`, use the helper (it only builds flow-gui):
 ```bash
-brew install qt
-cmake -S flow-gui -B build-gui -DCMAKE_BUILD_TYPE=Release \
-      -DCMAKE_PREFIX_PATH="$(brew --prefix qt)"
-cmake --build build-gui
-open build-gui/flow-gui.app
+brew install qt qtcharts fmt ninja
+./build-flow-gui-macos.sh --launch
 ```
+Pass `--opm-root /path/to/opm` if the checkout is elsewhere, or
+`--flow /path/to/flow` if the already-built simulator is elsewhere. The script
+checks these paths, builds the app under `build-gui-macos`, and configures it
+to use that flow by default. It never compiles or copies the simulator.
+
+To configure manually against an uninstalled opm-common build, pass both
+`-DFLOWGUI_OPM_SOURCE_DIR=/path/to/opm-common` and
+`-DFLOWGUI_OPM_BUILD_DIR=/path/to/opm-common-build` (the latter contains
+`lib/libopmcommon.a`). Optionally set `-DFLOWGUI_DEFAULT_SIMULATOR=/path/to/flow`.
+Without opm-common, the basic GUI still builds, but has no Summary Plots, 3D
+View, or Well Hierarchy tabs. Check the feature lines in CMake's output.
 
 ## Usage
 1. **Add deck...** one or more `*.DATA` files to the queue. On Windows the
    simulator is the `flow.exe` shipped with the GUI (see the log's first
-   lines); on Linux/macOS nothing is bundled — set the **Simulator** field
-   to your own build (e.g. `.../build/opm-simulators/bin/flow`) once, it is
+   lines). On macOS the helper above configures your existing build as the
+   default; on Linux or for a basic build without that setting, set the
+   **Simulator** field to your own flow executable once. Overrides are
    remembered between sessions.
 2. Choose **MPI ranks** / **OMP threads** (1/1 = serial), output policy and
    any extra flow options.
