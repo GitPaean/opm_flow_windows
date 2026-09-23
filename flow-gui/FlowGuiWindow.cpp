@@ -65,6 +65,7 @@
 #include <QSet>
 #include <QSettings>
 #include <QSpinBox>
+#include <QStandardPaths>
 #include <QSystemTrayIcon>
 #include <QTimer>
 #include <QTabWidget>
@@ -1289,6 +1290,34 @@ void FlowGuiWindow::startNextJob()
             }
             program = impiexec;
         }
+#ifdef Q_OS_MACOS
+        // Apps opened from Finder do not inherit the interactive shell's
+        // Homebrew PATH. Resolve mpiexec here, not via the child environment:
+        // QProcess must locate the launcher before that environment exists.
+        if (program == QLatin1String("mpiexec")) {
+            program = QStandardPaths::findExecutable(program);
+            if (program.isEmpty()) {
+                for (const QString& candidate : {
+                         QStringLiteral("/opt/homebrew/bin/mpiexec"),
+                         QStringLiteral("/usr/local/bin/mpiexec") }) {
+                    if (QFileInfo(candidate).isExecutable()) {
+                        program = candidate;
+                        break;
+                    }
+                }
+            }
+            if (program.isEmpty()) {
+                appendLog(QStringLiteral(
+                    "FAILED: MPI ranks is %1, but mpiexec was not found. "
+                    "Install Open MPI with Homebrew or set MPI ranks to 1.\n")
+                    .arg(ranks));
+                j.state = Job::Failed;
+                refreshRow(current_);
+                startNextJob();
+                return;
+            }
+        }
+#endif
         args << QStringLiteral("-n") << QString::number(ranks) << exePath_;
     } else {
         program = exePath_;

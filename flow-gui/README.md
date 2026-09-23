@@ -396,6 +396,9 @@ Pass `--opm-root /path/to/opm` if the checkout is elsewhere, or
 `--flow /path/to/flow` if the already-built simulator is elsewhere. The script
 checks these paths, builds the app under `build-gui-macos`, and configures it
 to use that flow by default. It never compiles or copies the simulator.
+For MPI ranks greater than one, the GUI looks for `mpiexec` on PATH and in
+Homebrew's usual macOS locations, including when opened from Finder (which
+does not inherit your shell's PATH). Install `open-mpi` if needed.
 
 To configure manually against an uninstalled opm-common build, pass both
 `-DFLOWGUI_OPM_SOURCE_DIR=/path/to/opm-common` and
