@@ -256,7 +256,8 @@ QString FlowGuiWindow::findFlowExe()
 {
 #ifdef FLOWGUI_DEFAULT_SIMULATOR
     const QString configured = QStringLiteral(FLOWGUI_DEFAULT_SIMULATOR);
-    if (QFileInfo(configured).isExecutable()) return configured;
+    const QFileInfo configuredInfo(configured);
+    if (configuredInfo.isFile() && configuredInfo.isExecutable()) return configured;
 #endif
 #ifdef Q_OS_WIN
     const QString exeName = QStringLiteral("flow.exe");

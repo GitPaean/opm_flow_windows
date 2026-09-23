@@ -386,16 +386,21 @@ the *Simulator* field at your own build
 (e.g. `.../build/opm-simulators/bin/flow`).
 
 ### macOS
-For an existing OPM checkout beside this repository, with opm-common already
-built in `codex-release`, use the helper (it only builds flow-gui):
+Build flow-gui against an existing opm-common source and build tree, plus an
+already-built flow executable:
 ```bash
 brew install qt qtcharts fmt ninja
-./build-flow-gui-macos.sh --launch
+./build-flow-gui-macos.sh \
+  --opm-source /path/to/opm-common \
+  --opm-build /path/to/opm-common-build \
+  --flow /path/to/flow --launch
 ```
-Pass `--opm-root /path/to/opm` if the checkout is elsewhere, or
-`--flow /path/to/flow` if the already-built simulator is elsewhere. The script
-checks these paths, builds the app under `build-gui-macos`, and configures it
-to use that flow by default. It never compiles or copies the simulator.
+The build tree must contain `lib/libopmcommon.a`. The helper's no-argument
+shortcut uses a sibling `../opm` checkout with `src/opm-common` and a
+`codex-release` build tree; use `--opm-root` if only that checkout location
+differs. The script checks the paths, builds the app under `build-gui-macos`,
+and configures it to use the supplied flow by default. It never compiles or
+copies the simulator.
 For MPI ranks greater than one, the GUI looks for `mpiexec` on PATH and in
 Homebrew's usual macOS locations, including when opened from Finder (which
 does not inherit your shell's PATH). Install `open-mpi` if needed.

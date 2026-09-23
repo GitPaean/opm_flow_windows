@@ -93,9 +93,9 @@ private:
     QOpenGLVertexArrayObject vao_;
     bool  shaded_ = true;
     bool  glReady_ = false;
-    bool  meshDirty_ = false, colorDirty_ = false;
+    bool  meshDirty_ = false, colorDirty_ = false, wellDirty_ = false;
 
-    std::vector<float> pos_, nrm_, col_;
+    std::vector<float> pos_, nrm_, col_, wellPos_;
     int   cellCount_ = 0;
     int   vertCount_ = 0;
     QVector<WellPath> wells_;

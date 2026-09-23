@@ -4,21 +4,25 @@ set -euo pipefail
 
 repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 opm_root="$(cd "${repo_dir}/../opm" 2>/dev/null && pwd || true)"
+opm_source=""
+opm_build=""
 build_dir="${repo_dir}/build-gui-macos"
 flow_path=""
 launch=false
 
 usage() {
-    printf 'Usage: %s [--opm-root DIR] [--flow FILE] [--build-dir DIR] [--launch]\n' "$0"
+    printf 'Usage: %s [--opm-root DIR] [--opm-source DIR] [--opm-build DIR] [--flow FILE] [--build-dir DIR] [--launch]\n' "$0"
     printf 'Defaults: sibling opm checkout, codex-release build, build-gui-macos output.\n'
 }
 
 while (($#)); do
     case "$1" in
-        --opm-root|--flow|--build-dir)
+        --opm-root|--opm-source|--opm-build|--flow|--build-dir)
             if (($# < 2)); then usage >&2; exit 2; fi
             case "$1" in
                 --opm-root) opm_root="$2" ;;
+                --opm-source) opm_source="$2" ;;
+                --opm-build) opm_build="$2" ;;
                 --flow) flow_path="$2" ;;
                 --build-dir) build_dir="$2" ;;
             esac
@@ -36,14 +40,18 @@ fi
 if [[ -z "$flow_path" ]]; then
     flow_path="${opm_root}/codex-release/opm-simulators/bin/flow"
 fi
-opm_source="${opm_root}/src/opm-common"
-opm_build="${opm_root}/codex-release/opm-common"
+if [[ -z "$opm_source" ]]; then
+    opm_source="${opm_root}/src/opm-common"
+fi
+if [[ -z "$opm_build" ]]; then
+    opm_build="${opm_root}/codex-release/opm-common"
+fi
 if [[ ! -f "${opm_source}/opm/io/eclipse/ESmry.hpp" || ! -f "${opm_build}/lib/libopmcommon.a" ]]; then
-    printf 'Missing opm-common source or library under %s; pass --opm-root.\n' "$opm_root" >&2
+    printf 'Missing opm-common source or library; pass --opm-source and --opm-build.\n' >&2
     exit 1
 fi
-if [[ ! -x "$flow_path" ]]; then
-    printf 'Missing executable flow at %s; pass --flow.\n' "$flow_path" >&2
+if [[ ! -f "$flow_path" || ! -x "$flow_path" ]]; then
+    printf 'Expected an executable flow file at %s; pass --flow.\n' "$flow_path" >&2
     exit 1
 fi
 

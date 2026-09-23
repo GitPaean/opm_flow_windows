@@ -151,8 +151,8 @@ message(STATUS "flow-gui deck model (group tree / network): ${FLOWGUI_HAVE_DECKM
 qt_add_executable(flow-gui WIN32 MACOSX_BUNDLE ${FLOWGUI_SOURCES})
 target_compile_definitions(flow-gui PRIVATE FLOWGUI_VERSION="${PROJECT_VERSION}")
 if(FLOWGUI_DEFAULT_SIMULATOR)
-    if(NOT EXISTS "${FLOWGUI_DEFAULT_SIMULATOR}")
-        message(FATAL_ERROR "flow executable not found: ${FLOWGUI_DEFAULT_SIMULATOR}")
+    if(NOT EXISTS "${FLOWGUI_DEFAULT_SIMULATOR}" OR IS_DIRECTORY "${FLOWGUI_DEFAULT_SIMULATOR}")
+        message(FATAL_ERROR "flow executable must be a file: ${FLOWGUI_DEFAULT_SIMULATOR}")
     endif()
     target_compile_definitions(flow-gui PRIVATE
         FLOWGUI_DEFAULT_SIMULATOR="${FLOWGUI_DEFAULT_SIMULATOR}")
