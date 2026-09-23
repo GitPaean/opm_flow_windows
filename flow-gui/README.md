@@ -159,7 +159,12 @@ results, animate them in 3D, and edit decks — all in one window.
   starts with every section **collapsed** — eight sections say more than
   the hundreds of keywords under them — and a section you open stays open
   across a rescan. It has a **keyword filter** (matches keyword or file
-  name, hits expanded automatically), Expand/Collapse for the selected
+  name, hits expanded automatically) that switches to a **deck text
+  search**: pick *Text*, type any string and press Enter to list every
+  matching line in the deck and its includes, case-insensitive, grouped
+  under the keyword it belongs to (first 500 listed; open tabs are searched
+  with their unsaved edits); clicking a hit opens the file with the match
+  selected. Expand/Collapse for the selected
   subtree and Expand all / Collapse all buttons; **Close all** shuts every
   open tab at once (following INCLUDEs leaves a row of them), asking once
   for the lot if any have unsaved changes; the editor a **find & replace bar**
