@@ -20,6 +20,7 @@
 #include <QFileSystemWatcher>
 #include <QFontDatabase>
 #include <QHBoxLayout>
+#include <QInputDialog>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QLabel>
@@ -296,6 +297,8 @@ DeckEditorWidget::DeckEditorWidget(QWidget* parent)
         auto* bfind = new QPushButton(QStringLiteral("Find / Replace"));
         bfind->setToolTip(QStringLiteral(
             "search this file and replace matches (Ctrl+F finds, Ctrl+H replaces)"));
+        auto* bline = new QPushButton(QStringLiteral("Go to line..."));
+        bline->setToolTip(QStringLiteral("jump to a line number in this file (Ctrl+G / Ctrl+L)"));
         auto* bscan = new QPushButton(QStringLiteral("Rescan structure"));
         row->addWidget(bopen); row->addWidget(bsave); row->addWidget(ball);
         row->addWidget(bclose); row->addWidget(brel);
@@ -312,7 +315,7 @@ DeckEditorWidget::DeckEditorWidget(QWidget* parent)
         row->addWidget(undoBtn_); row->addWidget(redoBtn_);
         row->addWidget(backBtn_); row->addWidget(fwdBtn_);
         row->addWidget(bcom); row->addWidget(bfind);
-        row->addWidget(bscan);
+        row->addWidget(bline); row->addWidget(bscan);
 
         connect(backBtn_, &QPushButton::clicked, this, [this] { goJump(-1); });
         connect(fwdBtn_,  &QPushButton::clicked, this, [this] { goJump(+1); });
@@ -327,6 +330,7 @@ DeckEditorWidget::DeckEditorWidget(QWidget* parent)
                 [this] { reloadTab(tabs_->currentIndex(), false); });
         connect(bcom, &QPushButton::clicked, this, [this] { toggleComment(); });
         connect(bfind, &QPushButton::clicked, this, [this] { showFindBar(true); });
+        connect(bline, &QPushButton::clicked, this, [this] { goToLine(); });
         connect(undoBtn_, &QPushButton::clicked, this, [this] {
             if (auto* ed = editorAt(tabs_->currentIndex())) { ed->undo(); ed->setFocus(); }
         });
@@ -560,6 +564,10 @@ DeckEditorWidget::DeckEditorWidget(QWidget* parent)
         addShortcut(QKeySequence::FindNext, [this] { findNext(false); });     // F3
         addShortcut(QKeySequence::FindPrevious, [this] { findNext(true); });
         addShortcut(QKeySequence(Qt::CTRL | Qt::Key_Slash), [this] { toggleComment(); });
+        // Ctrl+L everywhere (Cmd+L on macOS, where Cmd+G is find next);
+        // Ctrl+G too, unless the platform's find next already took it above.
+        addShortcut(QKeySequence(Qt::CTRL | Qt::Key_L), [this] { goToLine(); });
+        addShortcut(QKeySequence(Qt::CTRL | Qt::Key_G), [this] { goToLine(); });
         auto* esc = new QShortcut(QKeySequence(Qt::Key_Escape), findBar_);
         esc->setContext(Qt::WidgetWithChildrenShortcut);
         connect(esc, &QShortcut::activated, this, [this] { hideFindBar(); });
@@ -790,6 +798,22 @@ void DeckEditorWidget::searchDeckText(const QString& needle)
             .arg(shown).arg(total).arg(files));
     else
         setStatus(QStringLiteral("%1 match(es) in %2 file(s)").arg(total).arg(files));
+}
+
+void DeckEditorWidget::goToLine()
+{
+    auto* ed = editorAt(tabs_->currentIndex());
+    if (!ed) {
+        setStatus(QStringLiteral("no file open - pick a keyword in the tree first"));
+        return;
+    }
+    const int lines = ed->document()->blockCount();
+    bool ok = false;
+    const int line = QInputDialog::getInt(this, QStringLiteral("Go to line"),
+        QStringLiteral("Line in %1 (1-%2):")
+            .arg(QFileInfo(ed->property("filePath").toString()).fileName()).arg(lines),
+        ed->textCursor().blockNumber() + 1, 1, lines, 1, &ok);
+    if (ok) openFile(ed->property("filePath").toString(), line);   // records the jump
 }
 
 void DeckEditorWidget::showFindBar(bool withReplace)

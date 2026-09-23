@@ -164,7 +164,9 @@ results, animate them in 3D, and edit decks — all in one window.
   matching line in the deck and its includes, case-insensitive, grouped
   under the keyword it belongs to (first 500 listed; open tabs are searched
   with their unsaved edits); clicking a hit opens the file with the match
-  selected. Expand/Collapse for the selected
+  selected. **Go to line...** (Ctrl+G, or Ctrl+L / Cmd+L where the
+  platform keeps Ctrl+G for find next) jumps to a line number in the
+  current file, and Back returns from it. Expand/Collapse for the selected
   subtree and Expand all / Collapse all buttons; **Close all** shuts every
   open tab at once (following INCLUDEs leaves a row of them), asking once
   for the lot if any have unsaved changes; the editor a **find & replace bar**

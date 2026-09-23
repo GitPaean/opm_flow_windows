@@ -127,6 +127,7 @@ private:
     // Search every deck file for the needle and list the hits in hitTree_
     // under the keyword each one belongs to.
     void searchDeckText(const QString& needle);
+    void goToLine();
     void showFindBar(bool withReplace);
     void hideFindBar();
     void findNext(bool backward);
