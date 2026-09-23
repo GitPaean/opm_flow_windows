@@ -131,6 +131,7 @@ GridGLWidget::GridGLWidget(QWidget* parent)
     , vboPos_(QOpenGLBuffer::VertexBuffer)
     , vboNrm_(QOpenGLBuffer::VertexBuffer)
     , vboCol_(QOpenGLBuffer::VertexBuffer)
+    , vboWell_(QOpenGLBuffer::VertexBuffer)
 {
     QSurfaceFormat fmt = format();
     fmt.setSamples(4);
@@ -142,7 +143,8 @@ GridGLWidget::GridGLWidget(QWidget* parent)
 GridGLWidget::~GridGLWidget()
 {
     makeCurrent();
-    vboPos_.destroy(); vboNrm_.destroy(); vboCol_.destroy();
+    vboPos_.destroy(); vboNrm_.destroy(); vboCol_.destroy(); vboWell_.destroy();
+    vao_.destroy();
     prog_.reset();
     doneCurrent();
 }
@@ -224,6 +226,16 @@ void GridGLWidget::setCellValues(const std::vector<float>& v, const QString& leg
 void GridGLWidget::setWells(const QVector<WellPath>& wells)
 {
     wells_ = wells;
+    wellPos_.clear();
+    for (const WellPath& w : wells_) {
+        if (w.points.size() < 2) continue;
+        for (const QVector3D& p : w.points) {
+            wellPos_.push_back(p.x());
+            wellPos_.push_back(p.y());
+            wellPos_.push_back(p.z());
+        }
+    }
+    wellDirty_ = true;
     update();
 }
 
@@ -288,10 +300,15 @@ void GridGLWidget::initializeGL()
     // 130" outright - and has no default precision for a float in a fragment
     // shader, so it must be stated. The bodies are already in/out style, which
     // GLSL 1.30 and ES 3.00 both accept, so only the preamble differs.
-    const bool es = context() && context()->isOpenGLES();
+    // macOS only offers modern OpenGL through a core profile (3.2 / GLSL
+    // 1.50), which also requires a vertex array object for every draw.
+    const QOpenGLContext* glContext = context();
+    const bool es = glContext && glContext->isOpenGLES();
     const QString head = es
         ? QStringLiteral("#version 300 es\nprecision highp float;\n")
-        : QStringLiteral("#version 130\n");
+        : glContext && glContext->format().profile() == QSurfaceFormat::CoreProfile
+              ? QStringLiteral("#version 150\n")
+              : QStringLiteral("#version 130\n");
     prog_->addShaderFromSourceCode(QOpenGLShader::Vertex,
                                    head + QLatin1String(kVertBody));
     prog_->addShaderFromSourceCode(QOpenGLShader::Fragment,
@@ -309,7 +326,9 @@ void GridGLWidget::initializeGL()
                               QString::fromLatin1(v ? v : "?"),
                               prog_->log().trimmed());
     }
-    vboPos_.create(); vboNrm_.create(); vboCol_.create();
+    vao_.create();
+    vboPos_.create(); vboNrm_.create(); vboCol_.create(); vboWell_.create();
+    meshDirty_ = colorDirty_ = wellDirty_ = true;
     glReady_ = true;
 }
 
@@ -341,6 +360,10 @@ void GridGLWidget::paintGL()
     glDisable(GL_CULL_FACE);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     if (!prog_ || vertCount_ == 0) return;
+
+    // Required by OpenGL core profiles, including macOS. Keep it bound for
+    // both grid triangles and well lines; QPainter takes over only afterward.
+    vao_.bind();
 
     if (meshDirty_) {
         vboPos_.bind(); vboPos_.allocate(pos_.data(), int(pos_.size() * sizeof(float)));
@@ -379,31 +402,38 @@ void GridGLWidget::paintGL()
     prog_->disableAttributeArray(1);
     prog_->disableAttributeArray(2);
 
-    // wells: immediate small buffers each frame (a handful of polylines)
-    if (!wells_.isEmpty()) {
+    // The well positions change with the report step, not with each repaint.
+    // Upload them once, then draw each path from its range in the same buffer.
+    if (!wellPos_.empty()) {
+        if (wellDirty_) {
+            vboWell_.bind();
+            vboWell_.allocate(wellPos_.data(), int(wellPos_.size() * sizeof(float)));
+            wellDirty_ = false;
+        }
         prog_->setUniformValue("uFlat", true);
         glLineWidth(3.0f);
         glDisable(GL_DEPTH_TEST);       // draw on top so paths stay visible
         prog_->disableAttributeArray(1);
         prog_->disableAttributeArray(2);
         prog_->setAttributeValue(1, QVector3D(0, 0, 1));
-        vboPos_.release();
+        vboWell_.bind();
+        prog_->enableAttributeArray(0);
+        prog_->setAttributeBuffer(0, GL_FLOAT, 0, 3);
+        int first = 0;
         for (const WellPath& w : wells_) {
             if (w.points.size() < 2) continue;
             prog_->setAttributeValue(2, QVector3D(float(w.color.redF()),
                                                   float(w.color.greenF()),
                                                   float(w.color.blueF())));
-            std::vector<float> tmp;
-            tmp.reserve(size_t(w.points.size()) * 3);
-            for (const auto& p : w.points) { tmp.push_back(p.x()); tmp.push_back(p.y()); tmp.push_back(p.z()); }
-            prog_->enableAttributeArray(0);
-            prog_->setAttributeArray(0, GL_FLOAT, tmp.data(), 3);
-            glDrawArrays(GL_LINE_STRIP, 0, w.points.size());
-            prog_->disableAttributeArray(0);
+            glDrawArrays(GL_LINE_STRIP, first, w.points.size());
+            first += w.points.size();
         }
+        prog_->disableAttributeArray(0);
+        vboWell_.release();
         glEnable(GL_DEPTH_TEST);
     }
     prog_->release();
+    vao_.release();
 
     // ---- 2D overlay: legend, step text, well names -------------------------
     QPainter p(this);
