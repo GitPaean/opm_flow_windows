@@ -1388,12 +1388,10 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
         bremove->setPopupMode(QToolButton::MenuButtonPopup);
         bremove->setToolTip(QStringLiteral(
             "remove the selected cases from the list (Ctrl or Shift to pick "
-            "several); the files themselves are untouched"));
+            "several, or Delete); the arrow removes checked, unchecked or all.\n"
+            "The files themselves are untouched"));
         auto* rmMenu = new QMenu(bremove);
-        rmMenu->addAction(QStringLiteral("Remove unchecked"), this,
-                          [this] { removeUncheckedCases(); });
-        rmMenu->addAction(QStringLiteral("Remove all"), this,
-                          [this] { removeAllCases(); });
+        addBulkRemoveActions(rmMenu);
         bremove->setMenu(rmMenu);
         crow->addWidget(bremove);
         ll->addLayout(crow);
@@ -1424,12 +1422,16 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
             QAction* copy = m.addAction(QStringLiteral("Copy path"));
             QAction* copyDir = m.addAction(QStringLiteral("Copy folder"));
             m.addSeparator();
-            QAction* rm = m.addAction(QStringLiteral("Remove"));
+            if (!it->isSelected()) caseList_->setCurrentItem(it);
+            const auto nsel = caseList_->selectedItems().size();
+            QAction* rm = m.addAction(nsel > 1
+                ? QStringLiteral("Remove %1 selected").arg(nsel)
+                : QStringLiteral("Remove"));
+            addBulkRemoveActions(&m);
             const QFileInfo fi(path);
             open->setEnabled(fi.dir().exists());
             QAction* chosen = m.exec(caseList_->viewport()->mapToGlobal(at));
             if (chosen == rm) {
-                if (!it->isSelected()) caseList_->setCurrentItem(it);
                 removeCurrentCase();
             } else if (chosen == open) {
                 QDesktopServices::openUrl(QUrl::fromLocalFile(fi.absolutePath()));
@@ -1470,6 +1472,9 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
         auto* downKey = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_Down), caseList_);
         downKey->setContext(Qt::WidgetShortcut);
         connect(downKey, &QShortcut::activated, this, [this] { moveCase(1); });
+        auto* delKey = new QShortcut(QKeySequence::Delete, caseList_);
+        delKey->setContext(Qt::WidgetShortcut);
+        connect(delKey, &QShortcut::activated, this, [this] { removeCurrentCase(); });
 
         connect(hideZero_, &QCheckBox::toggled, this, [this](bool on) {
             if (on && !zeroScanValid_) {
@@ -2180,13 +2185,24 @@ void SummaryPlotWidget::setCheckedCases(CheckScope scope)
     setStatus(QStringLiteral("%1 of %2 case(s) plotted").arg(on).arg(n));
 }
 
-void SummaryPlotWidget::removeUncheckedCases()
+void SummaryPlotWidget::addBulkRemoveActions(QMenu* menu)
+{
+    menu->addAction(QStringLiteral("Remove checked"), this,
+                    [this] { removeCasesByCheck(true); });
+    menu->addAction(QStringLiteral("Remove unchecked"), this,
+                    [this] { removeCasesByCheck(false); });
+    menu->addAction(QStringLiteral("Remove all"), this,
+                    [this] { removeAllCases(); });
+}
+
+void SummaryPlotWidget::removeCasesByCheck(bool checked)
 {
     QList<int> rows;
     for (int i = 0; i < caseList_->count(); ++i)
-        if (caseList_->item(i)->checkState() != Qt::Checked) rows << i;
+        if ((caseList_->item(i)->checkState() == Qt::Checked) == checked) rows << i;
     if (removeRows(std::move(rows)) == 0)
-        setStatus(QStringLiteral("every case is checked - nothing to remove"));
+        setStatus(checked ? QStringLiteral("no case is checked - nothing to remove")
+                          : QStringLiteral("every case is checked - nothing to remove"));
 }
 
 void SummaryPlotWidget::removeAllCases()

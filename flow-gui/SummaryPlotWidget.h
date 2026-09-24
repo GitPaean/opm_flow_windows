@@ -250,7 +250,8 @@ private:
     static QString caseTip(const QString& smspecPath);
     void refreshCaseTips();     // the written-at line goes stale as runs write
     void removeCurrentCase();
-    void removeUncheckedCases();
+    void removeCasesByCheck(bool checked);
+    void addBulkRemoveActions(QMenu* menu);   // checked / unchecked / all
     void removeAllCases();
     int  removeRows(QList<int> rows);   // the one place a case is taken out
     void clearActiveCase();

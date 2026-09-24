@@ -241,8 +241,10 @@ results, animate them in 3D, and edit decks — all in one window.
 - **Case manager & comparison** — loaded cases appear in a checkable list:
   **checked cases are plotted together** (legend shows `case | vector`
   whenever more than one is checked, so a curve always says which run it is),
-  the highlighted case drives the vector tree, and *Remove* drops a case from
-  the list. A checked case that cannot be read is **named** in the status
+  the highlighted case drives the vector tree, and *Remove* (or Delete) drops
+  the selected cases from the list — Ctrl/Shift-click to pick several; its
+  arrow and the right-click menu also remove the checked, the unchecked or
+  all cases at once. A checked case that cannot be read is **named** in the status
   line and counted in the plot title (`2 of 3 checked cases`) rather than
   quietly missing, and a case that fails to load never leaves the previous
   one on screen under its name. Cases can be **renamed** (*Rename*, double-click or F2) — the
