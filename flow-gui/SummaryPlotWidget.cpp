@@ -4064,6 +4064,16 @@ int SummaryPlotWidget::plotChart(QChart* chart, const QList<int>& sel,
     // widens the range to the next round step and picks a matching tick count.
     auto pad = [yTicks](QValueAxis* a, double lo, double hi) {
         a->setTickCount(yTicks);
+        // Summary vectors are float32, so a rate held by its control wobbles
+        // in the last digits. Scaled to that wobble the axis draws rounding
+        // noise as a sawtooth across the whole plot; spanning at least 0.1%
+        // of the values' size keeps such a curve looking as flat as it is.
+        const double minSpan = 1e-3 * std::max(std::abs(lo), std::abs(hi));
+        if (hi - lo < minSpan) {
+            const double mid = 0.5 * (lo + hi);
+            lo = mid - 0.5 * minSpan;
+            hi = mid + 0.5 * minSpan;
+        }
         if (hi > lo) a->setRange(lo - 0.05 * (hi - lo), hi + 0.05 * (hi - lo));
         else         a->setRange(lo - 1.0, hi + 1.0);
         a->applyNiceNumbers();

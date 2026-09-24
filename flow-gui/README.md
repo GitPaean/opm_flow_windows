@@ -53,7 +53,10 @@ results, animate them in 3D, and edit decks — all in one window.
   axes cross zero their grids are made to match, so there is one zero
   line rather than two at different heights: each axis keeps its own
   tick step and whichever has fewer ticks on one side of zero is
-  extended, which lines up every gridline and cuts off no data; 10 s auto-refresh
+  extended, which lines up every gridline and cuts off no data. A Y axis
+  spans at least 0.1% of its values' size, so a nearly constant curve (a
+  rate held by its control, wobbling in float32's last digits) is drawn
+  flat instead of as noise filling the plot; 10 s auto-refresh
   updates the plot while a simulation is still writing, and the Summary Plots and
   3D tabs re-check their files when a job finishes and when the tab is
   shown (a case is registered as soon as its job starts, before flow has
