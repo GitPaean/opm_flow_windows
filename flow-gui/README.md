@@ -159,7 +159,14 @@ results, animate them in 3D, and edit decks — all in one window.
   starts with every section **collapsed** — eight sections say more than
   the hundreds of keywords under them — and a section you open stays open
   across a rescan. It has a **keyword filter** (matches keyword or file
-  name, hits expanded automatically), Expand/Collapse for the selected
+  name, hits expanded automatically) that switches to a **deck text
+  search**: pick *Text*, type any string and press Enter to list every
+  matching line in the deck and its includes, case-insensitive, grouped
+  under the keyword it belongs to (first 500 listed; open tabs are searched
+  with their unsaved edits); clicking a hit opens the file with the match
+  selected. **Go to line...** (Ctrl+G, or Ctrl+L / Cmd+L where the
+  platform keeps Ctrl+G for find next) jumps to a line number in the
+  current file, and Back returns from it. Expand/Collapse for the selected
   subtree and Expand all / Collapse all buttons; **Close all** shuts every
   open tab at once (following INCLUDEs leaves a row of them), asking once
   for the lot if any have unsaved changes; the editor a **find & replace bar**
@@ -234,8 +241,10 @@ results, animate them in 3D, and edit decks — all in one window.
 - **Case manager & comparison** — loaded cases appear in a checkable list:
   **checked cases are plotted together** (legend shows `case | vector`
   whenever more than one is checked, so a curve always says which run it is),
-  the highlighted case drives the vector tree, and *Remove* drops a case from
-  the list. A checked case that cannot be read is **named** in the status
+  the highlighted case drives the vector tree, and *Remove* (or Delete) drops
+  the selected cases from the list — Ctrl/Shift-click to pick several; its
+  arrow and the right-click menu also remove the checked, the unchecked or
+  all cases at once. A checked case that cannot be read is **named** in the status
   line and counted in the plot title (`2 of 3 checked cases`) rather than
   quietly missing, and a case that fails to load never leaves the previous
   one on screen under its name. Cases can be **renamed** (*Rename*, double-click or F2) — the

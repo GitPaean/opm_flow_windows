@@ -12,6 +12,7 @@
 
 #include <QAction>
 #include <QCheckBox>
+#include <QComboBox>
 #include <QDir>
 #include <QFile>
 #include <QFileDialog>
@@ -19,6 +20,7 @@
 #include <QFileSystemWatcher>
 #include <QFontDatabase>
 #include <QHBoxLayout>
+#include <QInputDialog>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QLabel>
@@ -34,12 +36,15 @@
 #include <QSet>
 #include <QShortcut>
 #include <QSplitter>
+#include <QStringTokenizer>
 #include <QTabWidget>
 #include <QTextBlock>
 #include <QTextEdit>
 #include <QTreeWidget>
 #include <QVBoxLayout>
 
+#include <algorithm>
+#include <functional>
 #include <memory>
 
 namespace {
@@ -62,6 +67,8 @@ const QRegularExpression kKeywordRe(QStringLiteral(
 // roles on tree items
 constexpr int RoleFile = Qt::UserRole;
 constexpr int RoleLine = Qt::UserRole + 1;
+constexpr int RoleColumn = Qt::UserRole + 2;   // text search hit: match start
+constexpr int RoleLength = Qt::UserRole + 3;   // and its length
 
 // Tree filter: an item stays visible if it or any descendant matches the
 // needle (keyword or location column, case-insensitive); ancestors of a
@@ -290,6 +297,8 @@ DeckEditorWidget::DeckEditorWidget(QWidget* parent)
         auto* bfind = new QPushButton(QStringLiteral("Find / Replace"));
         bfind->setToolTip(QStringLiteral(
             "search this file and replace matches (Ctrl+F finds, Ctrl+H replaces)"));
+        auto* bline = new QPushButton(QStringLiteral("Go to line..."));
+        bline->setToolTip(QStringLiteral("jump to a line number in this file (Ctrl+G / Ctrl+L)"));
         auto* bscan = new QPushButton(QStringLiteral("Rescan structure"));
         row->addWidget(bopen); row->addWidget(bsave); row->addWidget(ball);
         row->addWidget(bclose); row->addWidget(brel);
@@ -306,7 +315,7 @@ DeckEditorWidget::DeckEditorWidget(QWidget* parent)
         row->addWidget(undoBtn_); row->addWidget(redoBtn_);
         row->addWidget(backBtn_); row->addWidget(fwdBtn_);
         row->addWidget(bcom); row->addWidget(bfind);
-        row->addWidget(bscan);
+        row->addWidget(bline); row->addWidget(bscan);
 
         connect(backBtn_, &QPushButton::clicked, this, [this] { goJump(-1); });
         connect(fwdBtn_,  &QPushButton::clicked, this, [this] { goJump(+1); });
@@ -321,6 +330,7 @@ DeckEditorWidget::DeckEditorWidget(QWidget* parent)
                 [this] { reloadTab(tabs_->currentIndex(), false); });
         connect(bcom, &QPushButton::clicked, this, [this] { toggleComment(); });
         connect(bfind, &QPushButton::clicked, this, [this] { showFindBar(true); });
+        connect(bline, &QPushButton::clicked, this, [this] { goToLine(); });
         connect(undoBtn_, &QPushButton::clicked, this, [this] {
             if (auto* ed = editorAt(tabs_->currentIndex())) { ed->undo(); ed->setFocus(); }
         });
@@ -350,14 +360,23 @@ DeckEditorWidget::DeckEditorWidget(QWidget* parent)
 
     auto* split = new QSplitter;
     {
-        // Left pane: keyword filter + expand/collapse over the structure tree.
+        // Left pane: keyword filter or deck text search, plus expand/collapse
+        // over the structure tree (or the search hits).
         auto* left = new QWidget;
         auto* ll = new QVBoxLayout(left);
         ll->setContentsMargins(0, 0, 0, 0);
+        auto* frow = new QHBoxLayout;
+        treeMode_ = new QComboBox;
+        treeMode_->addItems({ QStringLiteral("Keywords"), QStringLiteral("Text") });
+        treeMode_->setToolTip(QStringLiteral(
+            "Keywords: filter the tree by keyword name as you type\n"
+            "Text: search the text of every deck file (press Enter)"));
         treeFilter_ = new QLineEdit;
         treeFilter_->setPlaceholderText(QStringLiteral("filter keywords..."));
         treeFilter_->setClearButtonEnabled(true);
-        ll->addWidget(treeFilter_);
+        frow->addWidget(treeMode_);
+        frow->addWidget(treeFilter_, 1);
+        ll->addLayout(frow);
 
         auto* brow = new QHBoxLayout;
         auto* bexp    = new QPushButton(QStringLiteral("Expand"));
@@ -375,20 +394,50 @@ DeckEditorWidget::DeckEditorWidget(QWidget* parent)
         tree_->setHeaderLabels({ QStringLiteral("Section / keyword"), QStringLiteral("Location") });
         tree_->setColumnWidth(0, 240);
         ll->addWidget(tree_, 1);
+        hitTree_ = new QTreeWidget;
+        hitTree_->setHeaderLabels({ QStringLiteral("Section / keyword / match"),
+                                    QStringLiteral("Location") });
+        hitTree_->setColumnWidth(0, 240);
+        hitTree_->hide();
+        ll->addWidget(hitTree_, 1);
         split->addWidget(left);
 
         connect(bexp, &QPushButton::clicked, this, [this] {
-            if (auto* it = tree_->currentItem()) setExpandedRecursively(it, true);
+            if (auto* it = shownTree()->currentItem()) setExpandedRecursively(it, true);
             else setStatus(QStringLiteral("select a section or include first (or use Expand all)"));
         });
         connect(bcol, &QPushButton::clicked, this, [this] {
-            if (auto* it = tree_->currentItem()) setExpandedRecursively(it, false);
+            if (auto* it = shownTree()->currentItem()) setExpandedRecursively(it, false);
             else setStatus(QStringLiteral("select a section or include first (or use Collapse all)"));
         });
-        connect(bexpAll, &QPushButton::clicked, tree_, &QTreeWidget::expandAll);
-        connect(bcolAll, &QPushButton::clicked, tree_, &QTreeWidget::collapseAll);
-        connect(treeFilter_, &QLineEdit::textChanged, this,
-                [this](const QString& t) { filterTree(t.trimmed()); });
+        connect(bexpAll, &QPushButton::clicked, this, [this] { shownTree()->expandAll(); });
+        connect(bcolAll, &QPushButton::clicked, this, [this] { shownTree()->collapseAll(); });
+        // Keywords filter live. Text waits for Enter: a deck's includes can run
+        // to millions of lines, too many to read again on every keystroke.
+        connect(treeFilter_, &QLineEdit::textChanged, this, [this](const QString& t) {
+            if (!textMode()) filterTree(t.trimmed());
+            else if (t.trimmed().isEmpty()) hitTree_->clear();
+        });
+        connect(treeFilter_, &QLineEdit::returnPressed, this, [this] {
+            if (textMode()) searchDeckText(treeFilter_->text().trimmed());
+        });
+        connect(treeMode_, &QComboBox::currentIndexChanged, this, [this] {
+            const bool text = textMode();
+            treeFilter_->setPlaceholderText(text
+                ? QStringLiteral("search deck text, press Enter...")
+                : QStringLiteral("filter keywords..."));
+            tree_->setVisible(!text);
+            hitTree_->setVisible(text);
+            const QString needle = treeFilter_->text().trimmed();
+            if (text) {
+                filterTree(QString());
+                if (!needle.isEmpty()) searchDeckText(needle);
+            } else {
+                hitTree_->clear();
+                filterTree(needle);
+            }
+            treeFilter_->setFocus();
+        });
     }
     tabs_ = new QTabWidget;
     tabs_->setTabsClosable(true);
@@ -515,6 +564,10 @@ DeckEditorWidget::DeckEditorWidget(QWidget* parent)
         addShortcut(QKeySequence::FindNext, [this] { findNext(false); });     // F3
         addShortcut(QKeySequence::FindPrevious, [this] { findNext(true); });
         addShortcut(QKeySequence(Qt::CTRL | Qt::Key_Slash), [this] { toggleComment(); });
+        // Ctrl+L everywhere (Cmd+L on macOS, where Cmd+G is find next);
+        // Ctrl+G too, unless the platform's find next already took it above.
+        addShortcut(QKeySequence(Qt::CTRL | Qt::Key_L), [this] { goToLine(); });
+        addShortcut(QKeySequence(Qt::CTRL | Qt::Key_G), [this] { goToLine(); });
         auto* esc = new QShortcut(QKeySequence(Qt::Key_Escape), findBar_);
         esc->setContext(Qt::WidgetWithChildrenShortcut);
         connect(esc, &QShortcut::activated, this, [this] { hideFindBar(); });
@@ -540,6 +593,25 @@ DeckEditorWidget::DeckEditorWidget(QWidget* parent)
             [this](QTreeWidgetItem* it, int) {
         const QString f = it->data(0, RoleFile).toString();
         if (!f.isEmpty()) openFile(f, it->data(0, RoleLine).toInt());
+    });
+    connect(hitTree_, &QTreeWidget::itemActivated, this,
+            [this](QTreeWidgetItem* it, int) {
+        const QString f = it->data(0, RoleFile).toString();
+        const int line = it->data(0, RoleLine).toInt();
+        if (f.isEmpty()) return;
+        openFile(f, line);
+        // On a hit line, select the match itself so it stands out.
+        const QVariant colData = it->data(0, RoleColumn);
+        auto* ed = editorAt(tabs_->currentIndex());
+        if (!ed || !colData.isValid()) return;
+        const int col = colData.toInt();
+        const int len = it->data(0, RoleLength).toInt();
+        const QTextBlock b = ed->document()->findBlockByNumber(line - 1);
+        if (!b.isValid() || col + len > b.length()) return;
+        QTextCursor c(b);
+        c.setPosition(b.position() + col);
+        c.setPosition(b.position() + col + len, QTextCursor::KeepAnchor);
+        ed->setTextCursor(c);
     });
     connect(tabs_, &QTabWidget::tabCloseRequested, this, [this](int i) { closeTab(i); });
 }
@@ -611,6 +683,137 @@ void DeckEditorWidget::filterTree(const QString& needle)
 {
     for (int i = 0; i < tree_->topLevelItemCount(); ++i)
         filterItem(tree_->topLevelItem(i), needle);
+}
+
+bool DeckEditorWidget::textMode() const
+{
+    return treeMode_ && treeMode_->currentIndex() == 1;
+}
+
+QTreeWidget* DeckEditorWidget::shownTree() const
+{
+    return textMode() ? hitTree_ : tree_;
+}
+
+void DeckEditorWidget::searchDeckText(const QString& needle)
+{
+    hitTree_->clear();
+    if (needle.isEmpty()) return;
+    if (deckFiles_.isEmpty()) {
+        setStatus(QStringLiteral("no deck scanned - open a .DATA file first"));
+        return;
+    }
+
+    // Each hit belongs to the last keyword above it in its file. An INCLUDE
+    // item points at line 1 of the file it pulls in, so hits ahead of that
+    // file's first keyword land under the INCLUDE.
+    struct Anchor { int line; QTreeWidgetItem* item; };
+    QHash<QString, QVector<Anchor>> anchors;
+    std::function<void(QTreeWidgetItem*)> collect = [&](QTreeWidgetItem* it) {
+        const QString f = it->data(0, RoleFile).toString();
+        if (!f.isEmpty())
+            anchors[QFileInfo(f).canonicalFilePath()].push_back(
+                { it->data(0, RoleLine).toInt(), it });
+        for (int i = 0; i < it->childCount(); ++i) collect(it->child(i));
+    };
+    for (int i = 0; i < tree_->topLevelItemCount(); ++i) collect(tree_->topLevelItem(i));
+    for (auto& v : anchors)
+        std::stable_sort(v.begin(), v.end(),
+                         [](const Anchor& a, const Anchor& b) { return a.line < b.line; });
+
+    // The hit list mirrors the structure tree, built only along the paths
+    // that lead to a hit. Files are searched one after another, not in deck
+    // order, so each mirrored item is slotted in where it sits in the tree:
+    // hits first, in line order, then the keywords below, in deck order.
+    QHash<QTreeWidgetItem*, QTreeWidgetItem*> mirror{
+        { tree_->invisibleRootItem(), hitTree_->invisibleRootItem() } };
+    QHash<QTreeWidgetItem*, int> srcIndex;   // mirror -> index in its source parent
+    const auto isHit = [](QTreeWidgetItem* it) { return it->data(0, RoleColumn).isValid(); };
+    std::function<QTreeWidgetItem*(QTreeWidgetItem*)> mirrorOf =
+        [&](QTreeWidgetItem* src) -> QTreeWidgetItem* {
+        if (auto* m = mirror.value(src)) return m;
+        QTreeWidgetItem* srcParent = src->parent() ? src->parent() : tree_->invisibleRootItem();
+        QTreeWidgetItem* parent = mirrorOf(srcParent);
+        const int idx = srcParent->indexOfChild(src);
+        int at = 0;
+        while (at < parent->childCount()
+               && (isHit(parent->child(at)) || srcIndex.value(parent->child(at)) < idx))
+            ++at;
+        auto* m = new QTreeWidgetItem({ src->text(0), src->text(1) });
+        parent->insertChild(at, m);
+        m->setData(0, RoleFile, src->data(0, RoleFile));
+        m->setData(0, RoleLine, src->data(0, RoleLine));
+        m->setExpanded(true);
+        mirror.insert(src, m);
+        srcIndex.insert(m, idx);
+        return m;
+    };
+
+    constexpr int cap = 500;   // listed; the rest are only counted
+    int total = 0, shown = 0, files = 0;
+    for (const QString& path : deckFiles_) {
+        // An open tab is searched as it stands, unsaved edits included, so
+        // the hits match what is on screen.
+        QString text;
+        if (const int tab = tabForPath(path); tab >= 0) {
+            text = editorAt(tab)->toPlainText();
+        } else {
+            QFile f(path);
+            if (!f.open(QIODevice::ReadOnly)) continue;
+            text = QString::fromLatin1(f.readAll());
+        }
+        const QString fname = QFileInfo(path).fileName();
+        const QVector<Anchor> fileAnchors = anchors.value(path);
+        bool hitHere = false;
+        int lineNo = 0;
+        for (const QStringView line : QStringTokenizer(text, u'\n')) {
+            ++lineNo;
+            const qsizetype col = line.indexOf(needle, 0, Qt::CaseInsensitive);
+            if (col < 0) continue;
+            hitHere = true;
+            if (++total > cap) continue;
+            ++shown;
+            const auto a = std::upper_bound(fileAnchors.begin(), fileAnchors.end(), lineNo,
+                [](int l, const Anchor& x) { return l < x.line; });
+            QTreeWidgetItem* parent = mirrorOf(a == fileAnchors.begin()
+                ? tree_->invisibleRootItem() : std::prev(a)->item);
+            int at = 0;
+            while (at < parent->childCount() && isHit(parent->child(at))) ++at;
+            auto* hit = new QTreeWidgetItem({ QStringLiteral("%1: %2").arg(lineNo)
+                                                  .arg(line.trimmed().toString()),
+                                              QStringLiteral("%1:%2").arg(fname).arg(lineNo) });
+            parent->insertChild(at, hit);
+            hit->setData(0, RoleFile, path);
+            hit->setData(0, RoleLine, lineNo);
+            hit->setData(0, RoleColumn, int(col));
+            hit->setData(0, RoleLength, int(needle.size()));
+            hit->setToolTip(0, line.toString());
+        }
+        files += hitHere;
+    }
+    if (total == 0)
+        setStatus(QStringLiteral("\"%1\" not found in the deck").arg(needle));
+    else if (total > shown)
+        setStatus(QStringLiteral("showing %1 of %2 matches in %3 file(s)")
+            .arg(shown).arg(total).arg(files));
+    else
+        setStatus(QStringLiteral("%1 match(es) in %2 file(s)").arg(total).arg(files));
+}
+
+void DeckEditorWidget::goToLine()
+{
+    auto* ed = editorAt(tabs_->currentIndex());
+    if (!ed) {
+        setStatus(QStringLiteral("no file open - pick a keyword in the tree first"));
+        return;
+    }
+    const int lines = ed->document()->blockCount();
+    bool ok = false;
+    const int line = QInputDialog::getInt(this, QStringLiteral("Go to line"),
+        QStringLiteral("Line in %1 (1-%2):")
+            .arg(QFileInfo(ed->property("filePath").toString()).fileName()).arg(lines),
+        ed->textCursor().blockNumber() + 1, 1, lines, 1, &ok);
+    if (ok) openFile(ed->property("filePath").toString(), line);   // records the jump
 }
 
 void DeckEditorWidget::showFindBar(bool withReplace)
@@ -1287,8 +1490,10 @@ void DeckEditorWidget::scanDeck()
     QString section = QStringLiteral("(preamble)");
     int fileBudget = 128;                    // safety cap on include fan-out
     scanFile(rootDeck_, nullptr, nullptr, section, 0, fileBudget);
-    if (treeFilter_ && !treeFilter_->text().trimmed().isEmpty())
-        filterTree(treeFilter_->text().trimmed());
+    if (treeFilter_ && !treeFilter_->text().trimmed().isEmpty()) {
+        if (textMode()) searchDeckText(treeFilter_->text().trimmed());
+        else            filterTree(treeFilter_->text().trimmed());
+    }
     setStatus(QStringLiteral("%1: structure scanned (%2 sections)")
         .arg(QFileInfo(rootDeck_).fileName())
         .arg(tree_->topLevelItemCount()));

@@ -17,6 +17,7 @@
 #include <QWidget>
 
 class QCheckBox;
+class QComboBox;
 class QFileSystemWatcher;
 class QJsonObject;
 class QLabel;
@@ -84,6 +85,8 @@ public:
 private:
     QTreeWidget* tree_       = nullptr;
     QLineEdit*   treeFilter_ = nullptr;   // filters the structure tree
+    QComboBox*   treeMode_   = nullptr;   // keyword filter or deck text search
+    QTreeWidget* hitTree_    = nullptr;   // text search hits, by keyword
     QTabWidget*  tabs_       = nullptr;
     QLabel*      status_     = nullptr;
     QWidget*     findBar_    = nullptr;   // Ctrl+F in-editor search
@@ -119,6 +122,12 @@ private:
     QSet<QString> expandedSections_;
 
     void filterTree(const QString& needle);
+    bool textMode() const;
+    QTreeWidget* shownTree() const;
+    // Search every deck file for the needle and list the hits in hitTree_
+    // under the keyword each one belongs to.
+    void searchDeckText(const QString& needle);
+    void goToLine();
     void showFindBar(bool withReplace);
     void hideFindBar();
     void findNext(bool backward);
