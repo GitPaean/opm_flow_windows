@@ -135,6 +135,15 @@ bool isCellField(const std::string& name, Opm::EclIO::eclArrType t,
 
 QString dstr(const QDateTime& d) { return d.toString(QStringLiteral("yyyy-MM-dd")); }
 
+QString stampOf(const QDateTime& d, bool clock)
+{
+    return clock ? d.toString(QStringLiteral("yyyy-MM-dd hh:mm")) : dstr(d);
+}
+
+// Pore volume counts as spread over the field while the equivalent number of
+// equally weighted cells, (sum w)^2 / sum w^2, is at least this share of them.
+constexpr double kMinPorvSpread = 0.1;
+
 } // namespace
 
 namespace flowgui {
@@ -234,6 +243,11 @@ QString relText(double rel)
                        : QStringLiteral("%1%").arg(pct, 0, 'g', 3);
 }
 
+QString CompareResult::stamp(const QDateTime& d) const
+{
+    return stampOf(d, intraday);
+}
+
 bool CompareResult::sameEnd() const
 {
     return endA.isValid() && endB.isValid() && endA == endB;
@@ -256,7 +270,7 @@ QString CompareResult::verdict() const
     // A run that stopped early is the headline, not whatever it disagreed
     // about on the way there: the two are not the same experiment.
     if (!sameEnd() && endA.isValid() && endB.isValid())
-        bits << QStringLiteral("A ends %1, B ends %2").arg(dstr(endA), dstr(endB));
+        bits << QStringLiteral("A ends %1, B ends %2").arg(stamp(endA), stamp(endB));
 
     if (identical()) {
         bits.prepend(QStringLiteral("identical over %1 report date(s), %2 propert(y/ies)")
@@ -274,7 +288,7 @@ QString CompareResult::verdict() const
         }
     }
     if (first.isValid())
-        bits.prepend(QStringLiteral("first differs %1 in %2").arg(dstr(first), firstKw));
+        bits.prepend(QStringLiteral("first differs %1 in %2").arg(stamp(first), firstKw));
     if (bad > 0)
         bits << QStringLiteral("%1 cell value(s) outside tolerance").arg(bad);
     if (!timesOnlyInA.isEmpty() || !timesOnlyInB.isEmpty())
@@ -349,6 +363,14 @@ CompareResult compareRestarts(const QString& smspecA, const QString& smspecB,
     }
     for (auto it = byDateB.constBegin(); it != byDateB.constEnd(); ++it)
         if (!byDateA.contains(it.key())) r.timesOnlyInB << it.key();
+    {
+        QList<QDateTime> all = byDateA.keys() + byDateB.keys();
+        std::sort(all.begin(), all.end());
+        all.erase(std::unique(all.begin(), all.end()), all.end());
+        r.intraday = std::adjacent_find(all.begin(), all.end(),
+            [](const QDateTime& x, const QDateTime& y) { return x.date() == y.date(); })
+            != all.end();
+    }
     if (r.times.isEmpty()) {
         r.problem = QStringLiteral(
             "no report date in common - A covers %1 to %2, B covers %3 to %4. "
@@ -390,15 +412,24 @@ CompareResult compareRestarts(const QString& smspecA, const QString& smspecB,
     }
 
     // --- weights ------------------------------------------------------------
+    // When a few cells hold nearly all the pore volume (a source/sink cell, a
+    // numerical aquifer) the weighted mean is theirs alone and blind to the
+    // rest of the grid, so the plain mean is used instead.
     const std::vector<double> porv = loadPorv(baseA, nActA);
-    double porvSum = 0.0;
-    for (double v : porv) porvSum += v;
-    r.porvWeighted = !porv.empty() && porvSum > 0.0;
+    double porvSum = 0.0, porvSq = 0.0;
+    for (double v : porv) { porvSum += v; porvSq += v * v; }
+    const double porvCells = porvSq > 0.0 ? porvSum * porvSum / porvSq : 0.0;
+    const bool porvSpread = porvCells >= kMinPorvSpread * double(porv.size());
+    r.porvWeighted = !porv.empty() && porvSum > 0.0 && porvSpread;
     r.nActive = int(nActA);
+    const QString how = r.porvWeighted ? QStringLiteral("pore-volume weighted")
+        : porv.empty() || porvSum <= 0.0
+            ? QStringLiteral("unweighted - no PORV found")
+            : QStringLiteral("unweighted - the pore volume sits in effectively %1 "
+                             "of %2 cells").arg(std::max(1.0, std::round(porvCells)))
+                                          .arg(nActA);
     r.gridNote = QStringLiteral("grid %1, %2 active cells, field averages %3")
-                     .arg(dimA.isEmpty() ? QStringLiteral("?") : dimA).arg(nActA)
-                     .arg(r.porvWeighted ? QStringLiteral("pore-volume weighted")
-                                         : QStringLiteral("unweighted - no PORV found"));
+                     .arg(dimA.isEmpty() ? QStringLiteral("?") : dimA).arg(nActA).arg(how);
 
     // --- property alignment -------------------------------------------------
     QStringList kwA, kwB;
@@ -467,6 +498,7 @@ CompareResult compareRestarts(const QString& smspecA, const QString& smspecB,
             }
             if (sd.nBad > 0 && !kd.firstBad.isValid()) kd.firstBad = when;
             kd.totalBad += sd.nBad;
+            kd.maxBad = std::max(kd.maxBad, sd.nBad);
             kd.maxAbsOverall = std::max(kd.maxAbsOverall, sd.maxAbs);
             kd.maxRelOverall = std::max(kd.maxRelOverall, sd.maxRel);
             kd.steps.push_back(sd);
@@ -505,25 +537,26 @@ QString overviewMetricName(int metric)
 
 // How far apart the runs are, said plainly. A shape can only show that
 // something moved; this says whether it moved by anything worth reading.
+// Labelled as the averages' gap: averages can agree where cells do not.
 QString gapText(double rel)
 {
-    if (rel < 0.0)     return QStringLiteral("gap n/a");
-    if (rel == 0.0)    return QStringLiteral("identical");
+    if (rel < 0.0)     return QStringLiteral("avg gap n/a");
+    if (rel == 0.0)    return QStringLiteral("avg identical");
     const double pct = rel * 100.0;
-    if (pct < 0.01)    return QStringLiteral("gap < 0.01%");
-    return QStringLiteral("gap %1%").arg(pct, 0, 'g', 2);
+    if (pct < 0.01)    return QStringLiteral("avg gap < 0.01%");
+    return QStringLiteral("avg gap %1%").arg(pct, 0, 'g', 2);
 }
 
 QString PropertyPlots::stampFormat(bool full) const
 {
-    if (!r_ || r_->times.size() < 2)
-        return full ? QStringLiteral("yyyy-MM-dd") : QStringLiteral("yyyy-MM");
-    const qint64 s = r_->times.first().secsTo(r_->times.last());
-    if (s < 86400)
-        return full ? QStringLiteral("yyyy-MM-dd HH:mm") : QStringLiteral("HH:mm");
-    if (s < 86400 * 60)
-        return full ? QStringLiteral("yyyy-MM-dd") : QStringLiteral("MM-dd");
-    return full ? QStringLiteral("yyyy-MM-dd") : QStringLiteral("yyyy-MM");
+    const bool clock = r_ && r_->intraday;
+    if (full) return clock ? QStringLiteral("yyyy-MM-dd hh:mm") : QStringLiteral("yyyy-MM-dd");
+    if (!r_ || r_->times.size() < 2) return QStringLiteral("yyyy-MM");
+    // The clock alone reads a run from 00:14 on one day to 00:00 on the next
+    // as running backwards, so the day stays on.
+    if (r_->times.first().secsTo(r_->times.last()) < 86400 * 60)
+        return clock ? QStringLiteral("MM-dd hh:mm") : QStringLiteral("MM-dd");
+    return QStringLiteral("yyyy-MM");
 }
 
 double PropertyPlots::aOf(int row, int col) const
@@ -1043,12 +1076,15 @@ RestartComparePanel::RestartComparePanel(QWidget* parent)
     views_->addTab(cellView_, QStringLiteral("Cell values"));
     views_->addTab(histView_, QStringLiteral("Cell history"));
 
+    // Each figure is the worst over the dates, as in the detail's columns.
     table_ = new QTableWidget(0, 5);
     table_->setHorizontalHeaderLabels({ QStringLiteral("Property"),
                                         QStringLiteral("First differs"),
-                                        QStringLiteral("Cells outside tol"),
+                                        QStringLiteral("max cells outside tol"),
                                         QStringLiteral("max |A-B|"),
                                         QStringLiteral("max rel") });
+    table_->horizontalHeaderItem(2)->setToolTip(QStringLiteral(
+        "the most cells outside tolerance at any one report date"));
     table_->horizontalHeader()->setStretchLastSection(true);
     table_->setEditTriggers(QAbstractItemView::NoEditTriggers);
     table_->setSelectionBehavior(QAbstractItemView::SelectRows);
@@ -1186,7 +1222,7 @@ void RestartComparePanel::pickFromHeatmap(const QString& keyword, const QDateTim
     for (int i = 0; i < result_.keywords.size(); ++i)
         if (result_.keywords[i].keyword == keyword) { table_->selectRow(i); break; }
     detailMode_->setCurrentIndex(1);          // all properties at that date
-    const int at = detailPick_->findText(when.toString(QStringLiteral("yyyy-MM-dd")));
+    const int at = detailPick_->findData(when);
     if (at >= 0) detailPick_->setCurrentIndex(at);
     refreshDetail();
     // ... and aim the cell-values view at the same property and date, so
@@ -1800,15 +1836,14 @@ void RestartComparePanel::syncCombos()
         if (row >= 0 && row < result_.keywords.size()) detailPick_->setCurrentIndex(row);
     } else {
         for (const QDateTime& t : result_.times)
-            detailPick_->addItem(t.toString(QStringLiteral("yyyy-MM-dd")));
+            detailPick_->addItem(result_.stamp(t), t);
         // Open on the date the verdict named, which is the one being asked
         // about far more often than the first.
         QDateTime first;
         for (const auto& k : result_.keywords)
             if (k.firstBad.isValid() && (!first.isValid() || k.firstBad < first))
                 first = k.firstBad;
-        const int at = first.isValid()
-            ? detailPick_->findText(first.toString(QStringLiteral("yyyy-MM-dd"))) : -1;
+        const int at = first.isValid() ? detailPick_->findData(first) : -1;
         if (at >= 0) detailPick_->setCurrentIndex(at);
     }
     refreshDetail();
@@ -1821,8 +1856,7 @@ void RestartComparePanel::refreshDetail()
     detailInfo_->clear();
     if (!result_.ran || detailPick_->currentIndex() < 0) return;
     if (detailMode_->currentIndex() == 0) showKeywordDetail(detailPick_->currentText());
-    else                                  showStepDetail(
-        QDateTime::fromString(detailPick_->currentText(), QStringLiteral("yyyy-MM-dd")));
+    else                                  showStepDetail(detailPick_->currentData().toDateTime());
 }
 
 // Every report step of one property: where it holds and where it gives way.
@@ -1844,8 +1878,7 @@ void RestartComparePanel::showKeywordDetail(const QString& keyword)
     for (const auto& sd : kd->steps) {
         const int row = detail_->rowCount();
         detail_->insertRow(row);
-        detail_->setItem(row, 0, new QTableWidgetItem(
-            sd.when.toString(QStringLiteral("yyyy-MM-dd"))));
+        detail_->setItem(row, 0, new QTableWidgetItem(result_.stamp(sd.when)));
         detail_->setItem(row, 1, new QTableWidgetItem(
             QStringLiteral("%1 / %2").arg(sd.seqA).arg(sd.seqB)));
         detail_->setItem(row, 2, new QTableWidgetItem(QString::number(sd.nBad)));
@@ -1853,7 +1886,7 @@ void RestartComparePanel::showKeywordDetail(const QString& keyword)
         detail_->setItem(row, 4, new QTableWidgetItem(relText(sd.maxRel)));
         detail_->setItem(row, 5, new QTableWidgetItem(QStringLiteral("%1").arg(sd.rms, 0, 'g', 6)));
         detail_->setItem(row, 6, new QTableWidgetItem(
-            sd.worstCell < 0 ? QStringLiteral("-") : QString::number(sd.worstCell)));
+            sd.worstCell < 0 ? QStringLiteral("-") : QString::number(sd.worstCell + 1)));
         detail_->setItem(row, 7, new QTableWidgetItem(
             sd.worstCell < 0 ? QStringLiteral("-")
                              : QStringLiteral("%1  /  %2").arg(sd.aWorst, 0, 'g', 8)
@@ -1867,8 +1900,7 @@ void RestartComparePanel::showKeywordDetail(const QString& keyword)
     detail_->resizeColumnsToContents();
     detailInfo_->setText(kd->clean()
         ? QStringLiteral("%1 agrees at every date").arg(keyword)
-        : QStringLiteral("%1 first differs %2").arg(keyword,
-              kd->firstBad.toString(QStringLiteral("yyyy-MM-dd"))));
+        : QStringLiteral("%1 first differs %2").arg(keyword, result_.stamp(kd->firstBad)));
 }
 
 // Every property at one report step: what else went wrong where this did.
@@ -1887,7 +1919,7 @@ void RestartComparePanel::showStepDetail(const QDateTime& when)
     for (const auto& k : result_.keywords) {
         const StepDiff* sd = nullptr;
         for (const auto& s : k.steps)
-            if (s.when.date() == when.date()) { sd = &s; break; }
+            if (s.when == when) { sd = &s; break; }
         if (!sd) continue;
         const int row = detail_->rowCount();
         detail_->insertRow(row);
@@ -1897,7 +1929,7 @@ void RestartComparePanel::showStepDetail(const QDateTime& when)
         detail_->setItem(row, 3, new QTableWidgetItem(relText(sd->maxRel)));
         detail_->setItem(row, 4, new QTableWidgetItem(QStringLiteral("%1").arg(sd->rms, 0, 'g', 6)));
         detail_->setItem(row, 5, new QTableWidgetItem(
-            sd->worstCell < 0 ? QStringLiteral("-") : QString::number(sd->worstCell)));
+            sd->worstCell < 0 ? QStringLiteral("-") : QString::number(sd->worstCell + 1)));
         detail_->setItem(row, 6, new QTableWidgetItem(
             sd->worstCell < 0 ? QStringLiteral("-")
                               : QStringLiteral("%1  /  %2").arg(sd->aWorst, 0, 'g', 8)
@@ -1913,9 +1945,8 @@ void RestartComparePanel::showStepDetail(const QDateTime& when)
     detail_->resizeColumnsToContents();
     detailInfo_->setText(differing
         ? QStringLiteral("%1: %2 propert(y/ies) outside tolerance")
-              .arg(when.toString(QStringLiteral("yyyy-MM-dd"))).arg(differing)
-        : QStringLiteral("%1: every property within tolerance")
-              .arg(when.toString(QStringLiteral("yyyy-MM-dd"))));
+              .arg(result_.stamp(when)).arg(differing)
+        : QStringLiteral("%1: every property within tolerance").arg(result_.stamp(when)));
 }
 
 void RestartComparePanel::startCompare()
@@ -1967,8 +1998,8 @@ void RestartComparePanel::showResult()
     if (!result_.times.isEmpty())
         notes << QStringLiteral("%1 common report date(s), %2 to %3")
                      .arg(result_.times.size())
-                     .arg(result_.times.first().toString(QStringLiteral("yyyy-MM-dd")),
-                          result_.times.last().toString(QStringLiteral("yyyy-MM-dd")));
+                     .arg(result_.stamp(result_.times.first()),
+                          result_.stamp(result_.times.last()));
     auto listNote = [&notes](const QString& what, const QStringList& v) {
         if (v.isEmpty()) return;
         notes << QStringLiteral("%1: %2").arg(what,
@@ -1996,9 +2027,8 @@ void RestartComparePanel::showResult()
         table_->insertRow(row);
         table_->setItem(row, 0, new QTableWidgetItem(k.keyword));
         table_->setItem(row, 1, new QTableWidgetItem(
-            k.firstBad.isValid() ? k.firstBad.toString(QStringLiteral("yyyy-MM-dd"))
-                                 : QStringLiteral("-")));
-        table_->setItem(row, 2, new QTableWidgetItem(QString::number(k.totalBad)));
+            k.firstBad.isValid() ? result_.stamp(k.firstBad) : QStringLiteral("-")));
+        table_->setItem(row, 2, new QTableWidgetItem(QString::number(k.maxBad)));
         table_->setItem(row, 3, new QTableWidgetItem(
             QStringLiteral("%1").arg(k.maxAbsOverall, 0, 'g', 4)));
         table_->setItem(row, 4, new QTableWidgetItem(relText(k.maxRelOverall)));

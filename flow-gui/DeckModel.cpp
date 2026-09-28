@@ -62,6 +62,8 @@
 #include <opm/input/eclipse/Units/UnitSystem.hpp>
 
 #include <algorithm>
+#include <chrono>
+#include <ctime>
 #include <exception>
 #include <functional>
 #include <memory>
@@ -214,12 +216,22 @@ Opm::ParseContext relaxedContext()
     });
 }
 
+// Schedule::simTime() returned a time_t before opm-common moved it to a
+// time_point; take either, so older installs still build.
+qint64 epochSeconds(std::time_t t) { return qint64(t); }
+
+template <class Clock, class Dur>
+qint64 epochSeconds(std::chrono::time_point<Clock, Dur> t)
+{
+    return std::chrono::duration_cast<std::chrono::seconds>(t.time_since_epoch()).count();
+}
+
 Structure snapshotAt(const Opm::Schedule& sched, std::size_t step,
                      const Opm::UnitSystem& units)
 {
     Structure s;
     s.step = int(step);
-    s.when = QDateTime::fromSecsSinceEpoch(qint64(sched.simTime(step)), QTimeZone::utc());
+    s.when = QDateTime::fromSecsSinceEpoch(epochSeconds(sched.simTime(step)), QTimeZone::utc());
 
     const auto& st = sched[step];
     for (const auto& name : sched.groupNames(step)) {

@@ -95,7 +95,9 @@ struct StepDiff {
     // The quantity itself, averaged over the field: pore-volume weighted when
     // a PORV was found, else a plain cell mean. Weighted is the one that means
     // something physically - an unweighted mean of PRESSURE is not the average
-    // reservoir pressure, it is the average of a set of numbers.
+    // reservoir pressure, it is the average of a set of numbers - unless a few
+    // cells hold nearly all the pore volume, when it is theirs alone and the
+    // plain mean is used instead. See compareRestarts().
     double aggA = 0.0, aggB = 0.0;
 };
 
@@ -103,7 +105,8 @@ struct KeywordDiff {
     QString           keyword;
     QVector<StepDiff> steps;
     QDateTime firstBad;            // invalid when it never differs
-    long   totalBad       = 0;
+    long   totalBad       = 0;     // summed over dates: cell values, not cells
+    int    maxBad         = 0;     // the most cells outside at any one date
     double maxAbsOverall  = 0.0;
     double maxRelOverall  = 0.0;
     bool   clean() const { return totalBad == 0; }
@@ -123,12 +126,16 @@ struct CompareResult {
     QString      gridNote;
     bool         porvWeighted = false;
     int          nActive = 0;      // so a count of bad cells can be read as a fraction
+    // Some report dates share a calendar day, so a date is only told apart
+    // from its neighbours with the clock on it.
+    bool         intraday = false;
 
     QVector<KeywordDiff> keywords;
 
     bool    identical() const;
     bool    sameEnd() const;       // both runs reached the same date
     QString verdict() const;
+    QString stamp(const QDateTime& d) const;   // a date as this result shows it
 };
 
 CompareResult compareRestarts(const QString& smspecA, const QString& smspecB,

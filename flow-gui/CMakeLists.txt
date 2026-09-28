@@ -14,7 +14,8 @@ find_package(Qt6 QUIET COMPONENTS Charts OpenGLWidgets)
 qt_standard_project_setup()
 
 set(FLOWGUI_SOURCES main.cpp FlowGuiWindow.cpp FlowGuiWindow.h
-                    DeckEditor.cpp DeckEditor.h CasePath.h
+                    DeckEditor.cpp DeckEditor.h DeckRegions.cpp DeckRegions.h
+                    CasePath.h
                     GuiPaths.cpp GuiPaths.h
                     FlowLayout.cpp FlowLayout.h)
 
