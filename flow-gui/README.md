@@ -177,7 +177,9 @@ results, animate them in 3D, and edit decks — all in one window.
   its reservoir EOS regions (EOSNUM against TABDIMS item 9) and surface EOS
   regions (FIELDSEP item 8 against TABDIMS item 10). It is read from the
   deck text, not through OPM's parser, so a deck OPM cannot load yet is
-  still counted; double-click a row to go to where it is set. Expand/Collapse for the selected
+  still counted; double-click a row to go to where it is set. The tree and
+  the panel follow the deck in front: bringing another deck's .DATA tab
+  forward rescans them for that deck. Expand/Collapse for the selected
   subtree and Expand all / Collapse all buttons; **Close all** shuts every
   open tab at once (following INCLUDEs leaves a row of them), asking once
   for the lot if any have unsaved changes; the editor a **find & replace bar**

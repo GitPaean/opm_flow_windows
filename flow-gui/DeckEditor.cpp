@@ -613,6 +613,16 @@ DeckEditorWidget::DeckEditorWidget(QWidget* parent)
             // the file may have changed while this tab was in the background
             if (auto* ed = editorAt(i); ed && diskChanged(ed)) onDiskChange(
                 ed->property("filePath").toString());
+            // Another deck's .DATA in front makes it the deck: the tree, the
+            // regions and the whole-deck search follow it.
+            if (auto* ed = editorAt(i)) {
+                const QString p = ed->property("filePath").toString();
+                if (p.endsWith(QStringLiteral(".DATA"), Qt::CaseInsensitive)
+                    && p != QFileInfo(rootDeck_).canonicalFilePath()) {
+                    rootDeck_ = p;
+                    scanDeck();
+                }
+            }
         });
     }
 
