@@ -12,6 +12,8 @@
 */
 #pragma once
 
+#include "DeckRegions.h"
+
 #include <QPlainTextEdit>
 #include <QSyntaxHighlighter>
 #include <QWidget>
@@ -87,6 +89,8 @@ private:
     QLineEdit*   treeFilter_ = nullptr;   // filters the structure tree
     QComboBox*   treeMode_   = nullptr;   // keyword filter or deck text search
     QTreeWidget* hitTree_    = nullptr;   // text search hits, by keyword
+    QTreeWidget* regionTree_ = nullptr;   // region counts of the scanned deck
+    QLabel*      regionInfo_ = nullptr;
     QTabWidget*  tabs_       = nullptr;
     QLabel*      status_     = nullptr;
     QWidget*     findBar_    = nullptr;   // Ctrl+F in-editor search
@@ -117,6 +121,8 @@ private:
     // Watches the open files so edits made outside the GUI are noticed.
     QFileSystemWatcher* watcher_ = nullptr;
     QString      rootDeck_;
+    // Counts the deck's regions off the same walk that builds the tree.
+    flowgui::RegionScanner regionScan_;
     // Sections the user has opened; the tree starts closed and a rescan
     // puts back what was open rather than folding it up again.
     QSet<QString> expandedSections_;
@@ -159,6 +165,7 @@ private:
     bool diskChanged(DeckTextEdit* ed) const;
     void watchPath(const QString& path);
     void scanDeck();
+    void showRegions(const flowgui::DeckRegions& r);
     void scanFile(const QString& path, QTreeWidgetItem* sectionParent,
                   QTreeWidgetItem* fileParent, QString& currentSection,
                   int depth, int& fileBudget);

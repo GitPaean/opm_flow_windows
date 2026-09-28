@@ -393,14 +393,49 @@ DeckEditorWidget::DeckEditorWidget(QWidget* parent)
         tree_ = new QTreeWidget;
         tree_->setHeaderLabels({ QStringLiteral("Section / keyword"), QStringLiteral("Location") });
         tree_->setColumnWidth(0, 240);
-        ll->addWidget(tree_, 1);
         hitTree_ = new QTreeWidget;
         hitTree_->setHeaderLabels({ QStringLiteral("Section / keyword / match"),
                                     QStringLiteral("Location") });
         hitTree_->setColumnWidth(0, 240);
         hitTree_->hide();
-        ll->addWidget(hitTree_, 1);
+        auto* trees = new QWidget;
+        auto* tl = new QVBoxLayout(trees);
+        tl->setContentsMargins(0, 0, 0, 0);
+        tl->addWidget(tree_, 1);
+        tl->addWidget(hitTree_, 1);
+
+        // How many regions of each kind the deck sets up, under the tree and
+        // resizable against it.
+        auto* regionBox = new QWidget;
+        auto* rgl = new QVBoxLayout(regionBox);
+        rgl->setContentsMargins(0, 0, 0, 0);
+        regionInfo_ = new QLabel(QStringLiteral("Regions"));
+        regionInfo_->setWordWrap(true);
+        regionTree_ = new QTreeWidget;
+        regionTree_->setHeaderLabels({ QStringLiteral("Region set"), QStringLiteral("Count"),
+                                       QStringLiteral("Declared"), QStringLiteral("Selects") });
+        regionTree_->setRootIsDecorated(false);
+        regionTree_->headerItem()->setToolTip(1, QStringLiteral(
+            "distinct region numbers the deck assigns, over every cell of the grid"));
+        regionTree_->headerItem()->setToolTip(2, QStringLiteral(
+            "the most the RUNSPEC dimensions allow (TABDIMS, EQLDIMS, REGDIMS, ...)"));
+        rgl->addWidget(regionInfo_);
+        rgl->addWidget(regionTree_, 1);
+
+        auto* lsplit = new QSplitter(Qt::Vertical);
+        lsplit->addWidget(trees);
+        lsplit->addWidget(regionBox);
+        lsplit->setStretchFactor(0, 3);
+        lsplit->setStretchFactor(1, 1);
+        lsplit->setSizes({ 420, 230 });   // room for a compositional deck's EOS rows
+        ll->addWidget(lsplit, 1);
         split->addWidget(left);
+
+        connect(regionTree_, &QTreeWidget::itemActivated, this,
+                [this](QTreeWidgetItem* it, int) {
+            const QString f = it->data(0, RoleFile).toString();
+            if (!f.isEmpty()) openFile(f, it->data(0, RoleLine).toInt());
+        });
 
         connect(bexp, &QPushButton::clicked, this, [this] {
             if (auto* it = shownTree()->currentItem()) setExpandedRecursively(it, true);
@@ -1486,10 +1521,12 @@ void DeckEditorWidget::scanDeck()
     }
     tree_->clear();
     deckFiles_.clear();
-    if (rootDeck_.isEmpty()) return;
+    regionScan_.reset();
+    if (rootDeck_.isEmpty()) { showRegions({}); return; }
     QString section = QStringLiteral("(preamble)");
     int fileBudget = 128;                    // safety cap on include fan-out
     scanFile(rootDeck_, nullptr, nullptr, section, 0, fileBudget);
+    showRegions(regionScan_.result());
     if (treeFilter_ && !treeFilter_->text().trimmed().isEmpty()) {
         if (textMode()) searchDeckText(treeFilter_->text().trimmed());
         else            filterTree(treeFilter_->text().trimmed());
@@ -1521,10 +1558,12 @@ void DeckEditorWidget::scanFile(const QString& path, QTreeWidgetItem*,
     int lineNo = 0;
     bool wantIncludeArg = false;
     QTreeWidgetItem* lastInclude = nullptr;
+    regionScan_.beginFile(path);
 
     while (!f.atEnd()) {
         const QString line = QString::fromLatin1(f.readLine());
         ++lineNo;
+        regionScan_.feed(line, lineNo);
         const QString trimmed = line.trimmed();
         if (trimmed.isEmpty() || trimmed.startsWith(QLatin1String("--"))) continue;
 
@@ -1576,4 +1615,86 @@ void DeckEditorWidget::scanFile(const QString& path, QTreeWidgetItem*,
             lastInclude = it;
         }
     }
+    regionScan_.endFile();
+}
+
+void DeckEditorWidget::showRegions(const flowgui::DeckRegions& r)
+{
+    regionTree_->clear();
+    if (rootDeck_.isEmpty()) {
+        regionInfo_->setText(QStringLiteral("Regions"));
+        return;
+    }
+    const qint64 cells = qint64(r.nx) * r.ny * r.nz;
+    regionInfo_->setText(cells > 0
+        ? QStringLiteral("Regions, over all %1 cells (%2x%3x%4)")
+              .arg(cells).arg(r.nx).arg(r.ny).arg(r.nz)
+        : QStringLiteral("Regions (no DIMENS found)"));
+    regionInfo_->setToolTip(QStringLiteral(
+        "read from the deck text, INCLUDEs followed - not through the simulator's "
+        "parser, so a deck it cannot load yet is still counted.\n"
+        "Arrays, EQUALS, COPY, ADD, MULTIPLY, MAXVALUE/MINVALUE and BOX are "
+        "followed; ACTNUM is not, so inactive cells count too."));
+
+    const QColor grey(0x88, 0x8e, 0x94), red(0xb3, 0x1f, 0x1f);
+    const auto addRow = [&](QTreeWidgetItem* parent, const flowgui::RegionCount& c) {
+        auto* it = parent ? new QTreeWidgetItem(parent) : new QTreeWidgetItem(regionTree_);
+        const QString count = c.count() == 0 ? QStringLiteral("-")
+                            : c.approx       ? QStringLiteral("~%1").arg(c.count())
+                                             : QString::number(c.count());
+        it->setText(0, c.name);
+        it->setText(1, count);
+        it->setText(2, c.declared > 0 ? QString::number(c.declared) : QString());
+        it->setText(3, c.meaning);
+        it->setTextAlignment(1, Qt::AlignRight | Qt::AlignVCenter);
+        it->setTextAlignment(2, Qt::AlignRight | Qt::AlignVCenter);
+        if (!c.file.isEmpty()) {
+            it->setData(0, RoleFile, c.file);
+            it->setData(0, RoleLine, c.line);
+        }
+
+        QStringList tip;
+        tip << QStringLiteral("%1 - %2").arg(c.name, c.meaning);
+        if (c.defaulted)
+            tip << QStringLiteral("not set in the deck: every cell is region 1");
+        else if (c.numbers.isEmpty())
+            tip << QStringLiteral("no region number given");
+        else
+            tip << QStringLiteral("region numbers: %1").arg(flowgui::regionNumbersText(c.numbers));
+        if (c.approx)
+            tip << QStringLiteral("approximate: a box-limited ADD/MULTIPLY/MAXVALUE/"
+                                  "MINVALUE or an OPERATE changed it, and those are "
+                                  "not followed cell by cell");
+        if (c.declared > 0)
+            tip << QStringLiteral("declared: %1 (%2%3)").arg(c.declared).arg(c.declaredBy)
+                       .arg(c.declaredDefault ? QStringLiteral(", default") : QString());
+        if (c.overDeclared())
+            tip << QStringLiteral("region %1 is used, but %2 allows only %3")
+                       .arg(c.highest()).arg(c.declaredBy).arg(c.declared);
+        if (!c.file.isEmpty())
+            tip << QStringLiteral("%1:%2 (double-click to go there)")
+                       .arg(QFileInfo(c.file).fileName()).arg(c.line);
+        for (int col = 0; col < 4; ++col) it->setToolTip(col, tip.join(QLatin1Char('\n')));
+
+        if (c.defaulted || c.count() == 0) it->setForeground(1, grey);
+        if (c.declaredDefault) it->setForeground(2, grey);
+        it->setForeground(3, grey);
+        if (c.overDeclared()) {
+            it->setForeground(1, red);
+            it->setForeground(2, red);
+        }
+    };
+    for (const auto& c : r.regions) addRow(nullptr, c);
+    if (r.comps > 0) {
+        auto* g = new QTreeWidgetItem(regionTree_);
+        g->setText(0, QStringLiteral("Compositional, %1 components").arg(r.comps));
+        g->setFirstColumnSpanned(true);
+        QFont bf = g->font(0); bf.setBold(true); g->setFont(0, bf);
+        for (const auto& c : r.eos) addRow(g, c);
+        regionTree_->setRootIsDecorated(true);
+        g->setExpanded(true);
+    } else {
+        regionTree_->setRootIsDecorated(false);
+    }
+    for (int col = 0; col < 3; ++col) regionTree_->resizeColumnToContents(col);
 }
