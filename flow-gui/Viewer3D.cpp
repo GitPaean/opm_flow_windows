@@ -25,6 +25,8 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QHBoxLayout>
+#include <QApplication>
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QLabel>
 #include <QLineEdit>
@@ -234,6 +236,20 @@ void GridGLWidget::setCellMask(std::vector<char> visible)
     recolor();
 }
 
+void GridGLWidget::setValueRange(float lo, float hi, const QString& note, bool redraw)
+{
+    fixedLo_ = lo; fixedHi_ = hi;
+    rangeNote_ = hi > lo ? note : QString();
+    if (redraw) recolor();
+}
+
+bool GridGLWidget::valueRange(float& lo, float& hi) const
+{
+    if (!hasValues_ || categorical_) return false;
+    lo = vmin_; hi = vmax_;
+    return true;
+}
+
 QColor GridGLWidget::regionColor(int region)
 {
     // Okabe-Ito, then the rest of Tol's muted set: thirteen that stay apart
@@ -283,6 +299,7 @@ void GridGLWidget::recolor()
             if (!any) { vmin_ = vmax_ = v; any = true; }
             else      { vmin_ = std::min(vmin_, v); vmax_ = std::max(vmax_, v); }
         }
+        if (fixedHi_ > fixedLo_) { vmin_ = fixedLo_; vmax_ = fixedHi_; }
         const float span = (vmax_ > vmin_) ? (vmax_ - vmin_) : 1.0f;
         for (int c = 0; c < cellCount_; ++c) {
             float r, g, b;
@@ -543,7 +560,9 @@ void GridGLWidget::paintGL()
             p.drawText(x + w + 6, y + h / 2,
                        QStringLiteral("%1 (uniform)").arg(vmax_, 0, 'g', 5));
         }
-        p.drawText(x, y - 10, legendTitle_);
+        p.drawText(x, y - 10, rangeNote_.isEmpty()
+                                  ? legendTitle_
+                                  : QStringLiteral("%1  (%2)").arg(legendTitle_, rangeNote_));
     }
     if (!stepText_.isEmpty()) {
         p.setPen(Qt::black);
@@ -702,6 +721,34 @@ Viewer3DWidget::Viewer3DWidget(QWidget* parent)
         row->addWidget(regionNums_);
         row->addWidget(regionInfo_);
 
+        // A bar that refits every step makes a run look busiest where it is
+        // quietest: 138.47 to 138.48 fills the whole scale.
+        fixRange_ = new QCheckBox(QStringLiteral("fix range"));
+        fixRange_->setToolTip(QStringLiteral(
+            "hold the colour bar still while stepping through the run: by "
+            "default at the property's min and max over the whole simulation, "
+            "or at the ends typed beside it"));
+        rangeMin_ = new QLineEdit;
+        rangeMax_ = new QLineEdit;
+        for (auto* e : { rangeMin_, rangeMax_ }) {
+            e->setMaximumWidth(90);
+            e->setEnabled(false);
+            e->setToolTip(QStringLiteral(
+                "with fix range on: this end of the colour bar. Empty takes the "
+                "whole simulation's value, shown greyed. Remembered per property."));
+            connect(e, &QLineEdit::editingFinished, this, [this] {
+                const QString name = dynSel_->isChecked() ? dynBox_->currentText()
+                                                          : staticBox_->currentText();
+                if (name.isEmpty()) return;
+                rangeTexts_[name] = { rangeMin_->text().trimmed(), rangeMax_->text().trimmed() };
+                showProperty();
+            });
+        }
+        row->addWidget(fixRange_);
+        row->addWidget(rangeMin_);
+        row->addWidget(new QLabel(QStringLiteral("to")));
+        row->addWidget(rangeMax_);
+
         wellsChk_ = new QCheckBox(QStringLiteral("wells"));
         wellsChk_->setChecked(true);
         row->addWidget(wellsChk_);
@@ -804,11 +851,17 @@ Viewer3DWidget::Viewer3DWidget(QWidget* parent)
         connect(dynBox_,    &QComboBox::currentIndexChanged, this, onProp);
         connect(staticSel_, &QRadioButton::toggled, this, onProp);
         connect(wellsChk_, &QCheckBox::toggled, this, [this](bool) { showWells(); });
+        // showProperty() after: a fixed range is taken over the cells drawn.
         connect(regionBox_, &QComboBox::currentIndexChanged, this, [this](int i) {
             regionChoice_ = i > 0 ? regionBox_->currentText() : QString();
             applyRegionFilter();
+            showProperty();
         });
-        connect(regionNums_, &QLineEdit::editingFinished, this, [this] { applyRegionFilter(); });
+        connect(regionNums_, &QLineEdit::editingFinished, this, [this] {
+            applyRegionFilter();
+            showProperty();
+        });
+        connect(fixRange_, &QCheckBox::toggled, this, [this](bool) { showProperty(); });
         connect(autoRef_, &QCheckBox::toggled, this, [this](bool on) {
             if (!followTimer_) return;
             // Only meaningful while a run is writing the case; setRunningCase()
@@ -1135,6 +1188,12 @@ QJsonObject Viewer3DWidget::uiState() const
     if (zscale_)     o[QStringLiteral("zscale")] = zscale_->value();
     o[QStringLiteral("regionFilter")] = regionChoice_;
     if (regionNums_) o[QStringLiteral("regionNumbers")] = regionNums_->text();
+    if (fixRange_)   o[QStringLiteral("fixRange")] = fixRange_->isChecked();
+    QJsonObject ranges;
+    for (auto it = rangeTexts_.constBegin(); it != rangeTexts_.constEnd(); ++it)
+        if (!it->first.isEmpty() || !it->second.isEmpty())
+            ranges[it.key()] = QJsonArray{ it->first, it->second };
+    o[QStringLiteral("ranges")] = ranges;
     if (stepSlider_ && stepSlider_->isEnabled())
         o[QStringLiteral("step")] = stepSlider_->value();
     return o;
@@ -1154,6 +1213,16 @@ void Viewer3DWidget::restoreUiState(const QJsonObject& state)
     // Applied when a case is opened and its region arrays are known.
     regionChoice_ = state.value(QStringLiteral("regionFilter")).toString();
     if (regionNums_) regionNums_->setText(state.value(QStringLiteral("regionNumbers")).toString());
+    if (fixRange_) {
+        const QSignalBlocker block(fixRange_);
+        fixRange_->setChecked(state.value(QStringLiteral("fixRange")).toBool(false));
+    }
+    rangeTexts_.clear();
+    const QJsonObject ranges = state.value(QStringLiteral("ranges")).toObject();
+    for (auto it = ranges.constBegin(); it != ranges.constEnd(); ++it) {
+        const QJsonArray a = it.value().toArray();
+        rangeTexts_[it.key()] = { a.at(0).toString(), a.at(1).toString() };
+    }
 
     // The case list is mirrored from the Summary Plots tab, so by now it holds
     // the restored cases; select ours without opening it (see showEvent).
@@ -1188,6 +1257,7 @@ void Viewer3DWidget::openCase(int idx)
     }
     regionInfo_->clear();
     nStatic_ = nRegion_ = 0;
+    runRangeKey_.clear();
     stepSlider_->setEnabled(false);
     stepSlider_->setRange(0, 0);
     gl_->setWells({});
@@ -1464,6 +1534,7 @@ void Viewer3DWidget::showProperty()
             const std::string n = name.toStdString();
             if (staticBox_->currentData().toBool()) {
                 gl_->setCellRegions(regionArray(name), name);
+                syncRangeBoxes(QString());       // regions have no scale to fix
                 gl_->setStepText(QString());
                 return;
             }
@@ -1474,7 +1545,9 @@ void Viewer3DWidget::showProperty()
                 const auto& d = init_->getInitData<double>(n);
                 v.assign(d.begin(), d.end());
             }
+            applyRange(name, false);
             gl_->setCellValues(v, name);
+            syncRangeBoxes(name);
             gl_->setStepText(QString());
         } else {
             stepChanged(stepSlider_->value());
@@ -1505,6 +1578,8 @@ void Viewer3DWidget::applyRegionFilter()
     const std::vector<int> r = regionArray(name);
     if (r.empty()) {
         regionNums_->setPlaceholderText(QString());
+        cellMask_.clear();
+        maskKey_.clear();
         gl_->setCellMask({});
         return;
     }
@@ -1530,6 +1605,8 @@ void Viewer3DWidget::applyRegionFilter()
     int shown = 0;
     for (std::size_t c = 0; c < r.size(); ++c)
         if ((mask[c] = char(want.count(r[c]) ? 1 : 0))) ++shown;
+    cellMask_ = mask;
+    maskKey_  = name + QLatin1Char('|') + regionNums_->text();
     gl_->setCellMask(std::move(mask));
     regionInfo_->setText(bad.isEmpty()
         ? QStringLiteral("%1 of %2 cells").arg(shown).arg(r.size())
@@ -1544,40 +1621,132 @@ void Viewer3DWidget::applyRegionFilter()
 // re-reading a step that is visited again.
 constexpr qint64 kRstCacheBudget = 256ll * 1024 * 1024;
 
-void Viewer3DWidget::stepChanged(int sliderPos)
+std::vector<float> Viewer3DWidget::dynamicValues(const QString& name, int step)
 {
-    if (!grid_ || !rst_ || steps_.empty() || !dynSel_->isChecked()) return;
     // Before anything is read: getRestartData() hands out references into the
     // reader, and those must not be alive across a clearData().
     if (rstBytes_ > kRstCacheBudget) {
         rst_->clearData();
         rstBytes_ = 0;
     }
+    std::vector<float> v;
+    const std::string n = name.toStdString();
+    if (rst_->hasArray(n, step)) {
+        v = rst_->getRestartData<float>(n, step);
+        rstBytes_ += qint64(v.size()) * qint64(sizeof(float));
+    } else if (name == QLatin1String("SOIL")) {
+        // synthesized oil saturation: 1 - SWAT - SGAS, with a phase
+        // that is not stored treated as absent (two-phase runs)
+        v.assign(size_t(grid_->activeCells()), 1.0f);
+        for (const char* sat : { "SWAT", "SGAS" }) {
+            if (!rst_->hasArray(sat, step)) continue;
+            const auto& s = rst_->getRestartData<float>(sat, step);
+            rstBytes_ += qint64(s.size()) * qint64(sizeof(float));
+            const size_t nn = std::min(v.size(), s.size());
+            for (size_t i = 0; i < nn; ++i) v[i] -= s[i];
+        }
+        for (float& x : v) x = std::clamp(x, 0.0f, 1.0f);
+    }
+    return v;
+}
+
+bool Viewer3DWidget::runRange(const QString& name, bool dynamic, float& lo, float& hi)
+{
+    const QString key = QStringLiteral("%1|%2|%3|%4")
+                            .arg(name).arg(dynamic).arg(maskKey_).arg(steps_.size());
+    if (key != runRangeKey_) {
+        runHas_ = false;
+        const auto take = [this](const std::vector<float>& v) {
+            for (std::size_t c = 0; c < v.size(); ++c) {
+                if (!cellMask_.empty() && (c >= cellMask_.size() || !cellMask_[c])) continue;
+                if (!runHas_) { runLo_ = runHi_ = v[c]; runHas_ = true; }
+                else          { runLo_ = std::min(runLo_, v[c]); runHi_ = std::max(runHi_, v[c]); }
+            }
+        };
+        try {
+            if (dynamic && rst_) {
+                QApplication::setOverrideCursor(Qt::WaitCursor);
+                for (int s : steps_) take(dynamicValues(name, s));
+                QApplication::restoreOverrideCursor();
+            } else if (!dynamic && init_) {
+                const std::string n = name.toStdString();
+                std::vector<float> v;
+                try { v = init_->getInitData<float>(n); }
+                catch (...) {
+                    const auto& d = init_->getInitData<double>(n);
+                    v.assign(d.begin(), d.end());
+                }
+                take(v);
+            }
+        } catch (...) {
+            if (dynamic) QApplication::restoreOverrideCursor();
+            runHas_ = false;
+        }
+        runRangeKey_ = key;
+    }
+    lo = runLo_; hi = runHi_;
+    return runHas_;
+}
+
+void Viewer3DWidget::applyRange(const QString& name, bool dynamic)
+{
+    if (!fixRange_->isChecked() || name.isEmpty()) {
+        gl_->setValueRange(0.f, 0.f, QString(), false);
+        return;
+    }
+    float lo = 0.f, hi = 0.f;
+    const bool whole = runRange(name, dynamic, lo, hi);
+    const auto typed = rangeTexts_.value(name);
+    bool okLo = false, okHi = false;
+    const float tLo = QString(typed.first).replace(QLatin1Char(','), QLatin1Char('.')).toFloat(&okLo);
+    const float tHi = QString(typed.second).replace(QLatin1Char(','), QLatin1Char('.')).toFloat(&okHi);
+    if (okLo) lo = tLo;
+    if (okHi) hi = tHi;
+    if (lo > hi) std::swap(lo, hi);
+    if ((!whole && !(okLo && okHi)) || !(hi > lo)) {
+        gl_->setValueRange(0.f, 0.f, QString(), false);
+        return;
+    }
+    gl_->setValueRange(lo, hi, okLo || okHi ? QStringLiteral("fixed")
+                                            : QStringLiteral("whole run"), false);
+}
+
+void Viewer3DWidget::syncRangeBoxes(const QString& name)
+{
+    const bool on = fixRange_->isChecked() && !name.isEmpty();
+    rangeMin_->setEnabled(on);
+    rangeMax_->setEnabled(on);
+    float lo = 0.f, hi = 0.f;
+    if (on) {
+        const auto typed = rangeTexts_.value(name);
+        rangeMin_->setText(typed.first);
+        rangeMax_->setText(typed.second);
+        if (runRange(name, dynSel_->isChecked(), lo, hi)) {
+            rangeMin_->setPlaceholderText(QString::number(lo, 'g', 6));
+            rangeMax_->setPlaceholderText(QString::number(hi, 'g', 6));
+        }
+    } else {
+        // The range in effect, greyed, so fixing it starts from what is seen.
+        rangeMin_->clear();
+        rangeMax_->clear();
+        const bool shown = !name.isEmpty() && gl_->valueRange(lo, hi);
+        rangeMin_->setPlaceholderText(shown ? QString::number(lo, 'g', 6) : QString());
+        rangeMax_->setPlaceholderText(shown ? QString::number(hi, 'g', 6) : QString());
+    }
+}
+
+void Viewer3DWidget::stepChanged(int sliderPos)
+{
+    if (!grid_ || !rst_ || steps_.empty() || !dynSel_->isChecked()) return;
     const int step = steps_[std::clamp(sliderPos, 0, int(steps_.size()) - 1)];
     const QString name = dynBox_->currentText();
     if (name.isEmpty()) return;
     try {
-        std::vector<float> v;
-        const std::string n = name.toStdString();
-        if (rst_->hasArray(n, step)) {
-            v = rst_->getRestartData<float>(n, step);
-            rstBytes_ += qint64(v.size()) * qint64(sizeof(float));
-        } else if (name == QLatin1String("SOIL")) {
-            // synthesized oil saturation: 1 - SWAT - SGAS, with a phase
-            // that is not stored treated as absent (two-phase runs)
-            v.assign(size_t(grid_->activeCells()), 1.0f);
-            for (const char* sat : { "SWAT", "SGAS" }) {
-                if (!rst_->hasArray(sat, step)) continue;
-                const auto& s = rst_->getRestartData<float>(sat, step);
-                rstBytes_ += qint64(s.size()) * qint64(sizeof(float));
-                const size_t nn = std::min(v.size(), s.size());
-                for (size_t i = 0; i < nn; ++i) v[i] -= s[i];
-            }
-            for (float& x : v) x = std::clamp(x, 0.0f, 1.0f);
-        } else {
-            return;   // property not available at this step
-        }
+        applyRange(name, true);
+        const std::vector<float> v = dynamicValues(name, step);
+        if (v.empty()) return;   // property not available at this step
         gl_->setCellValues(v, name);
+        syncRangeBoxes(name);
 
         // date from INTEHEAD when plausible
         QString when;

@@ -124,7 +124,12 @@ results, animate them in 3D, and edit decks — all in one window.
   its colour from one array to the next. The *regions* filter draws only the
   cells of chosen regions of any of those arrays (`2`, or `1, 3-5`), whatever
   property is shown, and the colour scale is then taken over those cells
-  alone — the gas saturation in one equilibration region, say. The default view frames the
+  alone — the gas saturation in one equilibration region, say. The colour
+  bar refits every report step unless *fix range* is ticked: it then holds at
+  the property's min and max over the whole simulation (over the cells
+  drawn), and either end can be typed instead — an empty box keeps the
+  whole-run value, shown greyed in it, and each property keeps its own ends.
+  The default view frames the
   model with its long horizontal axis across the screen (from a principal-
   axis analysis of the grid), seen from the side and slightly above. The
   orbit is **unrestricted** — keep dragging past the side view to get under

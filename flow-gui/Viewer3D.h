@@ -14,7 +14,9 @@
 #pragma once
 
 #include <QColor>
+#include <QHash>
 #include <QMatrix4x4>
+#include <QPair>
 #include <QOpenGLBuffer>
 #include <QOpenGLFunctions>
 #include <QOpenGLShaderProgram>
@@ -69,6 +71,13 @@ public:
     // Keyed by the number, not its rank, so a region keeps its colour from one
     // region array and one filter to the next.
     static QColor regionColor(int region);
+    // Hold the colour bar at [lo, hi] rather than fitting it to the cells
+    // drawn; lo >= hi fits it again. Values outside take the end colours.
+    // `note` goes beside the legend title. Takes effect with the next values
+    // unless `redraw`.
+    void setValueRange(float lo, float hi, const QString& note, bool redraw);
+    // The range the colour bar shows; false when there is no bar.
+    bool valueRange(float& lo, float& hi) const;
     void setWells(const QVector<WellPath>& wells);
     void setZScale(double s);
     void setStepText(const QString& t) { stepText_ = t; update(); }
@@ -121,6 +130,8 @@ private:
     std::vector<int>   regions_;      // per cell, when drawn by region
     std::vector<char>  mask_;         // per cell; empty = every cell drawn
     bool    categorical_ = false;
+    float   fixedLo_ = 0.f, fixedHi_ = 0.f;
+    QString rangeNote_;
     int     shownCells_ = 0;
     struct RegionEntry { int region; int cells; };
     QVector<RegionEntry> regionLegend_;   // the regions among the cells drawn
@@ -212,6 +223,17 @@ private:
     // Hide every cell outside the chosen regions, whatever is being coloured.
     void applyRegionFilter();
 
+    // One dynamic property at one report step, SOIL synthesized where the
+    // file has none; empty when the step lacks it.
+    std::vector<float> dynamicValues(const QString& name, int step);
+    // The property's min and max over every report step, over the cells the
+    // region filter draws. Cached, since it reads the whole restart file.
+    bool runRange(const QString& name, bool dynamic, float& lo, float& hi);
+    // Hand the canvas the colour range the fix-range controls ask for, before
+    // it is given values; and show the range in effect afterwards.
+    void applyRange(const QString& name, bool dynamic);
+    void syncRangeBoxes(const QString& name);
+
     QComboBox*      caseBox_   = nullptr;
     QRadioButton*   staticSel_ = nullptr;
     QRadioButton*   dynSel_    = nullptr;
@@ -228,6 +250,16 @@ private:
     // one - the box itself is refilled with every case.
     QString         regionChoice_;
     int             nStatic_ = 0, nRegion_ = 0;
+    std::vector<char> cellMask_;             // as last given to the canvas
+    QString         maskKey_;                // what the mask was made from
+    QCheckBox*      fixRange_  = nullptr;    // hold the colour bar still
+    QLineEdit*      rangeMin_  = nullptr;    // ... at these ends; empty = whole run
+    QLineEdit*      rangeMax_  = nullptr;
+    // Per property, what was typed into the two boxes, so each keeps its own.
+    QHash<QString, QPair<QString, QString>> rangeTexts_;
+    QString         runRangeKey_;
+    float           runLo_ = 0.f, runHi_ = 0.f;
+    bool            runHas_ = false;
     QSlider*        stepSlider_ = nullptr;
     QPushButton*    playBtn_   = nullptr;
     QLabel*         stepLabel_ = nullptr;
