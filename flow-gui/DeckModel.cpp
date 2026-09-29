@@ -371,6 +371,7 @@ WellShape wellShapeAt(const DeckStructure& ds, int step, const QString& well)
 }
 
 DeckStructure readDeckStructure(const QString& dataFile,
+                                const QString& skipMode,
                                 std::atomic<bool>* cancel,
                                 std::atomic<int>* progress)
 {
@@ -382,6 +383,7 @@ DeckStructure readDeckStructure(const QString& dataFile,
 
     try {
         Opm::ParseContext ctx = relaxedContext();
+        ctx.setInputSkipMode(skipMode.toStdString());
         Opm::ErrorGuard guard;
 
         Opm::Parser parser;
@@ -1070,6 +1072,14 @@ StructurePanel::StructurePanel(QWidget* parent) : QWidget(parent)
         "read a deck's group tree and network. The deck is parsed as flow "
         "parses it, so INCLUDEs are followed and the structure is the one the "
         "simulator would use."));
+    compSkip_ = new QCheckBox(QStringLiteral("compositional"));
+    compSkip_->setToolTip(QStringLiteral(
+        "read the deck as flow_comp does: drop the keywords between SKIP300 "
+        "and ENDSKIP, keep those between SKIP100 and ENDSKIP "
+        "(--input-skip-mode=300).\nUnchecked reads it as flow does, the other "
+        "way round (--input-skip-mode=100). Only a deck holding both a "
+        "black-oil and a compositional setup cares.\nChanging it reads the "
+        "deck again."));
     shapeBox_ = new QComboBox;
     shapeBox_->setSizeAdjustPolicy(QComboBox::AdjustToContents);
     shapeBox_->setMinimumWidth(240);
@@ -1113,6 +1123,7 @@ StructurePanel::StructurePanel(QWidget* parent) : QWidget(parent)
 
     auto* row = new QHBoxLayout;
     row->addWidget(openBtn_);
+    row->addWidget(compSkip_);
     row->addWidget(new QLabel(QStringLiteral("Hierarchy at:")));
     row->addWidget(shapeBox_);
     row->addWidget(showWells_);
@@ -1218,6 +1229,9 @@ StructurePanel::StructurePanel(QWidget* parent) : QWidget(parent)
         flowgui::rememberDir(QStringLiteral("deck"), f);
         openDeck(f);
     });
+    connect(compSkip_, &QCheckBox::toggled, this, [this](bool) {
+        openDeck(!pending_.isEmpty() ? pending_ : requested_);
+    });
     connect(shapeBox_, &QComboBox::currentIndexChanged, this,
             [this](int i) { showShape(i); });
     connect(filter_, &QLineEdit::textChanged, this,
@@ -1283,6 +1297,9 @@ void StructurePanel::openDeck(const QString& dataFile)
 
 void StructurePanel::startLoad(const QString& dataFile)
 {
+    requested_ = dataFile;
+    const QString skipMode = compSkip_->isChecked() ? QStringLiteral("300")
+                                                    : QStringLiteral("100");
     cancel_.store(false);
     progress_.store(0);
     bar_->setValue(0); bar_->setVisible(true);
@@ -1293,8 +1310,8 @@ void StructurePanel::startLoad(const QString& dataFile)
     // from a file name.
     status_->setToolTip(QDir::toNativeSeparators(dataFile));
     poll_->start();
-    worker_ = QThread::create([this, dataFile] {
-        model_ = readDeckStructure(dataFile, &cancel_, &progress_);
+    worker_ = QThread::create([this, dataFile, skipMode] {
+        model_ = readDeckStructure(dataFile, skipMode, &cancel_, &progress_);
     });
     connect(worker_, &QThread::finished, this, [this] { finishLoad(); });
     worker_->start();
@@ -1339,7 +1356,9 @@ void StructurePanel::finishLoad()
         "changes %5 time(s)")
         .arg(QFileInfo(model_.deckPath).fileName())
         .arg(first.groups.size()).arg(model_.shapes.last().wellCount())
-        .arg(model_.scheduleSteps).arg(model_.shapes.size()));
+        .arg(model_.scheduleSteps).arg(model_.shapes.size())
+        + (compSkip_->isChecked() ? QStringLiteral("; read as compositional (SKIP300 skipped)")
+                                  : QString()));
     // The last shape is the field as it ends up, which is the one people mean
     // when they ask what a deck looks like.
     shapeBox_->setCurrentIndex(shapeBox_->count() - 1);

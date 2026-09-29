@@ -227,7 +227,11 @@ results, animate them in 3D, and edit decks — all in one window.
   they belong to. The conventions follow opm-common's own `writeWellStructure`
   (`plot_ms_wells`), so the two pictures read alike. Decks already in the
   queue are one press away: *Well hierarchy* on the Run tab reads the selected
-  deck here and comes to this tab.
+  deck here and comes to this tab. A deck holding both a black-oil and a
+  compositional setup, fenced with `SKIP100` / `SKIP300` ... `ENDSKIP`, is
+  read the way `flow` reads it (`--input-skip-mode=100`); tick
+  *compositional* to read it the way `flow_comp` does (`300`), which reads
+  the deck again.
 - **Simulator** — by default the `flow`(`.exe`) shipped next to the GUI (in a
   development checkout it falls back to the harness build tree); the resolved
   path is shown in the log at startup. `flow` contains every model variant,

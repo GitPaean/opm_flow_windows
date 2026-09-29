@@ -171,8 +171,10 @@ WellShape wellShapeAt(const DeckStructure& ds, int step, const QString& well);
 
 // Parse a deck and extract its structure over time. Slow enough to want a
 // thread (about half a second for Norne, longer for a big deck), so `cancel`
-// is polled between schedule steps.
+// is polled between schedule steps. `skipMode` is flow's --input-skip-mode:
+// "100", "300" or "all".
 DeckStructure readDeckStructure(const QString& dataFile,
+                                const QString& skipMode,
                                 std::atomic<bool>* cancel = nullptr,
                                 std::atomic<int>* progress = nullptr);
 
@@ -319,6 +321,7 @@ private:
     void focusOn(const QString& node);
 
     QPushButton*  openBtn_ = nullptr;
+    QCheckBox*    compSkip_ = nullptr;  // parse as flow_comp: --input-skip-mode=300
     QPushButton*  picBtn_ = nullptr;
     QPushButton*  wellBtn_ = nullptr;   // draw the selected well's structure
     QCheckBox*    showWells_ = nullptr;
@@ -346,6 +349,7 @@ private:
     // already up rather than stacking another on it.
     QHash<QString, QDialog*> wellWindows_;
     QString           pending_;
+    QString           requested_;   // model_ belongs to the worker while it reads
     std::atomic<int>  progress_{0};
     std::atomic<bool> cancel_{false};
 };
