@@ -32,6 +32,7 @@ class QComboBox;
 class QDoubleSpinBox;
 class QJsonObject;
 class QLabel;
+class QLineEdit;
 class QPushButton;
 class QRadioButton;
 class QSlider;
@@ -59,6 +60,15 @@ public:
     void setMesh(std::vector<float> pos, std::vector<float> nrm, int cellCount);
     // Per-cell values -> jet colormap; empty vector = uniform grey.
     void setCellValues(const std::vector<float>& v, const QString& legendTitle);
+    // Region numbers -> one flat colour per number, and a legend of the
+    // regions with their cell counts in place of the colour bar.
+    void setCellRegions(const std::vector<int>& r, const QString& legendTitle);
+    // Which cells to draw, one flag per active cell; empty draws them all. The
+    // colour range is taken over the cells drawn.
+    void setCellMask(std::vector<char> visible);
+    // Keyed by the number, not its rank, so a region keeps its colour from one
+    // region array and one filter to the next.
+    static QColor regionColor(int region);
     void setWells(const QVector<WellPath>& wells);
     void setZScale(double s);
     void setStepText(const QString& t) { stepText_ = t; update(); }
@@ -82,6 +92,7 @@ protected:
 
 private:
     void uploadColors();
+    void recolor();
     QMatrix4x4 mvp() const;
     // The camera on its own. paintGL() needs it to put the surface normals in
     // eye space, so the shading can follow the camera rather than the grid.
@@ -106,6 +117,13 @@ private:
     QString shaderErr_;
     float   vmin_ = 0.f, vmax_ = 0.f;
     bool    hasValues_ = false;
+    std::vector<float> values_;       // per cell, when colour-mapped
+    std::vector<int>   regions_;      // per cell, when drawn by region
+    std::vector<char>  mask_;         // per cell; empty = every cell drawn
+    bool    categorical_ = false;
+    int     shownCells_ = 0;
+    struct RegionEntry { int region; int cells; };
+    QVector<RegionEntry> regionLegend_;   // the regions among the cells drawn
 
     // camera
     QVector3D bboxMin_, bboxMax_;
@@ -188,6 +206,12 @@ private:
     // Fill the dynamic (restart) property list from the current reader.
     void populateDynamicProperties();
 
+    // One of the INIT file's integer cell arrays (SATNUM, PVTNUM, EQLNUM, ...),
+    // or empty when the case has no such array.
+    std::vector<int> regionArray(const QString& name) const;
+    // Hide every cell outside the chosen regions, whatever is being coloured.
+    void applyRegionFilter();
+
     QComboBox*      caseBox_   = nullptr;
     QRadioButton*   staticSel_ = nullptr;
     QRadioButton*   dynSel_    = nullptr;
@@ -197,6 +221,13 @@ private:
     QCheckBox*      shadingChk_ = nullptr;   // relief, at the cost of exact colour
     QCheckBox*      autoRef_    = nullptr;   // follow a run as it writes steps
     QDoubleSpinBox* zscale_    = nullptr;
+    QComboBox*      regionBox_  = nullptr;   // the region array that filters cells
+    QLineEdit*      regionNums_ = nullptr;   // ... and which of its numbers to draw
+    QLabel*         regionInfo_ = nullptr;
+    // The filter array by name, so it carries over to the next case that has
+    // one - the box itself is refilled with every case.
+    QString         regionChoice_;
+    int             nStatic_ = 0, nRegion_ = 0;
     QSlider*        stepSlider_ = nullptr;
     QPushButton*    playBtn_   = nullptr;
     QLabel*         stepLabel_ = nullptr;

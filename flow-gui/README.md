@@ -117,7 +117,14 @@ results, animate them in 3D, and edit decks — all in one window.
   anywhere on it, to jump straight to that report step** (the date is shown
   next to it and on the view; scrubbing switches to the dynamic property, so
   the bar always shows what it says it does) — vertical exaggeration,
-  orbit/pan/zoom camera, and a color legend. The default view frames the
+  orbit/pan/zoom camera, and a color legend. **Region arrays** — the INIT
+  file's integer cell arrays: SATNUM, PVTNUM, EQLNUM, FIPNUM, EOSNUM when the
+  deck sets it, MPI_RANK — are in the static list, drawn a flat colour per
+  region number with a legend giving each region's cell count; a number keeps
+  its colour from one array to the next. The *regions* filter draws only the
+  cells of chosen regions of any of those arrays (`2`, or `1, 3-5`), whatever
+  property is shown, and the colour scale is then taken over those cells
+  alone — the gas saturation in one equilibration region, say. The default view frames the
   model with its long horizontal axis across the screen (from a principal-
   axis analysis of the grid), seen from the side and slightly above. The
   orbit is **unrestricted** — keep dragging past the side view to get under

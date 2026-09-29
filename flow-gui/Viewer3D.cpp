@@ -12,6 +12,8 @@
 
 #include "CasePath.h"
 
+#include "DeckRegions.h"
+
 #include <opm/io/eclipse/EGrid.hpp>
 #include <opm/io/eclipse/EInit.hpp>
 #include <opm/io/eclipse/ERst.hpp>
@@ -25,6 +27,8 @@
 #include <QHBoxLayout>
 #include <QJsonObject>
 #include <QLabel>
+#include <QLineEdit>
+#include <QRegularExpression>
 #include <QMouseEvent>
 #include <QSignalBlocker>
 #include <QPainter>
@@ -41,6 +45,8 @@
 #include <array>
 #include <cmath>
 #include <exception>
+#include <map>
+#include <set>
 #include <tuple>
 
 // ===========================================================================
@@ -111,6 +117,7 @@ in float vLight;
 uniform bool uFlat;
 out vec4 frag;
 void main() {
+    if (vCol.r < 0.0) discard;      // a cell outside the region filter
     frag = uFlat ? vec4(vCol, 1.0) : vec4(vCol * vLight, 1.0);
 }
 )";
@@ -155,6 +162,10 @@ void GridGLWidget::setMesh(std::vector<float> pos, std::vector<float> nrm, int c
     vertCount_ = int(pos_.size() / 3);
     col_.assign(pos_.size(), 0.6f);          // grey until values arrive
     hasValues_ = false;
+    values_.clear(); regions_.clear(); mask_.clear();
+    categorical_ = false;
+    regionLegend_.clear();
+    shownCells_ = cellCount;
 
     // bounding box for the camera
     bboxMin_ = QVector3D( 1e30f,  1e30f,  1e30f);
@@ -202,21 +213,88 @@ void GridGLWidget::setMesh(std::vector<float> pos, std::vector<float> nrm, int c
 void GridGLWidget::setCellValues(const std::vector<float>& v, const QString& legendTitle)
 {
     legendTitle_ = legendTitle;
-    if (int(v.size()) != cellCount_ || cellCount_ == 0) {
-        hasValues_ = false;
-        std::fill(col_.begin(), col_.end(), 0.6f);
-    } else {
-        vmin_ = *std::min_element(v.begin(), v.end());
-        vmax_ = *std::max_element(v.begin(), v.end());
+    values_ = v;
+    regions_.clear();
+    categorical_ = false;
+    recolor();
+}
+
+void GridGLWidget::setCellRegions(const std::vector<int>& r, const QString& legendTitle)
+{
+    legendTitle_ = legendTitle;
+    regions_ = r;
+    values_.clear();
+    categorical_ = true;
+    recolor();
+}
+
+void GridGLWidget::setCellMask(std::vector<char> visible)
+{
+    mask_ = std::move(visible);
+    recolor();
+}
+
+QColor GridGLWidget::regionColor(int region)
+{
+    // Okabe-Ito, then the rest of Tol's muted set: thirteen that stay apart
+    // for the common colour blindnesses, which covers most decks. Past that,
+    // hues a golden angle apart, so consecutive numbers still differ.
+    static const QColor kBase[] = {
+        QColor(0x00, 0x72, 0xB2), QColor(0xE6, 0x9F, 0x00), QColor(0x00, 0x9E, 0x73),
+        QColor(0xCC, 0x79, 0xA7), QColor(0x56, 0xB4, 0xE9), QColor(0xD5, 0x5E, 0x00),
+        QColor(0xF0, 0xE4, 0x42), QColor(0x33, 0x22, 0x88), QColor(0x88, 0x22, 0x55),
+        QColor(0x44, 0xAA, 0x99), QColor(0x99, 0x99, 0x33), QColor(0xAA, 0x44, 0x99),
+        QColor(0xCC, 0x66, 0x77),
+    };
+    constexpr int kBaseCount = int(sizeof(kBase) / sizeof(kBase[0]));
+    if (region <= 0) return QColor(0x40, 0x40, 0x40);
+    if (region <= kBaseCount) return kBase[region - 1];
+    const double hue = std::fmod(double(region) * 137.508, 360.0);
+    return QColor::fromHsvF(hue / 360.0, region % 2 ? 0.75 : 0.55, region % 3 ? 0.85 : 0.65);
+}
+
+void GridGLWidget::recolor()
+{
+    hasValues_ = false;
+    regionLegend_.clear();
+    const bool masked = cellCount_ > 0 && int(mask_.size()) == cellCount_;
+    const auto shown = [&](int c) { return !masked || mask_[size_t(c)] != 0; };
+    const auto paint = [this](int c, float r, float g, float b) {
+        float* dst = &col_[size_t(c) * 36 * 3];
+        for (int k = 0; k < 36; ++k) { dst[0] = r; dst[1] = g; dst[2] = b; dst += 3; }
+    };
+    shownCells_ = 0;
+    for (int c = 0; c < cellCount_; ++c) if (shown(c)) ++shownCells_;
+
+    if (categorical_ && int(regions_.size()) == cellCount_ && cellCount_ > 0) {
+        std::map<int, int> count;
+        for (int c = 0; c < cellCount_; ++c) if (shown(c)) ++count[regions_[size_t(c)]];
+        for (const auto& [reg, n] : count) regionLegend_.push_back({ reg, n });
+        for (int c = 0; c < cellCount_; ++c) {
+            const QColor q = regionColor(regions_[size_t(c)]);
+            paint(c, float(q.redF()), float(q.greenF()), float(q.blueF()));
+        }
+        hasValues_ = !regionLegend_.isEmpty();
+    } else if (!categorical_ && int(values_.size()) == cellCount_ && cellCount_ > 0) {
+        bool any = false;
+        for (int c = 0; c < cellCount_; ++c) {
+            if (!shown(c)) continue;
+            const float v = values_[size_t(c)];
+            if (!any) { vmin_ = vmax_ = v; any = true; }
+            else      { vmin_ = std::min(vmin_, v); vmax_ = std::max(vmax_, v); }
+        }
         const float span = (vmax_ > vmin_) ? (vmax_ - vmin_) : 1.0f;
-        hasValues_ = true;
         for (int c = 0; c < cellCount_; ++c) {
             float r, g, b;
-            jet((v[c] - vmin_) / span, r, g, b);
-            float* dst = &col_[size_t(c) * 36 * 3];
-            for (int k = 0; k < 36; ++k) { dst[0]=r; dst[1]=g; dst[2]=b; dst += 3; }
+            jet((values_[size_t(c)] - vmin_) / span, r, g, b);
+            paint(c, r, g, b);
         }
+        hasValues_ = any;
+    } else {
+        std::fill(col_.begin(), col_.end(), 0.6f);
     }
+    if (masked)
+        for (int c = 0; c < cellCount_; ++c) if (!shown(c)) paint(c, -1.f, -1.f, -1.f);
     colorDirty_ = true;
     update();
 }
@@ -418,7 +496,34 @@ void GridGLWidget::paintGL()
         return;
     }
 
-    if (hasValues_) {
+    if (cellCount_ > 0 && shownCells_ == 0) {
+        p.setPen(QColor(0x55, 0x5b, 0x61));
+        p.drawText(rect(), Qt::AlignCenter,
+                   QStringLiteral("no cell is in the chosen regions"));
+    }
+
+    if (hasValues_ && categorical_) {
+        // A swatch per region, with how many of the cells drawn it holds - the
+        // distribution, which a colour on its own does not give.
+        const int x = 14, y = 40, row = 16;
+        p.setPen(Qt::black);
+        p.drawText(x, y - 10, legendTitle_);
+        const int fit  = std::max(1, (height() - y - 60) / row);
+        const int n    = int(regionLegend_.size());
+        const int rows = n > fit ? fit - 1 : n;
+        for (int i = 0; i < rows; ++i) {
+            const auto& e = regionLegend_[i];
+            const QRect sw(x, y + i * row, 18, 12);
+            p.fillRect(sw, regionColor(e.region));
+            p.drawRect(sw);
+            p.drawText(x + 24, y + i * row + 11,
+                       QStringLiteral("%1   %2 cell%3").arg(e.region).arg(e.cells)
+                           .arg(e.cells == 1 ? QString() : QStringLiteral("s")));
+        }
+        if (rows < n)
+            p.drawText(x + 24, y + rows * row + 11,
+                       QStringLiteral("+ %1 more").arg(n - rows));
+    } else if (hasValues_) {
         const int x = 14, y = 40, w = 18, h = 180;
         QLinearGradient gr(x, y + h, x, y);
         for (int i = 0; i <= 10; ++i) {
@@ -576,6 +681,27 @@ Viewer3DWidget::Viewer3DWidget(QWidget* parent)
         row->addWidget(staticSel_); row->addWidget(staticBox_);
         row->addWidget(dynSel_);    row->addWidget(dynBox_);
 
+        // Draw only the cells of some regions, whatever is being coloured: the
+        // saturation in one equilibration region, the pressure in one PVT
+        // region. The region arrays are the INIT file's integer cell arrays.
+        regionBox_ = new QComboBox;
+        regionBox_->addItem(QStringLiteral("all cells"));
+        regionBox_->setToolTip(QStringLiteral(
+            "draw only the cells in some regions of this array; the property "
+            "shown is coloured over those cells alone"));
+        regionNums_ = new QLineEdit;
+        regionNums_->setMaximumWidth(120);
+        regionNums_->setEnabled(false);
+        regionNums_->setToolTip(QStringLiteral(
+            "the region numbers to draw, e.g. \"2\" or \"1, 3-5\"; empty draws "
+            "every region. Applied on Enter."));
+        regionInfo_ = new QLabel;
+        regionInfo_->setStyleSheet(QStringLiteral("color:#555b61;"));
+        row->addWidget(new QLabel(QStringLiteral("regions:")));
+        row->addWidget(regionBox_);
+        row->addWidget(regionNums_);
+        row->addWidget(regionInfo_);
+
         wellsChk_ = new QCheckBox(QStringLiteral("wells"));
         wellsChk_->setChecked(true);
         row->addWidget(wellsChk_);
@@ -678,6 +804,11 @@ Viewer3DWidget::Viewer3DWidget(QWidget* parent)
         connect(dynBox_,    &QComboBox::currentIndexChanged, this, onProp);
         connect(staticSel_, &QRadioButton::toggled, this, onProp);
         connect(wellsChk_, &QCheckBox::toggled, this, [this](bool) { showWells(); });
+        connect(regionBox_, &QComboBox::currentIndexChanged, this, [this](int i) {
+            regionChoice_ = i > 0 ? regionBox_->currentText() : QString();
+            applyRegionFilter();
+        });
+        connect(regionNums_, &QLineEdit::editingFinished, this, [this] { applyRegionFilter(); });
         connect(autoRef_, &QCheckBox::toggled, this, [this](bool on) {
             if (!followTimer_) return;
             // Only meaningful while a run is writing the case; setRunningCase()
@@ -1002,6 +1133,8 @@ QJsonObject Viewer3DWidget::uiState() const
     if (shadingChk_) o[QStringLiteral("shading")] = shadingChk_->isChecked();
     if (autoRef_)    o[QStringLiteral("autoRefresh")] = autoRef_->isChecked();
     if (zscale_)     o[QStringLiteral("zscale")] = zscale_->value();
+    o[QStringLiteral("regionFilter")] = regionChoice_;
+    if (regionNums_) o[QStringLiteral("regionNumbers")] = regionNums_->text();
     if (stepSlider_ && stepSlider_->isEnabled())
         o[QStringLiteral("step")] = stepSlider_->value();
     return o;
@@ -1018,6 +1151,9 @@ void Viewer3DWidget::restoreUiState(const QJsonObject& state)
         zscale_->setValue(state.value(QStringLiteral("zscale")).toDouble(3.0));
     if (autoRef_ && state.contains(QStringLiteral("autoRefresh")))
         autoRef_->setChecked(state.value(QStringLiteral("autoRefresh")).toBool(true));
+    // Applied when a case is opened and its region arrays are known.
+    regionChoice_ = state.value(QStringLiteral("regionFilter")).toString();
+    if (regionNums_) regionNums_->setText(state.value(QStringLiteral("regionNumbers")).toString());
 
     // The case list is mirrored from the Summary Plots tab, so by now it holds
     // the restored cases; select ours without opening it (see showEvent).
@@ -1046,6 +1182,12 @@ void Viewer3DWidget::openCase(int idx)
     lastUnrstSize_ = -1;                // ... and what it had been indexed at
     steps_.clear(); cellGlob_.clear();
     staticBox_->clear(); dynBox_->clear();
+    {
+        const QSignalBlocker block(regionBox_);
+        while (regionBox_->count() > 1) regionBox_->removeItem(1);
+    }
+    regionInfo_->clear();
+    nStatic_ = nRegion_ = 0;
     stepSlider_->setEnabled(false);
     stepSlider_->setRange(0, 0);
     gl_->setWells({});
@@ -1103,6 +1245,7 @@ void Viewer3DWidget::openCase(int idx)
     }
 
     populateProperties();
+    applyRegionFilter();
     if (!steps_.empty()) {
         stepSlider_->setEnabled(true);
         stepSlider_->setRange(0, int(steps_.size()) - 1);
@@ -1123,9 +1266,10 @@ void Viewer3DWidget::openCase(int idx)
             stepSlider_->setValue(pendingStep_);
     }
     const auto d = grid_->dimension();
-    setStatus(QStringLiteral("%1: %2x%3x%4, %5 active cells, %6 static, %7 dynamic, %8 report steps%9")
+    setStatus(QStringLiteral("%1: %2x%3x%4, %5 active cells, %6 static, %7 region, "
+                             "%8 dynamic, %9 report steps%10")
         .arg(cf.label).arg(d[0]).arg(d[1]).arg(d[2]).arg(grid_->activeCells())
-        .arg(staticBox_->count()).arg(dynBox_->count()).arg(steps_.size()).arg(rstNote));
+        .arg(nStatic_).arg(nRegion_).arg(dynBox_->count()).arg(steps_.size()).arg(rstNote));
     showProperty();
     showWells();
 }
@@ -1191,12 +1335,30 @@ void Viewer3DWidget::populateProperties()
     staticBox_->blockSignals(true);
     dynBox_->blockSignals(true);
     if (init_ && grid_) {
-        for (const auto& [name, typ, size] : init_->list_arrays())
-            if ((typ == Opm::EclIO::REAL || typ == Opm::EclIO::DOUB) &&
-                size == grid_->activeCells())
+        QStringList regions;
+        for (const auto& [name, typ, size] : init_->list_arrays()) {
+            if (size != grid_->activeCells()) continue;
+            if (typ == Opm::EclIO::REAL || typ == Opm::EclIO::DOUB) {
                 staticBox_->addItem(QString::fromStdString(name));
+                ++nStatic_;
+            } else if (typ == Opm::EclIO::INTE) {
+                regions << QString::fromStdString(name);
+            }
+        }
+        // Region arrays after the rest, and marked, so showProperty() draws
+        // them a colour per region rather than on a scale.
+        if (!regions.isEmpty() && nStatic_ > 0) staticBox_->insertSeparator(staticBox_->count());
+        for (const QString& r : regions) {
+            staticBox_->addItem(r, true);
+            const QSignalBlocker block(regionBox_);
+            regionBox_->addItem(r);
+        }
+        nRegion_ = int(regions.size());
         const int poro = staticBox_->findText(QStringLiteral("PORO"));
         if (poro >= 0) staticBox_->setCurrentIndex(poro);
+        const QSignalBlocker block(regionBox_);
+        const int keep = regionChoice_.isEmpty() ? -1 : regionBox_->findText(regionChoice_);
+        regionBox_->setCurrentIndex(std::max(0, keep));
     }
     populateDynamicProperties();
     staticBox_->blockSignals(false);
@@ -1300,6 +1462,11 @@ void Viewer3DWidget::showProperty()
             const QString name = staticBox_->currentText();
             if (name.isEmpty() || !init_) { gl_->setCellValues({}, QString()); return; }
             const std::string n = name.toStdString();
+            if (staticBox_->currentData().toBool()) {
+                gl_->setCellRegions(regionArray(name), name);
+                gl_->setStepText(QString());
+                return;
+            }
             std::vector<float> v;
             // INIT arrays may be REAL or DOUB
             try { v = init_->getInitData<float>(n); }
@@ -1316,6 +1483,57 @@ void Viewer3DWidget::showProperty()
         setStatus(QStringLiteral("property load failed: %1")
                       .arg(QString::fromLocal8Bit(e.what())));
     }
+}
+
+std::vector<int> Viewer3DWidget::regionArray(const QString& name) const
+{
+    if (!init_ || !grid_ || name.isEmpty()) return {};
+    try {
+        const std::string n = name.toStdString();
+        if (!init_->hasKey(n)) return {};
+        std::vector<int> r = init_->getInitData<int>(n);
+        if (int(r.size()) == grid_->activeCells()) return r;
+    } catch (...) {}
+    return {};
+}
+
+void Viewer3DWidget::applyRegionFilter()
+{
+    const QString name = regionBox_->currentIndex() > 0 ? regionBox_->currentText() : QString();
+    regionNums_->setEnabled(!name.isEmpty());
+    regionInfo_->clear();
+    const std::vector<int> r = regionArray(name);
+    if (r.empty()) {
+        regionNums_->setPlaceholderText(QString());
+        gl_->setCellMask({});
+        return;
+    }
+    const std::set<int> present(r.begin(), r.end());
+    regionNums_->setPlaceholderText(QStringLiteral("all: %1")
+        .arg(flowgui::regionNumbersText(QList<int>(present.begin(), present.end()))));
+
+    // "1, 3-5": numbers and ranges, by comma or space. Empty keeps them all.
+    std::set<int> want;
+    QStringList bad;
+    for (const QString& tok : regionNums_->text().split(
+             QRegularExpression(QStringLiteral("[,;\\s]+")), Qt::SkipEmptyParts)) {
+        const QStringList ab = tok.split(QLatin1Char('-'));
+        bool ok1 = false, ok2 = false;
+        const int a = ab.value(0).toInt(&ok1);
+        const int b = ab.size() == 2 ? ab.value(1).toInt(&ok2) : a;
+        if (!ok1 || (ab.size() == 2 && !ok2) || ab.size() > 2) { bad << tok; continue; }
+        for (int k = std::min(a, b); k <= std::max(a, b); ++k) want.insert(k);
+    }
+    if (want.empty()) want = present;
+
+    std::vector<char> mask(r.size());
+    int shown = 0;
+    for (std::size_t c = 0; c < r.size(); ++c)
+        if ((mask[c] = char(want.count(r[c]) ? 1 : 0))) ++shown;
+    gl_->setCellMask(std::move(mask));
+    regionInfo_->setText(bad.isEmpty()
+        ? QStringLiteral("%1 of %2 cells").arg(shown).arg(r.size())
+        : QStringLiteral("cannot read %1").arg(bad.join(QStringLiteral(", "))));
 }
 
 // opm-common's EclFile caches every array it hands out and offers no per-array
