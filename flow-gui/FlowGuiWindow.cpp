@@ -334,6 +334,10 @@ FlowGuiWindow::FlowGuiWindow()
             if (f.isEmpty()) return;
             flowgui::rememberDir(QStringLiteral("simulator"), f);
             rememberSimulator(f);                    // to the top of the list
+            updateSimulatorAge();
+            appendLog(QStringLiteral("simulator: %1   %2\n")
+                          .arg(QDir::toNativeSeparators(resolveSimulator()),
+                               simAge_->text()));
         });
         // Typing a path or picking one from the list: both report what will
         // run, and a typed one joins the list.
@@ -714,6 +718,12 @@ FlowGuiWindow::FlowGuiWindow()
     loadSettings();
     exePath_ = resolveSimulator();
     updateSimulatorAge();
+    // The date is the file's, and a rebuild while the GUI is open changes it;
+    // "2 minutes ago" also goes stale by itself.
+    auto* ageTick = new QTimer(this);
+    ageTick->setInterval(30000);
+    connect(ageTick, &QTimer::timeout, this, [this] { updateSimulatorAge(); });
+    ageTick->start();
 
     // The GUI's own age, by the same file date as the simulator's. A version
     // number does not move between two builds of the same source, so on its
@@ -828,6 +838,12 @@ void FlowGuiWindow::saveSettings()
     s.setValue(QStringLiteral("queue"), queue);
     s.setValue(QStringLiteral("jobs"), settingFromJson(jobsState()));
     s.setValue(QStringLiteral("ui"),   settingFromJson(collectUiState()));
+}
+
+void FlowGuiWindow::changeEvent(QEvent* ev)
+{
+    if (ev->type() == QEvent::ActivationChange && isActiveWindow()) updateSimulatorAge();
+    QMainWindow::changeEvent(ev);
 }
 
 void FlowGuiWindow::closeEvent(QCloseEvent* ev)
@@ -1190,6 +1206,7 @@ void FlowGuiWindow::onRun(bool selectedOnly)
     // always re-resolve: the Simulator override may have changed since the
     // last run, and it must win over whatever executable ran previously
     exePath_ = resolveSimulator();
+    updateSimulatorAge();
     if (exePath_.isEmpty() || !QFileInfo::exists(exePath_)) {
         const QString custom = currentSimulator();
         QMessageBox::critical(this, QLatin1String(kAppName),
@@ -1200,6 +1217,9 @@ void FlowGuiWindow::onRun(bool selectedOnly)
                                  "not exist:\n%1").arg(custom));
         return;
     }
+    // Which build this batch runs, dated at the moment it starts.
+    appendLog(QStringLiteral("simulator: %1   %2\n")
+                  .arg(QDir::toNativeSeparators(exePath_), simAge_->text()));
     const int cores = QThread::idealThreadCount();
     if (cores > 0 && ranksSpin_->value() * threadsSpin_->value() > cores)
         appendLog(QStringLiteral("note: %1 ranks x %2 threads oversubscribes the "

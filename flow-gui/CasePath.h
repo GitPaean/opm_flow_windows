@@ -93,6 +93,7 @@ inline QString ageText(const QDateTime& when)
     const qint64 mins = when.secsTo(QDateTime::currentDateTime()) / 60;
     if (mins < 2)       return QStringLiteral("just now");
     if (mins < 60)      return QStringLiteral("%1 minutes ago").arg(mins);
+    if (mins < 120)     return QStringLiteral("1 hour ago");
     if (mins < 60 * 48) return QStringLiteral("%1 hours ago").arg(mins / 60);
     return QStringLiteral("%1 days ago").arg(mins / (60 * 24));
 }

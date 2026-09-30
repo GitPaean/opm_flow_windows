@@ -47,6 +47,9 @@ public:
 
 protected:
     void closeEvent(QCloseEvent* ev) override;
+    // Coming back to the window, often from a terminal that just rebuilt flow:
+    // re-read the simulator's file date.
+    void changeEvent(QEvent* ev) override;
     void dragEnterEvent(QDragEnterEvent* ev) override;
     void dropEvent(QDropEvent* ev) override;
 
