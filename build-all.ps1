@@ -298,12 +298,34 @@ if (-not $SkipClone) {
     # byte-position-sensitive formatted Eclipse files (e.g. tests/ECLFILE.FINIT)
     # whose readers reject the injected \r, so sources must be checked out
     # byte-exact.
+    #
+    # The DUNE GitLab is the source of the core modules; github.com/dune-project
+    # mirrors them with the same commits and tags. Fall back to the mirror when
+    # GitLab does not answer: its proxy returning 524 once stopped the weekly
+    # build before it compiled anything.
     foreach ($m in 'dune-common','dune-geometry','dune-grid','dune-istl') {
         $dst = Join-Path $Root "src\$m"
         if (-not (Test-Path (Join-Path $dst '.git'))) {
-            Invoke-Native { git clone -c core.autocrlf=false "https://gitlab.dune-project.org/core/$m.git" $dst }
+            $cloned = $false
+            foreach ($url in "https://gitlab.dune-project.org/core/$m.git",
+                             "https://github.com/dune-project/$m.git") {
+                $prev = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+                git clone -c core.autocrlf=false $url $dst
+                $cloned = ($LASTEXITCODE -eq 0)
+                $ErrorActionPreference = $prev
+                if ($cloned) { break }
+                Write-Warning "could not clone $m from $url"
+                if (Test-Path $dst) { Remove-Item -Recurse -Force $dst }
+            }
+            if (-not $cloned) { throw "could not clone $m from GitLab or its GitHub mirror" }
         }
-        Invoke-Native { git -C $dst fetch --tags --quiet }
+        # Only go back to the remote when the tag is not there yet, so a
+        # rebuild in an existing tree does not depend on GitLab either.
+        $prev = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+        git -C $dst rev-parse --verify --quiet "refs/tags/$DuneVersion" | Out-Null
+        $haveTag = ($LASTEXITCODE -eq 0)
+        $ErrorActionPreference = $prev
+        if (-not $haveTag) { Invoke-Native { git -C $dst fetch --tags --quiet } }
         Invoke-Native { git -C $dst checkout --quiet $DuneVersion }
     }
     # Apply the DUNE Windows/MSVC patches (DUNE is built from source).
