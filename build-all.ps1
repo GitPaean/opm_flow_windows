@@ -17,9 +17,13 @@
     - builds DUNE + OPM into separate build-mpi\ / install-mpi\ trees
   The serial build (build\ / install\) is left untouched.
 
+  The OPM modules are cloned from the 'windows' branch of the GitPaean forks,
+  which carry the Windows/MSVC fixes on top of OPM master (-OpmOrg/-OpmBranch).
+
   Usage:
     .\build-all.ps1                      # serial build
     .\build-all.ps1 -Mpi                 # parallel (MPI) build
+    .\build-all.ps1 -Mpi -OpenMP -SimTarget flow   # what the release packages ship
     .\build-all.ps1 -SkipClone -SkipDeps
 #>
 [CmdletBinding()]
@@ -43,11 +47,17 @@ param(
     [int]$Jobs = 4,
     [string]$DuneVersion = 'v2.10.0',
     # GitHub org and branch to clone opm-common/opm-grid/opm-simulators from.
-    # The Windows/MSVC fixes live on the 'windows' branch of the forks below,
-    # so point these at them, e.g. -OpmOrg GitPaean -OpmBranch windows.
-    [string]$OpmOrg = 'OPM',
-    [string]$OpmBranch = ''
+    # Upstream OPM does not build with MSVC on its own: the Windows/MSVC fixes
+    # live on the 'windows' branch of the GitPaean forks, rebased onto OPM
+    # master as it moves, so that is the default. -OpmOrg OPM -OpmBranch master
+    # takes upstream as it is.
+    [string]$OpmOrg = 'GitPaean',
+    [string]$OpmBranch = 'windows'
 )
+
+# 'windows' is the GitPaean forks' branch. Another org given without a branch
+# means that org's own default branch - upstream OPM has no 'windows' to clone.
+if ($OpmOrg -ne 'GitPaean' -and -not $PSBoundParameters.ContainsKey('OpmBranch')) { $OpmBranch = '' }
 
 $ErrorActionPreference = 'Stop'
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
