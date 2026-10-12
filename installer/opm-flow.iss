@@ -91,7 +91,8 @@ Name: "gui"; Description: "Graphical front end (flow-gui.exe and the Qt runtime)
 
 [Files]
 ; The simulator half: everything staged into bin\ except the GUI executable,
-; the Qt DLLs beside it and the Qt plugin folders.
+; the Qt DLLs beside it, Qt's software OpenGL renderer and the Qt plugin
+; folders.
 ;
 ; An Excludes pattern is matched against the END of a path, and a directory
 ; matching one does not take its contents with it - so each plugin folder needs
@@ -99,11 +100,13 @@ Name: "gui"; Description: "Graphical front end (flow-gui.exe and the Qt runtime)
 ; Naming only the folder would leave every plugin DLL in a simulator-only
 ; install.
 Source: "{#StageDir}\bin\*";    DestDir: "{app}\bin"; Flags: recursesubdirs; \
-    Excludes: "flow-gui.exe,Qt6*.dll,platforms,platforms\*,styles,styles\*,imageformats,imageformats\*,generic,generic\*,iconengines,iconengines\*,networkinformation,networkinformation\*,tls,tls\*"; \
+    Excludes: "flow-gui.exe,Qt6*.dll,opengl32sw.dll,platforms,platforms\*,styles,styles\*,imageformats,imageformats\*,generic,generic\*,iconengines,iconengines\*,networkinformation,networkinformation\*,tls,tls\*"; \
     Components: sim
 ; ... and the GUI half, listed by the same names package-flow.ps1 stages.
 Source: "{#StageDir}\bin\flow-gui.exe"; DestDir: "{app}\bin"; Components: gui
 Source: "{#StageDir}\bin\Qt6*.dll";     DestDir: "{app}\bin"; Components: gui
+Source: "{#StageDir}\bin\opengl32sw.dll"; DestDir: "{app}\bin"; \
+    Flags: skipifsourcedoesntexist; Components: gui
 Source: "{#StageDir}\bin\platforms\*";          DestDir: "{app}\bin\platforms"; \
     Flags: recursesubdirs skipifsourcedoesntexist; Components: gui
 Source: "{#StageDir}\bin\styles\*";             DestDir: "{app}\bin\styles"; \
