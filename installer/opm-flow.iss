@@ -24,8 +24,10 @@
 ; SELF-SIGNED cert does NOT help SmartScreen. Without /DSignExe the installer is
 ; built unsigned and those warnings are expected but dismissible (see README).
 
+; The OPM master snapshot the package is built from, as package-flow.ps1 names
+; it (see its -Version).
 #ifndef AppVersion
-  #define AppVersion "2026.10-pre"
+  #define AppVersion "master-2026-10-12"
 #endif
 #define StageDir "..\dist\opm-flow-" + AppVersion
 

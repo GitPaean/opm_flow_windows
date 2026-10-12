@@ -18,8 +18,10 @@
 #>
 [CmdletBinding()]
 param(
-    [string]$StageVersion = '2026.10-pre',       # folder suffix from package-flow.ps1
-    [string]$MsixVersion  = '2026.10.0.0',       # MSIX requires numeric x.x.x.x
+    [string]$StageVersion = 'master-2026-10-12', # folder suffix from package-flow.ps1
+    # MSIX requires numeric x.x.x.x, and a sideloaded package only upgrades to a
+    # higher one: the snapshot date as yyyy.m.d.0 keeps every build above the last.
+    [string]$MsixVersion  = '2026.10.12.0',
     [string]$Publisher    = 'CN=OPM-Windows-Dev',
     [switch]$Sign
 )

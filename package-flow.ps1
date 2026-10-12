@@ -11,7 +11,9 @@
     LICENSE.txt GPLv3 notice + source availability statement
 
   Options:
-    -Version    package version string          (default 2026.10-pre)
+    -Version    package version string          (default master-2026-10-12:
+                the date of the OPM master snapshot the package is built
+                from, not OPM's own version, which flow --version reports)
     -Simulators simulator exes to include       (default: flow — it contains
                 all model variants incl. black-oil; add e.g. flow_blackoil
                 only if a smaller single-model binary is wanted)
@@ -22,7 +24,7 @@
 #>
 [CmdletBinding()]
 param(
-    [string]  $Version    = '2026.10-pre',
+    [string]  $Version    = 'master-2026-10-12',
     [string[]]$Simulators = @('flow'),
     # Package the Intel MPI build (build-impi\) instead of the MS-MPI one.
     # The Intel MPI runtime is NOT redistributed here: flow.exe is GPLv3, and
@@ -238,7 +240,12 @@ problems with this package at
     https://github.com/GitPaean/opm_flow_windows/issues
 and not to OPM - unless the same thing happens on Linux, in which case it is
 OPM's to hear about.
+$(if ($Version -match '^master-(\d{4}-\d{2}-\d{2})') { @"
 
+Built from OPM master as of $($Matches[1]), not from an OPM release, so
+flow --version reports the development version master carried that day.
+
+"@ })
 Contents
   bin\flow.exe            reservoir simulator (all model variants,
                           including black-oil)
