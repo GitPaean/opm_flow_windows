@@ -162,7 +162,7 @@ rebase conflict or later build failure prevents a binary from being produced.
 | `installer/` | Inno Setup script producing `OPM-Flow-<ver>-Setup.exe` (see [PACKAGING.md](PACKAGING.md)) |
 | `packaging/` | MSIX build script for sideloading / Microsoft Store (see [PACKAGING.md](PACKAGING.md)) |
 | `PACKAGING.md` | Distribution guide: portable zip, installer, MSIX/Store, licensing notes |
-| `release-notes/` | Per-release notes shown on the GitHub Releases page (e.g. `v2026.10-pre.md`); published with `gh release edit --notes-file` (see [PACKAGING.md](PACKAGING.md)) |
+| `release-notes/` | Per-release notes shown on the GitHub Releases page (e.g. `master-2026-10-12.md`, named after the OPM master snapshot); published with `gh release edit --notes-file` (see [PACKAGING.md](PACKAGING.md)) |
 | `ci/windows.yml` | GitHub Actions workflow |
 | `.github/workflows/windows-weekly.yml` | Weekly build and Norne runs against both MPI implementations, with source revision records |
 | `BUILD_WINDOWS.md` | Full step-by-step guide (§1–14): toolchain, deps, flags, MPI, patches, CI |

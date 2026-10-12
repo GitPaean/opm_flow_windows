@@ -3,7 +3,7 @@
 Patches applied to the source trees to build OPM-flow natively on Windows with
 MSVC. Kept here so they can be upstreamed as PRs.
 
-## The series as it stands (2026-09-03)
+## The series as it stands (2026-10-12, on OPM master of that day)
 
 The sections below are the working record, in the order things were found.
 What is on the branches is the folded result: one commit per topic, each
@@ -12,7 +12,7 @@ are exactly what the record below describes.
 
 | repository (`windows` branch of GitPaean/...) | commits |
 |---|---|
-| opm-common | Portability and cross-platform fixes exposed by a Windows build · Pin LF line endings for Eclipse test data · Windows/MSVC enablement · Link MPI directly when the DUNE modules do not propagate it · Share the FCMacros.h fallback through opm-common |
+| opm-common | Write the time conversions with the C++20 <chrono> calendar types · Portability and cross-platform fixes exposed by a Windows build · Pin LF line endings for Eclipse test data · Windows/MSVC enablement · Link MPI directly when the DUNE modules do not propagate it · Share the FCMacros.h fallback through opm-common · Add the <stdexcept> that std::invalid_argument needs · Keep the hysteresis snapshot loops out of line on MSVC |
 | opm-grid | Enable Fortran only when a compiler exists, and fall back for FCMacros.h · Make cpgrid compile with MSVC · Index-based chunk access so OpenMP loops build on MSVC · Use unsigned rather than the POSIX uint typedef in tests · Pin LF line endings for Eclipse test data |
 | opm-simulators | Portability fixes and bugs exposed by a Windows build · Work around MSVC front-end limitations · Provide Windows equivalents for the POSIX interfaces used · Exempt the simulator from Windows power throttling · Pin LF line endings for Eclipse test data · Harden reservoir coupling slave spawning for process-manager launch contexts |
 | opm-upscaling | Build on MSVC: Fortran only when a compiler exists, fall back for FCMacros.h · Disambiguate FieldMatrix operator*= for MSVC · Pin LF line endings for the Eclipse test data |
@@ -191,6 +191,26 @@ are spawned by the smpd service, so they always count as background.
   Recovers the background penalty (579 -> ~357 s); the remaining gap to
   297 s is a foreground-only boost the OS grants the focused window.
   See BUILD_WINDOWS.md §9 for the measurements.
+
+## opm-common — MSVC 19.51 miscompiles the hysteresis snapshot (VS 2026)
+The `windows-latest` runners build with MSVC 19.51 (Build Tools 14.51); this
+harness's VS 2022 has 19.44, which compiles the same code correctly.
+- `opm/material/fluidmatrixinteractions/EclMaterialLawManager.hpp`: 19.51
+  compiled `Manager::captureBeginTimeStepState()` so that its three-phase path
+  returned without restoring the caller's `rbx` and `rsi`, and without taking
+  the directional snapshot. The caller,
+  `FlowProblemBlackoil::captureBeginTimeStepState_()`, then went on with the
+  cell count where its `this` had been, and every rank of Norne died at the
+  first time step. The snapshot only runs since OPM/opm-simulators#7495 turned
+  the state rollback on by default, which is when the weekly build started
+  failing (GitPaean/opm_flow_windows#7).
+- Fix: the cell-parameter loops in capture and restore were copies of the
+  directional helpers, so both now call those helpers, renamed
+  `captureHysteresisState_()` / `restoreHysteresisState_()` and kept out of line
+  on MSVC with `__declspec(noinline)`. No behavioural change on any compiler.
+  Re-ported on 2026-10-12 onto upstream's compact rollback storage (OPM/opm-common
+  a9c14b9f0, "Reduce size of hysteresis rollback storage"). Keep it until a
+  fixed MSVC reaches the runners.
 
 ## MPI support — MS-MPI on Windows  (RESOLVED — see "Zoltan for Windows" + "MPI RESULT" below)
 MS-MPI installed; DUNE (all 4) + opm-common build with MPI. opm-grid couples MPI

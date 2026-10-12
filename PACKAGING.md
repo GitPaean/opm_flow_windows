@@ -15,6 +15,11 @@ tiers, from simplest to Store-ready — all start from the same staging step.
                                  # (contains every model variant incl. black-oil)
 ```
 
+The version names the OPM master snapshot the package is built from, such as
+`master-2026-10-12`, rather than OPM's own version; see
+[docs/release-checklist.md](docs/release-checklist.md) for how a snapshot is
+chosen and named.
+
 Stages `dist\opm-flow-<version>\`:
 
 | Piece | Contents |
@@ -126,12 +131,13 @@ one-time individual registration fee):
 ## Publishing the release notes
 
 The text shown on each GitHub release lives in the repo at
-`release-notes/v<version>.md` — **tracked**, so its history is versioned
+`release-notes/<tag>.md`, the tag being the snapshot's name (e.g.
+`release-notes/master-2026-10-12.md`) — **tracked**, so its history is versioned
 alongside the code (unlike `dist/`, which is packaging output and git-ignored).
 Edit that file, then publish it to the release page with the GitHub CLI:
 
 ```powershell
-gh release edit v<version> -R GitPaean/opm_flow_windows --notes-file release-notes\v<version>.md
+gh release edit <tag> -R GitPaean/opm_flow_windows --notes-file release-notes\<tag>.md
 ```
 
 This updates only the notes text — it does **not** touch the uploaded assets.
