@@ -954,9 +954,23 @@ Viewer3DWidget::Viewer3DWidget(QWidget* parent)
     gl_ = new GridGLWidget;
     top->addWidget(gl_, 1);
 
+    auto* bottom = new QHBoxLayout;
     status_ = new QLabel(QStringLiteral(
         "run a job or open an EGRID - left-drag orbits, right-drag pans, wheel zooms"));
-    top->addWidget(status_);
+    bottom->addWidget(status_, 1);
+    // This tab is a quick look; point at the full viewer rather than grow
+    // into one. Kept short so it does not widen the window.
+    auto* more = new QLabel(QStringLiteral(
+        "More 3D tools: <a href=\"https://resinsight.org\">ResInsight</a>"));
+    more->setOpenExternalLinks(true);
+    more->setStyleSheet(QStringLiteral("color:#555b61;"));
+    more->setToolTip(QStringLiteral(
+        "ResInsight is the OPM project's free, open-source 3D viewer and "
+        "post-processor.\nIt opens the same EGRID, INIT and UNRST files, and "
+        "adds intersections, cell and property\nfilters, contour maps, well "
+        "paths, well log plots and fault display."));
+    bottom->addWidget(more);
+    top->addLayout(bottom);
 }
 
 Viewer3DWidget::~Viewer3DWidget() = default;

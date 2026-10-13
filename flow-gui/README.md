@@ -141,6 +141,10 @@ results, animate them in 3D, and edit decks — all in one window.
   are left alone, and the view moves to the neighbouring case (or goes blank
   once the last one is gone). Removing a case in the Summary Plots tab drops
   it here too, the same way adding and renaming already carry over.
+  The tab is meant for a quick look; a link under the view points to
+  [ResInsight](https://resinsight.org), the OPM project's full 3D viewer,
+  which opens the same files and adds intersections, cell and property
+  filters, contour maps, well log plots and more.
 - **Compare tab** — do two runs agree, and if not: which property, when,
   and how? Each UNRST cell field is reduced per report date to
   cells-outside-tolerance, max |A−B| and RMS, using compareECL's own
