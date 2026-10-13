@@ -83,7 +83,8 @@ The snapshot's date is that of the newest upstream commit of the three. Set it
 as the version defaults in `package-flow.ps1` (`master-YYYY-MM-DD`),
 `installer\opm-flow.iss` (the same) and `packaging\build-msix.ps1`
 (`YYYY.M.D.0`, since an MSIX version has to be numeric) and commit them together
-with `opm-sources.json`, so the harness commit the packages stamp names the
+with `opm-sources.json` and README.md (whose quick start `update-opm-pins.ps1`
+keeps naming the snapshot), so the harness commit the packages stamp names the
 snapshot and the OPM commits too.
 
 ## 2. Build

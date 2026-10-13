@@ -8,8 +8,11 @@ Windows compatibility shims, the DUNE patches, and a CI workflow. It does **not*
 contain the OPM / DUNE / Trilinos sources — `build-all.ps1` clones those into
 `src/`, `deps/`, and `vcpkg/` (all git-ignored) when you run it.
 
-> Status: validated end-to-end from a clean checkout — serial and 2-rank MPI runs
-> of SPE1 pass (see [VALIDATION.md](VALIDATION.md)).
+> Status: what the quick start builds - the pinned OPM sources - is built and run
+> on Norne, with MS-MPI and with Intel MPI, every night by
+> [CI](#continuous-integration); an open issue labelled `windows-pinned` means
+> that build is currently broken. The first clean-checkout walkthrough is in
+> [VALIDATION.md](VALIDATION.md).
 
 ## flow-gui at a glance
 The bundled [flow-gui](flow-gui/) workbench (Windows / Linux / macOS), here on
@@ -46,13 +49,23 @@ From a clone of this repo:
 ```powershell
 .\build-all.ps1
 ```
-Clones vcpkg + DUNE (v2.10.0) + OPM - the `windows` branch of the forks that
-carry the Windows fixes, see [below](#where-the-opm-windows-fixes-live) - applies
-the DUNE patches, installs deps, and builds in order. Result:
-`build\opm-simulators\bin\flow_blackoil.exe`. Run it:
+Clones vcpkg, DUNE (v2.10.0) and OPM, applies the DUNE patches, installs the
+dependencies, and builds in order. Result:
+`build\opm-simulators\bin\flow_blackoil.exe`, the black-oil simulator. Run it:
 ```powershell
 .\build\opm-simulators\bin\flow_blackoil.exe <deck>.DATA --output-dir=<dir>
 ```
+
+**Which OPM this builds:** OPM master of
+<!-- opm-snapshot -->2026-10-13<!-- /opm-snapshot --> with the Windows fixes on
+top - the commits [opm-sources.json](opm-sources.json) pins, built and run
+together, not whatever the forks' `windows` branches hold on the day you clone
+(see [Pinned OPM sources](#pinned-opm-sources)). `--version` reports the
+development version OPM master carried then, not a release number. The vcpkg
+dependencies, and for `-Mpi` Trilinos (for Zoltan), are not pinned: they come
+from those projects' current master. For the configuration the release packages
+ship - every model in one `flow`, MPI + OpenMP - see
+[Build your own copy of the release packages](#build-your-own-copy-of-the-release-packages).
 
 ## Quick start (parallel / MPI)
 ```powershell
@@ -143,9 +156,10 @@ branch, since GitHub serves commits by id.
 A checkout already in `src\` is never moved - it may be where you work on the
 series - but the build warns when it is not at its pin, since it then builds
 something other than the verified set. After rebasing the series and checking
-the result, `update-opm-pins.ps1` records the new set; it refuses a commit with
-local changes or one that is not pushed to the fork's branch. Commit
-`opm-sources.json` with the harness:
+the result, `update-opm-pins.ps1` records the new set, and the snapshot date the
+quick start above gives; it refuses a commit with local changes or one that is
+not pushed to the fork's branch. Commit `opm-sources.json` and README.md with
+the harness:
 [docs/release-checklist.md](docs/release-checklist.md) §1 has the whole round.
 
 ## Options

@@ -127,7 +127,19 @@ foreach ($m in $Modules) {
     }
 }
 
+# The README's quick start says which OPM snapshot a build gets, between these
+# markers; this script keeps it in step with the pins.
+$readme  = Join-Path $Root 'README.md'
+$marker  = '(<!-- opm-snapshot -->)[^<]*(<!-- /opm-snapshot -->)'
+
 if ($Check) {
+    if ($lock -and (Test-Path $readme)) {
+        $hit  = [regex]::Match([IO.File]::ReadAllText($readme), $marker)
+        $said = if ($hit.Success) { $hit.Value -replace '<!-- /?opm-snapshot -->', '' } else { $null }
+        if ($said -ne $lock.snapshot) {
+            Write-Warning "README.md names the snapshot '$said', opm-sources.json '$($lock.snapshot)': run update-opm-pins.ps1"
+        }
+    }
     if ($mismatch -gt 0) {
         Write-Warning "$mismatch module(s) not at the commits opm-sources.json pins"
         exit 1
@@ -168,4 +180,17 @@ if ($text -eq $current) {
 } else {
     [IO.File]::WriteAllText($pinFile, $text, (New-Object Text.UTF8Encoding($false)))
     Write-Host "Wrote opm-sources.json (snapshot $snapshot). Commit it with the harness."
+}
+
+if (Test-Path $readme) {
+    $doc = [IO.File]::ReadAllText($readme)
+    if (-not [regex]::IsMatch($doc, $marker)) {
+        Write-Warning "README.md has no <!-- opm-snapshot --> marker: say by hand which snapshot it builds"
+    } else {
+        $new = [regex]::Replace($doc, $marker, "`${1}$snapshot`${2}")
+        if ($new -ne $doc) {
+            [IO.File]::WriteAllText($readme, $new, (New-Object Text.UTF8Encoding($false)))
+            Write-Host "Updated the snapshot date README.md gives. Commit it too."
+        }
+    }
 }
