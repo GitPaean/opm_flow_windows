@@ -33,11 +33,11 @@ on:
   schedule:
     # Every night: a break then comes from one day of upstream changes, and the
     # result is waiting at the start of the working day. Cron is always UTC and
-    # does not follow DST: 03:17 UTC is 05:17 in Norway on summer time and 04:17
+    # does not follow DST: 01:17 UTC is 03:17 in Norway on summer time and 02:17
     # on winter time. The odd minute is deliberate; runs scheduled on the hour
     # queue behind everyone else's.
-    # For every other day instead, use '17 3 */2 * *' (odd days of the month).
-    - cron: '17 3 * * *'
+    # For every other day instead, use '17 1 */2 * *' (odd days of the month).
+    - cron: '17 1 * * *'
   workflow_dispatch:
     inputs:
       sim_target:
