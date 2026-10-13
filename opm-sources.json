@@ -1,0 +1,23 @@
+{
+  "snapshot": "2026-10-13",
+  "org": "GitPaean",
+  "branch": "windows",
+  "modules": {
+    "opm-common": {
+      "commit": "12f9facaf94ecad1302f313617ae718d7d35d569",
+      "upstream": "8444ff393077b9a51bd819ff552a36ac631e9e6d"
+    },
+    "opm-grid": {
+      "commit": "0e8f4ab19a7309d4c2e9554b94a093824792d460",
+      "upstream": "29cd00c43219af1fea393c34c84e6afec33c7b71"
+    },
+    "opm-simulators": {
+      "commit": "e3ca61a7fc171c1beaf2969f89a86659c253d6ce",
+      "upstream": "fc46e015bd311008bad166ef6cda5658ae691487"
+    },
+    "opm-upscaling": {
+      "commit": "4d73182b15bfb66b7967a32e506f982216e4abd9",
+      "upstream": "17545de1f8bcca0efcfcbfe99fde5d87ed706d75"
+    }
+  }
+}

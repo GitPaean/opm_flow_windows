@@ -318,6 +318,21 @@ foreach ($r in $revCommon, $revGrid, $revSimulators) {
         Write-Warning "Source tree has uncommitted changes - the LICENSE.txt source statement cannot be satisfied by any published commit. Commit and push before releasing."
     }
 }
+# A release is built from the commits the harness pins (opm-sources.json), so
+# that the harness commit stamped below names what the package contains.
+$pinFile = Join-Path $Root 'opm-sources.json'
+if (Test-Path $pinFile) {
+    $pins = (Get-Content -Raw $pinFile | ConvertFrom-Json).modules
+    foreach ($m in 'opm-common', 'opm-grid', 'opm-simulators') {
+        $pin = if ($pins.$m) { $pins.$m.commit } else { $null }
+        $prevEA = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+        $head = (& git -C (Join-Path $Root "src\$m") rev-parse HEAD 2>$null)
+        $ErrorActionPreference = $prevEA
+        if ($pin -and $head -and "$head".Trim() -ne $pin) {
+            Write-Warning "src\$m is not at the commit opm-sources.json pins ($pin). For a release, pin what was built and verified (update-opm-pins.ps1) and commit that first."
+        }
+    }
+}
 
 @"
 OPM Flow is developed by the Open Porous Media (OPM) initiative

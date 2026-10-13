@@ -8,7 +8,9 @@ MSVC. Kept here so they can be upstreamed as PRs.
 The sections below are the working record, in the order things were found.
 What is on the branches is the folded result: one commit per topic, each
 message saying what it changes and why, with no fix-up commits. The trees
-are exactly what the record below describes.
+are exactly what the record below describes. The commits the harness builds
+are pinned in [opm-sources.json](opm-sources.json); the table is the series at
+those pins.
 
 | repository (`windows` branch of GitPaean/...) | commits |
 |---|---|

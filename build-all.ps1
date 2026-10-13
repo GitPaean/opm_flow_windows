@@ -18,13 +18,18 @@
   The serial build (build\ / install\) is left untouched.
 
   The OPM modules are cloned from the 'windows' branch of the GitPaean forks,
-  which carry the Windows/MSVC fixes on top of OPM master (-OpmOrg/-OpmBranch).
+  which carry the Windows/MSVC fixes on top of OPM master (-OpmOrg/-OpmBranch),
+  and checked out at the commits opm-sources.json pins: a set verified to build
+  and run together, where the branch heads move with every rebase of the series.
+  -OpmLatest builds the branch heads instead. A checkout already under src\ is
+  never moved; the build only warns when it is not at the pinned commit.
 
   Usage:
     .\build-all.ps1                      # serial build
     .\build-all.ps1 -Mpi                 # parallel (MPI) build
     .\build-all.ps1 -Mpi -OpenMP -SimTarget flow   # what the release packages ship
     .\build-all.ps1 -SkipClone -SkipDeps
+    .\build-all.ps1 -OpmLatest           # the windows branch heads, not the pins
 #>
 [CmdletBinding()]
 param(
@@ -52,7 +57,10 @@ param(
     # master as it moves, so that is the default. -OpmOrg OPM -OpmBranch master
     # takes upstream as it is.
     [string]$OpmOrg = 'GitPaean',
-    [string]$OpmBranch = 'windows'
+    [string]$OpmBranch = 'windows',
+    # Clone the heads of -OpmBranch rather than the commits opm-sources.json
+    # pins: for working on the series itself. The pins are what was verified.
+    [switch]$OpmLatest
 )
 
 # 'windows' is the GitPaean forks' branch. Another org given without a branch
@@ -297,6 +305,31 @@ Write-Host "generated compat shims in $compat"
 }
 
 # --------------------------------------------------------------------------
+# The OPM commits to build. opm-sources.json pins a set verified to build and
+# run together (update-opm-pins.ps1 writes it). The pins belong to the org and
+# branch they were taken from: with another -OpmOrg/-OpmBranch, or -OpmLatest,
+# the branch heads are built.
+$opmModules = @('opm-common','opm-grid','opm-simulators')
+if ($Upscaling) { $opmModules += 'opm-upscaling' }
+$OpmPins = $null
+$pinFile = Join-Path $Root 'opm-sources.json'
+if (-not $OpmLatest -and (Test-Path $pinFile)) {
+    $lock = Get-Content -Raw $pinFile | ConvertFrom-Json
+    if ($lock.org -eq $OpmOrg -and $lock.branch -eq $OpmBranch) { $OpmPins = $lock }
+}
+function Get-OpmPin([string]$Module) {
+    if ($OpmPins -and $OpmPins.modules.$Module) { return $OpmPins.modules.$Module.commit }
+    return $null
+}
+function Get-GitHead([string]$Dir) {
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    $sha = git -C $Dir rev-parse HEAD 2>$null
+    $ErrorActionPreference = $prev
+    if ($LASTEXITCODE -eq 0 -and $sha) { return "$sha".Trim() }
+    return $null
+}
+
 if (-not $SkipClone) {
     Step "2/4  Clone vcpkg, DUNE ($DuneVersion) and OPM sources"
     New-Item -ItemType Directory -Force -Path (Join-Path $Root 'src') | Out-Null
@@ -341,8 +374,6 @@ if (-not $SkipClone) {
     # Apply the DUNE Windows/MSVC patches (DUNE is built from source).
     Apply-DunePatch 'dune-common' 'dune-common-windows.patch'
     Apply-DunePatch 'dune-grid'   'dune-grid-windows.patch'
-    $opmModules = @('opm-common','opm-grid','opm-simulators')
-    if ($Upscaling) { $opmModules += 'opm-upscaling' }
     foreach ($m in $opmModules) {
         $dst = Join-Path $Root "src\$m"
         if (-not (Test-Path (Join-Path $dst '.git'))) {
@@ -352,10 +383,38 @@ if (-not $SkipClone) {
             } else {
                 Invoke-Native { git clone -c core.autocrlf=false $url $dst }
             }
+            $pin = Get-OpmPin $m
+            if ($pin) {
+                # A later rebase takes the pinned commit off the branch, but
+                # GitHub still serves it by id.
+                $prev = $ErrorActionPreference
+                $ErrorActionPreference = 'Continue'
+                git -C $dst cat-file -e "$pin^{commit}" 2>$null
+                $have = ($LASTEXITCODE -eq 0)
+                $ErrorActionPreference = $prev
+                if (-not $have) { Invoke-Native { git -C $dst fetch --quiet origin $pin } }
+                Invoke-Native { git -C $dst checkout --quiet --detach $pin }
+                Write-Host "$m checked out at the pinned commit $pin"
+            }
         }
     }
 } else {
     Step "2/4  Clone (skipped)"
+}
+
+if ($OpmPins) {
+    Write-Host "OPM sources: the commits opm-sources.json pins (snapshot $($OpmPins.snapshot))"
+    # A checkout already under src\ stays as it is - the series is developed
+    # there too - but a build of anything else is not the verified set.
+    foreach ($m in $opmModules) {
+        $pin  = Get-OpmPin $m
+        $head = Get-GitHead (Join-Path $Root "src\$m")
+        if ($pin -and $head -and $head -ne $pin) {
+            Write-Warning ("src\{0} is at {1}, not at the pinned {2}: building what is checked out. For the verified set: git -C src\{0} fetch origin {3}; git -C src\{0} checkout --detach {3}" -f $m, $head.Substring(0, 10), $pin.Substring(0, 10), $pin)
+        }
+    }
+} else {
+    Write-Host "OPM sources: not pinned - a new clone takes the head of $OpmOrg/$(if ($OpmBranch) { $OpmBranch } else { 'its default branch' })"
 }
 
 # --------------------------------------------------------------------------

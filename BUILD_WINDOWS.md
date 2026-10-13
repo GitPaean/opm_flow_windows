@@ -93,9 +93,14 @@ foreach ($m in 'dune-common','dune-geometry','dune-grid','dune-istl') {
 }
 
 # OPM modules: the 'windows' branch of the forks carrying the Windows fixes on
-# top of OPM master - upstream does not build with MSVC on its own
+# top of OPM master - upstream does not build with MSVC on its own - checked out
+# at the commits opm-sources.json pins, a set verified to build together
+$pins = (Get-Content -Raw opm-sources.json | ConvertFrom-Json).modules
 foreach ($m in 'opm-common','opm-grid','opm-simulators') {
+  $pin = $pins.$m.commit
   git clone -c core.autocrlf=false --branch windows https://github.com/GitPaean/$m.git src\$m
+  git -C src\$m fetch origin $pin     # a later rebase may have taken it off the branch
+  git -C src\$m checkout --detach $pin
 }
 ```
 
@@ -329,8 +334,13 @@ vcpkg, installs deps, checks out DUNE, and builds every module in order):
 
 The OPM modules are cloned from the `windows` branch of the GitPaean forks,
 which carry the Windows fixes on OPM master; `-OpmOrg` / `-OpmBranch` point it
-elsewhere. The release packages ship `-Mpi -OpenMP -SimTarget flow`: `flow` is
-the one executable that carries every model variant.
+elsewhere. A new clone is checked out at the commit `opm-sources.json` pins,
+not at the branch head: the pins are a set verified to build and run together,
+where the heads move with every rebase (`-OpmLatest` takes the heads). Existing
+checkouts are left as they are, with a warning when one is not at its pin;
+`update-opm-pins.ps1` records a new set (README, "Pinned OPM sources"). The
+release packages ship `-Mpi -OpenMP -SimTarget flow`: `flow` is the one
+executable that carries every model variant.
 
 `-OpenMP` and `-Mpi` are independent switches and compose freely; both apply to
 the OPM modules only (DUNE is always built without them). `-Upscaling` adds

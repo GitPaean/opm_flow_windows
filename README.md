@@ -105,7 +105,9 @@ variant - built for hybrid MPI + OpenMP, beside flow-gui:
 ```powershell
 .\build-all.ps1 -Mpi -OpenMP -SimTarget flow -Jobs 4
 ```
-Then build flow-gui against that tree (Qt 6; see [flow-gui/README.md](flow-gui/README.md#windows-this-harness))
+That builds the OPM commits the harness pins (see
+[Pinned OPM sources](#pinned-opm-sources)), not whatever the `windows` branches
+hold that day. Then build flow-gui against that tree (Qt 6; see [flow-gui/README.md](flow-gui/README.md#windows-this-harness))
 and, if you want the zip, installer or MSIX as well, package it.
 [docs/release-checklist.md](docs/release-checklist.md) goes through all of it,
 from a bare machine to the installer, including the Intel MPI variant.
@@ -125,6 +127,27 @@ are merged there - is one switch away:
 .\build-all.ps1 -Mpi -OpmOrg OPM -OpmBranch master
 ```
 
+### Pinned OPM sources
+The `windows` branches move with every rebase, and in between a branch head can
+be a rebase in progress, or one module rebased onto a master the others have not
+caught up with. So `build-all.ps1` does not build the branch heads: it checks
+each module out at the commit [opm-sources.json](opm-sources.json) pins - a set
+that was built and run together (SPE1 and Norne), the way DUNE is pinned to
+`v2.10.0`. A pinned commit stays fetchable after a rebase takes it off the
+branch, since GitHub serves commits by id.
+```powershell
+.\build-all.ps1 -OpmLatest           # the branch heads instead of the pins
+.\update-opm-pins.ps1 -Check         # is src\opm-* at the pinned commits?
+.\update-opm-pins.ps1                # pin what src\opm-* holds now
+```
+A checkout already in `src\` is never moved - it may be where you work on the
+series - but the build warns when it is not at its pin, since it then builds
+something other than the verified set. After rebasing the series and checking
+the result, `update-opm-pins.ps1` records the new set; it refuses a commit with
+local changes or one that is not pushed to the fork's branch. Commit
+`opm-sources.json` with the harness:
+[docs/release-checklist.md](docs/release-checklist.md) §1 has the whole round.
+
 ## Options
 ```powershell
 .\build-all.ps1 -Mpi                 # parallel build (MPI + Zoltan)
@@ -137,6 +160,7 @@ are merged there - is one switch away:
 .\build-all.ps1 -Jobs 6              # parallel compile jobs per module (default 4; raise on a high-RAM machine)
 .\build-all.ps1 -DuneVersion v2.10.0
 .\build-all.ps1 -OpmOrg <user> -OpmBranch <branch>   # default GitPaean / windows
+.\build-all.ps1 -OpmLatest           # new clones at the branch heads, not the pinned commits
 ```
 `-Mpi` and `-OpenMP` are independent and compose. For hybrid runs use
 `mpiexec -n <ranks> flow_blackoil <deck> --threads-per-process=<threads>`.
@@ -157,8 +181,15 @@ Norne with **4 MS-MPI ranks x 1 OpenMP thread** and **2 Intel MPI ranks x 2 Open
 threads**. The two decompositions exercise MPI and hybrid MPI/OpenMP execution;
 the workflow does not compare output arrays with a Linux reference.
 
+The nightly run builds the `windows` branch heads, rebased onto that day's
+upstream master; its summary also says, per module, whether the harness pin is
+the branch head. Started by hand with **sources: pinned**, it builds exactly the
+commits `opm-sources.json` pins, unrebased - the check of a pin update with the
+runner's MSVC 19.51, which is newer than most local compilers. Such a run
+neither opens nor closes the nightly failure report.
+
 Each run records the harness commit and each OPM module's cloned fork commit,
-fetched upstream commit and resolved commit after any rebase in
+pinned commit, fetched upstream commit and resolved commit after any rebase in
 `source-revisions.json`. Download it from the `opm-source-revisions` artifact;
 it is also included with a successful `flow-windows-x64` binary artifact. Once
 source resolution has completed, the revision artifact is uploaded even if a
@@ -173,6 +204,8 @@ rebase conflict or later build failure prevents a binary from being produced.
 | `setup-env.ps1` | Loads MSVC (vcvars64) + vcpkg (+ MS-MPI) into the shell |
 | `compat/include/` | POSIX/Fortran shim headers MSVC lacks (getopt, unistd, sys/*, FCMacros) |
 | `patches/` | DUNE Windows patches, auto-applied after the DUNE checkout |
+| `opm-sources.json` | The OPM commits `build-all.ps1` checks out: a set verified to build and run together |
+| `update-opm-pins.ps1` | Writes `opm-sources.json` from `src\opm-*` after a verified rebase; `-Check` compares |
 | `probes/` | Stand-alone programs that each settle one question about the build (MS-MPI spawning, autodiff constants, C++-only package consumption); see its README |
 | `build-clang.ps1` | Build one module with clang-cl instead of MSVC, against the same DUNE/vcpkg tree; what the forks' smaller `windows_clang` branches are built with |
 | `flow-gui/` | The Qt 6 graphical workbench for flow (Windows/Linux/macOS): run/monitor with live progress, summary plotting & case comparison, 3D results viewer, deck editor, projects (see its README) |

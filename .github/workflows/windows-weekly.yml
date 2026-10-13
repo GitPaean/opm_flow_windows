@@ -23,6 +23,12 @@
 # a conflict needs a human judgement about the code, a build failure usually
 # names the upstream commit that caused it.
 #
+# The harness itself pins a set of commits verified together (opm-sources.json,
+# what build-all.ps1 builds). The nightly run is about the branch heads, but its
+# summary says where each pin stands; started by hand with sources=pinned it
+# builds exactly the pins instead - the check for a pin update with this
+# runner's compiler, which is newer than most local ones.
+#
 # Deliberately NOT triggered by pull_request. If this is ever moved to a
 # self-hosted runner, a fork PR would otherwise run arbitrary code on that
 # machine - these repositories are public.
@@ -49,6 +55,11 @@ on:
         description: 'Rebase onto upstream master before building'
         type: boolean
         default: true
+      sources:
+        description: 'OPM sources: the windows branch heads, or the commits opm-sources.json pins (no rebase)'
+        type: choice
+        options: [latest, pinned]
+        default: latest
 
 permissions:
   contents: read
@@ -155,6 +166,12 @@ jobs:
           git config --global user.name  'windows-weekly'
           # An input is empty on a scheduled run, so default to rebasing.
           $doRebase = '${{ inputs.rebase }}' -ne 'false'
+          # sources=pinned builds the commits opm-sources.json pins, unrebased.
+          $pinnedRun = '${{ inputs.sources }}' -eq 'pinned'
+          $pins = $null
+          if (Test-Path opm-sources.json) { $pins = (Get-Content -Raw opm-sources.json | ConvertFrom-Json).modules }
+          if ($pinnedRun -and -not $pins) { throw 'sources=pinned, but the harness has no opm-sources.json' }
+          if ($pinnedRun) { $doRebase = $false }
           New-Item -ItemType Directory -Force -Path src | Out-Null
 
           function Get-SourceRevision($dir, $ref) {
@@ -176,6 +193,18 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw "could not fetch upstream/$m" }
 
             $forkHead = Get-SourceRevision "src/$m" HEAD
+            $pin = $null
+            if ($pins -and $pins.$m) { $pin = $pins.$m.commit }
+            $pinNote = if (-not $pin) { 'none' } elseif ($pin -eq $forkHead) { 'branch head' } else { "``$($pin.Substring(0, 9))``" }
+            if ($pinnedRun) {
+              if (-not $pin) { throw "opm-sources.json pins no commit for $m" }
+              # A rebase may have taken the pin off the branch; GitHub still
+              # serves it by id.
+              git -C "src/$m" fetch --quiet origin $pin
+              if ($LASTEXITCODE -ne 0) { throw "could not fetch the pinned $m commit $pin" }
+              git -C "src/$m" checkout --quiet --detach $pin
+              if ($LASTEXITCODE -ne 0) { throw "could not check out the pinned $m commit $pin" }
+            }
             $upstreamHead = Get-SourceRevision "src/$m" upstream/master
             $behind = (git -C "src/$m" rev-list --count 'HEAD..upstream/master').Trim()
             $ahead  = (git -C "src/$m" rev-list --count 'upstream/master..HEAD').Trim()
@@ -188,20 +217,21 @@ jobs:
                 git -C "src/$m" rebase --abort
                 $conflicted += $m
                 $rebaseResult = 'conflict'
-                $summary += "| $m | $ahead | $behind | **conflict** |"
+                $summary += "| $m | $ahead | $behind | **conflict** | $pinNote |"
                 Write-Host "::warning title=Rebase conflict::$m does not rebase cleanly onto upstream/master"
               } else {
                 $rebaseResult = 'rebased'
-                $summary += "| $m | $ahead | $behind | rebased |"
+                $summary += "| $m | $ahead | $behind | rebased | $pinNote |"
               }
             } else {
-              $rebaseResult = if ($behind -eq '0') { 'up to date' } else { 'rebase disabled' }
-              $summary += "| $m | $ahead | $behind | $rebaseResult |"
+              $rebaseResult = if ($pinnedRun) { 'pinned' } elseif ($behind -eq '0') { 'up to date' } else { 'rebase disabled' }
+              $summary += "| $m | $ahead | $behind | $rebaseResult | $pinNote |"
             }
             $resolvedHead = Get-SourceRevision "src/$m" HEAD
             $revisions += [ordered]@{
               name = $m
               forkHead = $forkHead
+              pinned = $pin
               upstreamHead = $upstreamHead
               resolvedHead = $resolvedHead
               rebaseResult = $rebaseResult
@@ -220,9 +250,10 @@ jobs:
             repositories = $revisions
           } | ConvertTo-Json -Depth 4 | Set-Content -Encoding utf8 source-revisions.json
 
-          "## Rebase onto upstream master`n"                      | Out-File -Append $env:GITHUB_STEP_SUMMARY
-          "| module | patch commits | upstream commits behind | result |" | Out-File -Append $env:GITHUB_STEP_SUMMARY
-          "|---|---|---|---|"                                     | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          $heading = if ($pinnedRun) { 'The commits the harness pins (opm-sources.json)' } else { 'Rebase onto upstream master' }
+          "## $heading`n"                                         | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          "| module | patch commits | upstream commits behind | result | harness pin |" | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          "|---|---|---|---|---|"                                 | Out-File -Append $env:GITHUB_STEP_SUMMARY
           $summary | Out-File -Append $env:GITHUB_STEP_SUMMARY
 
           if ($conflicted.Count -gt 0) {
@@ -244,8 +275,11 @@ jobs:
           if (-not $target) { $target = 'flow_blackoil' }
           Write-Host "building target: $target (MPI)"
           # -Mpi: DUNE and the OPM modules built against MS-MPI, plus Zoltan
-          # from a Trilinos clone, into build-mpi\ / install-mpi\.
-          .\build-all.ps1 -Mpi -SimTarget $target -Jobs 4
+          # from a Trilinos clone, into build-mpi\ / install-mpi\. -OpmLatest
+          # unless the run is of the pins: the trees above are the branch heads
+          # on purpose, and build-all.ps1 should not warn that they are.
+          $latest = '${{ inputs.sources }}' -ne 'pinned'
+          .\build-all.ps1 -Mpi -SimTarget $target -Jobs 4 -OpmLatest:$latest
           if ($LASTEXITCODE -ne 0) { throw "build failed" }
 
       # Norne rather than SPE1: a real field case with faults, multi-segment
@@ -436,9 +470,10 @@ jobs:
       # and commented on rather than a fresh one filed every night: the point
       # is to notice a break, and a pile of identical issues is how a canary
       # stops being read. It closes itself when a run passes again, so an open
-      # issue means "still broken" without anyone having to tend it.
+      # issue means "still broken" without anyone having to tend it. A run of
+      # the pins says nothing about the branch heads, so it stays out of this.
       - name: Report a failure as an issue
-        if: failure()
+        if: failure() && inputs.sources != 'pinned'
         uses: actions/github-script@v7
         with:
           script: |
@@ -470,7 +505,7 @@ jobs:
             }
 
       - name: Close the failure report once it builds again
-        if: success()
+        if: success() && inputs.sources != 'pinned'
         uses: actions/github-script@v7
         with:
           script: |

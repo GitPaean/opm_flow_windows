@@ -7,3 +7,6 @@
 *.ps1 text
 *.h   text
 *.md  text
+
+# The OPM source pins (opm-sources.json): LF in the repo, like the scripts.
+*.json text
