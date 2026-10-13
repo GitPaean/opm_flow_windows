@@ -1,6 +1,6 @@
 # Copyright (C) 2026 SINTEF Digital, Mathematics & Cybernetics; GPL-3.0-or-later (see LICENSE).
 #
-# Weekly canary: does the Windows patch series still build against today's
+# Nightly canary: does the Windows patch series still build against today's
 # upstream OPM, and does what it builds still run?
 #
 # It builds the configurations the packages ship - hybrid MPI+OpenMP against
@@ -16,8 +16,8 @@
 # onto upstream master as it moves. Left alone, the cost of that rebase grows
 # with the gap: a week of upstream is usually one small conflict, three months
 # is a pile of them plus a build failure with a dozen candidate causes. So this
-# rebases first and builds the result - the point is to hear about a break in
-# the week it happens, not at the next release.
+# rebases first and builds the result - the point is to hear about a break the
+# day it happens, not at the next release.
 #
 # A conflict and a build failure are reported as different outcomes on purpose:
 # a conflict needs a human judgement about the code, a build failure usually
@@ -31,14 +31,13 @@ name: windows-weekly
 
 on:
   schedule:
-    # Friday, end of the working day: a break is heard about while the week is
-    # still open, and nothing lands on Monday morning. Cron is always UTC and
-    # does not follow DST, so a fixed time drifts an hour across the year:
-    # 15:17 UTC is 17:17 in Norway on summer time and 16:17 on winter time -
-    # late afternoon either way. The odd minute is deliberate; runs scheduled
-    # on the hour queue behind everyone else's.
-    # For Saturday early morning instead, use '17 3 * * 6' (05:17 / 04:17 local).
-    - cron: '17 15 * * 5'
+    # Every night: a break then comes from one day of upstream changes, and the
+    # result is waiting at the start of the working day. Cron is always UTC and
+    # does not follow DST: 03:17 UTC is 05:17 in Norway on summer time and 04:17
+    # on winter time. The odd minute is deliberate; runs scheduled on the hour
+    # queue behind everyone else's.
+    # For every other day instead, use '17 3 */2 * *' (odd days of the month).
+    - cron: '17 3 * * *'
   workflow_dispatch:
     inputs:
       sim_target:
@@ -321,7 +320,7 @@ jobs:
 
       # The Intel MPI tree is the second thing released - the package for a
       # locked-down machine, where MS-MPI cannot be installed without an
-      # administrator - so it is worth the same weekly question. It reuses the
+      # administrator - so it is worth the same nightly question. It reuses the
       # rebased sources and the Trilinos clone from above and rebuilds the
       # chain against Intel MPI into build-impi\, which roughly doubles the
       # build time; disk is not the constraint, the workspace is on a volume
@@ -434,7 +433,7 @@ jobs:
             build-impi/opm-simulators/bin/*.dll
 
       # Say so somewhere that survives a missed e-mail. One issue is kept open
-      # and commented on rather than a fresh one filed every Friday: the point
+      # and commented on rather than a fresh one filed every night: the point
       # is to notice a break, and a pile of identical issues is how a canary
       # stops being read. It closes itself when a run passes again, so an open
       # issue means "still broken" without anyone having to tend it.
@@ -447,7 +446,7 @@ jobs:
             const url = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}` +
                         `/actions/runs/${context.runId}`;
             const body = [
-              `The weekly canary failed: [run ${context.runId}](${url}).`,
+              `The nightly canary failed: [run ${context.runId}](${url}).`,
               '',
               'The step summary on that run says which module conflicted or what',
               'the build said. A **conflict** needs the patch series rebased by',
