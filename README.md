@@ -181,19 +181,29 @@ Norne with **4 MS-MPI ranks x 1 OpenMP thread** and **2 Intel MPI ranks x 2 Open
 threads**. The two decompositions exercise MPI and hybrid MPI/OpenMP execution;
 the workflow does not compare output arrays with a Linux reference.
 
-The nightly run builds the `windows` branch heads, rebased onto that day's
-upstream master; its summary also says, per module, whether the harness pin is
-the branch head. Started by hand with **sources: pinned**, it builds exactly the
-commits `opm-sources.json` pins, unrebased - the check of a pin update with the
-runner's MSVC 19.51, which is newer than most local compilers. Such a run
-neither opens nor closes the nightly failure report.
+Every night it runs two jobs side by side:
 
-Each run records the harness commit and each OPM module's cloned fork commit,
-pinned commit, fetched upstream commit and resolved commit after any rebase in
-`source-revisions.json`. Download it from the `opm-source-revisions` artifact;
-it is also included with a successful `flow-windows-x64` binary artifact. Once
-source resolution has completed, the revision artifact is uploaded even if a
-rebase conflict or later build failure prevents a binary from being produced.
+- **pinned** - the build a user gets: it clones nothing itself, but runs
+  `build-all.ps1` as you would, which checks out the commits `opm-sources.json`
+  pins. The pins move only when someone updates them, so a failure here comes
+  from everything else - the runner image and its MSVC 19.51 (newer than most
+  local compilers), vcpkg ports, the Intel MPI wheels - or from a pin update
+  that was only checked locally.
+- **latest** - the canary: the `windows` branch heads, rebased onto that day's
+  upstream master, so a break upstream shows up the day it lands. Its summary
+  also says, per module, whether the harness pin is the branch head.
+
+Each job keeps its own failure issue (labels `windows-pinned` and
+`windows-weekly`), commented on while it stays broken and closed by the next
+pass. Started by hand, the workflow runs both jobs or either one (**sources**).
+
+Each job records the harness commit and, per OPM module, the pinned commit and
+what it built - for the canary also the cloned fork commit, the fetched upstream
+commit and the commit after any rebase - in `source-revisions.json`. Download it
+from the `opm-source-revisions-<job>` artifact; it is also included with a
+successful `flow-windows-x64-<job>` binary artifact. Once source resolution has
+completed, the revision artifact is uploaded even if a rebase conflict or later
+build failure prevents a binary from being produced.
 
 ## What's in this repo
 | Path | Purpose |
@@ -215,7 +225,7 @@ rebase conflict or later build failure prevents a binary from being produced.
 | `PACKAGING.md` | Distribution guide: portable zip, installer, MSIX/Store, licensing notes |
 | `release-notes/` | Per-release notes shown on the GitHub Releases page (e.g. `master-2026-10-12.md`, named after the OPM master snapshot); published with `gh release edit --notes-file` (see [PACKAGING.md](PACKAGING.md)) |
 | `ci/windows.yml` | GitHub Actions workflow |
-| `.github/workflows/windows-weekly.yml` | Nightly build and Norne runs against both MPI implementations, with source revision records |
+| `.github/workflows/windows-weekly.yml` | Nightly build and Norne runs against both MPI implementations, of the pinned sources and of the branch heads on upstream master, with source revision records |
 | `BUILD_WINDOWS.md` | Full step-by-step guide (§1–14): toolchain, deps, flags, MPI, patches, CI |
 | `PATCHES.md` | Record of every source-level Windows/MSVC fix |
 | `VALIDATION.md` | Clean-room validation walkthrough + results |

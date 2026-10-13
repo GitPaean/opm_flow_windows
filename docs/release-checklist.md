@@ -74,9 +74,10 @@ hold next:
 ```
 
 It refuses a module with local changes, or a commit that is not on the fork's
-branch on GitHub. To check the pins with the runner's MSVC 19.51 as well, start
-the windows-weekly workflow by hand with `sources: pinned` once the harness
-commit below is pushed.
+branch on GitHub. The nightly workflow's pinned job builds the pins with the
+runner's MSVC 19.51 from the next night on; to know before a release, start the
+windows-weekly workflow by hand with `sources: pinned` once the harness commit
+below is pushed.
 
 The snapshot's date is that of the newest upstream commit of the three. Set it
 as the version defaults in `package-flow.ps1` (`master-YYYY-MM-DD`),
