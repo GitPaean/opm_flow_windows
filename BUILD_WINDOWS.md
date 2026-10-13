@@ -86,16 +86,22 @@ Set-Location $Root
 git clone https://github.com/microsoft/vcpkg.git vcpkg
 
 # DUNE core modules, pinned to the 2.10.0 release
+# (https://github.com/dune-project/$m.git mirrors them if the GitLab is down)
 foreach ($m in 'dune-common','dune-geometry','dune-grid','dune-istl') {
-  git clone https://gitlab.dune-project.org/core/$m.git src\$m
+  git clone -c core.autocrlf=false https://gitlab.dune-project.org/core/$m.git src\$m
   git -C src\$m checkout v2.10.0
 }
 
-# OPM modules (use your fork/branch until the Windows fixes are upstream)
+# OPM modules: the 'windows' branch of the forks carrying the Windows fixes on
+# top of OPM master - upstream does not build with MSVC on its own
 foreach ($m in 'opm-common','opm-grid','opm-simulators') {
-  git clone https://github.com/OPM/$m.git src\$m
+  git clone -c core.autocrlf=false --branch windows https://github.com/GitPaean/$m.git src\$m
 }
 ```
+
+> `core.autocrlf=false` keeps the checkout byte-exact: git for Windows otherwise
+> rewrites text files to CRLF, and OPM's position-sensitive Eclipse test files
+> (e.g. `tests/ECLFILE.FINIT`) reject the inserted `\r`.
 
 > DUNE 2.10.0 satisfies OPM's `>= 2.9` requirement and is well tested. Avoid
 > DUNE `master` (2.11-dev), which can drift ahead of what OPM master tracks.
@@ -320,6 +326,11 @@ vcpkg, installs deps, checks out DUNE, and builds every module in order):
 .\build-all.ps1 -Upscaling      # also clone + build opm-upscaling (upscale_*/cpchop tools)
 .\build-all.ps1 -Jobs 6         # parallel compile jobs per module (default 4; raise on a high-RAM machine)
 ```
+
+The OPM modules are cloned from the `windows` branch of the GitPaean forks,
+which carry the Windows fixes on OPM master; `-OpmOrg` / `-OpmBranch` point it
+elsewhere. The release packages ship `-Mpi -OpenMP -SimTarget flow`: `flow` is
+the one executable that carries every model variant.
 
 `-OpenMP` and `-Mpi` are independent switches and compose freely; both apply to
 the OPM modules only (DUNE is always built without them). `-Upscaling` adds

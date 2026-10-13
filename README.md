@@ -46,8 +46,10 @@ From a clone of this repo:
 ```powershell
 .\build-all.ps1
 ```
-Clones vcpkg + DUNE (v2.10.0) + OPM, applies the DUNE patches, installs deps, and
-builds in order. Result: `build\opm-simulators\bin\flow_blackoil.exe`. Run it:
+Clones vcpkg + DUNE (v2.10.0) + OPM - the `windows` branch of the forks that
+carry the Windows fixes, see [below](#where-the-opm-windows-fixes-live) - applies
+the DUNE patches, installs deps, and builds in order. Result:
+`build\opm-simulators\bin\flow_blackoil.exe`. Run it:
 ```powershell
 .\build\opm-simulators\bin\flow_blackoil.exe <deck>.DATA --output-dir=<dir>
 ```
@@ -97,14 +99,30 @@ licensing question this project does not try to answer. Users install it
 themselves with the one `pip` command above — the same posture the MS-MPI
 package takes by shipping Microsoft's installer rather than `msmpi.dll`.
 
-## Where the OPM Windows fixes live
-The Windows/MSVC fixes to opm-common/opm-grid/opm-simulators (and opm-upscaling,
-with `-Upscaling`) must be present in the sources. They are maintained on the
-`windows` branch of each fork below, rebased onto upstream master as it moves,
-so point the build there (the DUNE patches in `patches/` are applied
-automatically regardless):
+## Build your own copy of the release packages
+The published packages carry `flow` - the one executable with every model
+variant - built for hybrid MPI + OpenMP, beside flow-gui:
 ```powershell
-.\build-all.ps1 -Mpi -OpmOrg GitPaean -OpmBranch windows
+.\build-all.ps1 -Mpi -OpenMP -SimTarget flow -Jobs 4
+```
+Then build flow-gui against that tree (Qt 6; see [flow-gui/README.md](flow-gui/README.md#windows-this-harness))
+and, if you want the zip, installer or MSIX as well, package it.
+[docs/release-checklist.md](docs/release-checklist.md) goes through all of it,
+from a bare machine to the installer, including the Intel MPI variant.
+
+## Where the OPM Windows fixes live
+Upstream OPM does not build with MSVC on its own: the Windows/MSVC fixes to
+opm-common/opm-grid/opm-simulators (and opm-upscaling, with `-Upscaling`) must
+be in the sources. They are maintained on the `windows` branch of the
+[opm-common](https://github.com/GitPaean/opm-common/tree/windows),
+[opm-grid](https://github.com/GitPaean/opm-grid/tree/windows) and
+[opm-simulators](https://github.com/GitPaean/opm-simulators/tree/windows) forks,
+rebased onto upstream master as it moves, and that is what `build-all.ps1`
+clones by default (the DUNE patches in `patches/` are applied automatically
+either way). Upstream as it is - which compiles with MSVC only once those fixes
+are merged there - is one switch away:
+```powershell
+.\build-all.ps1 -Mpi -OpmOrg OPM -OpmBranch master
 ```
 
 ## Options
@@ -118,7 +136,7 @@ automatically regardless):
 .\build-all.ps1 -SkipDeps            # vcpkg packages already installed (still installs any that are missing)
 .\build-all.ps1 -Jobs 6              # parallel compile jobs per module (default 4; raise on a high-RAM machine)
 .\build-all.ps1 -DuneVersion v2.10.0
-.\build-all.ps1 -OpmOrg <user> -OpmBranch <branch>
+.\build-all.ps1 -OpmOrg <user> -OpmBranch <branch>   # default GitPaean / windows
 ```
 `-Mpi` and `-OpenMP` are independent and compose. For hybrid runs use
 `mpiexec -n <ranks> flow_blackoil <deck> --threads-per-process=<threads>`.
@@ -162,7 +180,7 @@ rebase conflict or later build failure prevents a binary from being produced.
 | `installer/` | Inno Setup script producing `OPM-Flow-<ver>-Setup.exe` (see [PACKAGING.md](PACKAGING.md)) |
 | `packaging/` | MSIX build script for sideloading / Microsoft Store (see [PACKAGING.md](PACKAGING.md)) |
 | `PACKAGING.md` | Distribution guide: portable zip, installer, MSIX/Store, licensing notes |
-| `release-notes/` | Per-release notes shown on the GitHub Releases page (e.g. `v2026.10-pre.md`); published with `gh release edit --notes-file` (see [PACKAGING.md](PACKAGING.md)) |
+| `release-notes/` | Per-release notes shown on the GitHub Releases page (e.g. `master-2026-10-12.md`, named after the OPM master snapshot); published with `gh release edit --notes-file` (see [PACKAGING.md](PACKAGING.md)) |
 | `ci/windows.yml` | GitHub Actions workflow |
 | `.github/workflows/windows-weekly.yml` | Weekly build and Norne runs against both MPI implementations, with source revision records |
 | `BUILD_WINDOWS.md` | Full step-by-step guide (§1–14): toolchain, deps, flags, MPI, patches, CI |

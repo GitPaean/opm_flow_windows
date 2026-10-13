@@ -17,9 +17,13 @@
     - builds DUNE + OPM into separate build-mpi\ / install-mpi\ trees
   The serial build (build\ / install\) is left untouched.
 
+  The OPM modules are cloned from the 'windows' branch of the GitPaean forks,
+  which carry the Windows/MSVC fixes on top of OPM master (-OpmOrg/-OpmBranch).
+
   Usage:
     .\build-all.ps1                      # serial build
     .\build-all.ps1 -Mpi                 # parallel (MPI) build
+    .\build-all.ps1 -Mpi -OpenMP -SimTarget flow   # what the release packages ship
     .\build-all.ps1 -SkipClone -SkipDeps
 #>
 [CmdletBinding()]
@@ -43,11 +47,17 @@ param(
     [int]$Jobs = 4,
     [string]$DuneVersion = 'v2.10.0',
     # GitHub org and branch to clone opm-common/opm-grid/opm-simulators from.
-    # The Windows/MSVC fixes live on the 'windows' branch of the forks below,
-    # so point these at them, e.g. -OpmOrg GitPaean -OpmBranch windows.
-    [string]$OpmOrg = 'OPM',
-    [string]$OpmBranch = ''
+    # Upstream OPM does not build with MSVC on its own: the Windows/MSVC fixes
+    # live on the 'windows' branch of the GitPaean forks, rebased onto OPM
+    # master as it moves, so that is the default. -OpmOrg OPM -OpmBranch master
+    # takes upstream as it is.
+    [string]$OpmOrg = 'GitPaean',
+    [string]$OpmBranch = 'windows'
 )
+
+# 'windows' is the GitPaean forks' branch. Another org given without a branch
+# means that org's own default branch - upstream OPM has no 'windows' to clone.
+if ($OpmOrg -ne 'GitPaean' -and -not $PSBoundParameters.ContainsKey('OpmBranch')) { $OpmBranch = '' }
 
 $ErrorActionPreference = 'Stop'
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -298,12 +308,34 @@ if (-not $SkipClone) {
     # byte-position-sensitive formatted Eclipse files (e.g. tests/ECLFILE.FINIT)
     # whose readers reject the injected \r, so sources must be checked out
     # byte-exact.
+    #
+    # The DUNE GitLab is the source of the core modules; github.com/dune-project
+    # mirrors them with the same commits and tags. Fall back to the mirror when
+    # GitLab does not answer: its proxy returning 524 once stopped the weekly
+    # build before it compiled anything.
     foreach ($m in 'dune-common','dune-geometry','dune-grid','dune-istl') {
         $dst = Join-Path $Root "src\$m"
         if (-not (Test-Path (Join-Path $dst '.git'))) {
-            Invoke-Native { git clone -c core.autocrlf=false "https://gitlab.dune-project.org/core/$m.git" $dst }
+            $cloned = $false
+            foreach ($url in "https://gitlab.dune-project.org/core/$m.git",
+                             "https://github.com/dune-project/$m.git") {
+                $prev = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+                git clone -c core.autocrlf=false $url $dst
+                $cloned = ($LASTEXITCODE -eq 0)
+                $ErrorActionPreference = $prev
+                if ($cloned) { break }
+                Write-Warning "could not clone $m from $url"
+                if (Test-Path $dst) { Remove-Item -Recurse -Force $dst }
+            }
+            if (-not $cloned) { throw "could not clone $m from GitLab or its GitHub mirror" }
         }
-        Invoke-Native { git -C $dst fetch --tags --quiet }
+        # Only go back to the remote when the tag is not there yet, so a
+        # rebuild in an existing tree does not depend on GitLab either.
+        $prev = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+        git -C $dst rev-parse --verify --quiet "refs/tags/$DuneVersion" | Out-Null
+        $haveTag = ($LASTEXITCODE -eq 0)
+        $ErrorActionPreference = $prev
+        if (-not $haveTag) { Invoke-Native { git -C $dst fetch --tags --quiet } }
         Invoke-Native { git -C $dst checkout --quiet $DuneVersion }
     }
     # Apply the DUNE Windows/MSVC patches (DUNE is built from source).
