@@ -21,8 +21,9 @@
   which carry the Windows/MSVC fixes on top of OPM master (-OpmOrg/-OpmBranch),
   and checked out at the commits opm-sources.json pins: a set verified to build
   and run together, where the branch heads move with every rebase of the series.
-  -OpmLatest builds the branch heads instead. A checkout already under src\ is
-  never moved; the build only warns when it is not at the pinned commit.
+  -OpmLatest builds the branch heads instead. vcpkg and Trilinos are pinned in
+  the same file (-VcpkgRef / -TrilinosRef override). A checkout already there
+  is never moved; the build only warns when it is not at the pinned commit.
 
   Usage:
     .\build-all.ps1                      # serial build
@@ -30,6 +31,7 @@
     .\build-all.ps1 -Mpi -OpenMP -SimTarget flow   # what the release packages ship
     .\build-all.ps1 -SkipClone -SkipDeps
     .\build-all.ps1 -OpmLatest           # the windows branch heads, not the pins
+    .\build-all.ps1 -VcpkgRef master     # newest vcpkg ports (also -TrilinosRef)
 #>
 [CmdletBinding()]
 param(
@@ -60,7 +62,13 @@ param(
     [string]$OpmBranch = 'windows',
     # Clone the heads of -OpmBranch rather than the commits opm-sources.json
     # pins: for working on the series itself. The pins are what was verified.
-    [switch]$OpmLatest
+    [switch]$OpmLatest,
+    # vcpkg (the ports, and so every dependency's version) and Trilinos (where
+    # Zoltan comes from, for -Mpi) are pinned in opm-sources.json too. Either
+    # can be overridden with a commit, tag or branch - e.g. -VcpkgRef master
+    # -TrilinosRef develop for their newest state.
+    [string]$VcpkgRef,
+    [string]$TrilinosRef
 )
 
 # 'windows' is the GitPaean forks' branch. Another org given without a branch
@@ -103,7 +111,17 @@ function Ensure-MsMpi {
 function Build-Zoltan {
     $tri = Join-Path $Root 'deps\Trilinos'
     if (-not (Test-Path (Join-Path $tri '.git'))) {
-        Invoke-Native { git clone --depth 1 https://github.com/trilinos/Trilinos.git $tri }
+        if ($TrilinosCheckout) {
+            # The one commit only: the build needs no history, and Trilinos'
+            # is large.
+            Invoke-Native { git init --quiet $tri }
+            Invoke-Native { git -C $tri remote add origin https://github.com/trilinos/Trilinos.git }
+            Invoke-Native { git -C $tri fetch --quiet --depth 1 origin $TrilinosCheckout }
+            Invoke-Native { git -C $tri checkout --quiet --detach FETCH_HEAD }
+            Write-Host "Trilinos checked out at $TrilinosCheckout"
+        } else {
+            Invoke-Native { git clone --depth 1 https://github.com/trilinos/Trilinos.git $tri }
+        }
     }
     if (Test-Path (Join-Path $Root 'install-mpi\lib\zoltan.lib')) {
         Write-Host "Zoltan already built (install-mpi\lib\zoltan.lib)"; return
@@ -311,12 +329,19 @@ Write-Host "generated compat shims in $compat"
 # the branch heads are built.
 $opmModules = @('opm-common','opm-grid','opm-simulators')
 if ($Upscaling) { $opmModules += 'opm-upscaling' }
-$OpmPins = $null
+$lock = $null
 $pinFile = Join-Path $Root 'opm-sources.json'
-if (-not $OpmLatest -and (Test-Path $pinFile)) {
-    $lock = Get-Content -Raw $pinFile | ConvertFrom-Json
-    if ($lock.org -eq $OpmOrg -and $lock.branch -eq $OpmBranch) { $OpmPins = $lock }
-}
+if (Test-Path $pinFile) { $lock = Get-Content -Raw $pinFile | ConvertFrom-Json }
+$OpmPins = $null
+if ($lock -and -not $OpmLatest -and $lock.org -eq $OpmOrg -and $lock.branch -eq $OpmBranch) { $OpmPins = $lock }
+# vcpkg and Trilinos: the pinned commit, unless -VcpkgRef / -TrilinosRef name
+# another. The *Pin variables are what an existing checkout is held against.
+$VcpkgPin    = $null
+$TrilinosPin = $null
+if ($lock -and $lock.vcpkg    -and -not $VcpkgRef)    { $VcpkgPin    = $lock.vcpkg.commit }
+if ($lock -and $lock.trilinos -and -not $TrilinosRef) { $TrilinosPin = $lock.trilinos.commit }
+$VcpkgCheckout    = if ($VcpkgRef)    { $VcpkgRef }    else { $VcpkgPin }
+$TrilinosCheckout = if ($TrilinosRef) { $TrilinosRef } else { $TrilinosPin }
 function Get-OpmPin([string]$Module) {
     if ($OpmPins -and $OpmPins.modules.$Module) { return $OpmPins.modules.$Module.commit }
     return $null
@@ -333,8 +358,21 @@ function Get-GitHead([string]$Dir) {
 if (-not $SkipClone) {
     Step "2/4  Clone vcpkg, DUNE ($DuneVersion) and OPM sources"
     New-Item -ItemType Directory -Force -Path (Join-Path $Root 'src') | Out-Null
-    if (-not (Test-Path (Join-Path $Root 'vcpkg\.git'))) {
-        Invoke-Native { git clone https://github.com/microsoft/vcpkg.git (Join-Path $Root 'vcpkg') }
+    $vcpkgDir = Join-Path $Root 'vcpkg'
+    if (-not (Test-Path (Join-Path $vcpkgDir '.git'))) {
+        if ($VcpkgCheckout) {
+            # The one commit only, as for Trilinos: classic-mode vcpkg reads its
+            # ports from the working tree and needs no history. This happens
+            # before the bootstrap below, so the vcpkg tool it fetches is the
+            # one this commit names.
+            Invoke-Native { git init --quiet $vcpkgDir }
+            Invoke-Native { git -C $vcpkgDir remote add origin https://github.com/microsoft/vcpkg.git }
+            Invoke-Native { git -C $vcpkgDir fetch --quiet --depth 1 origin $VcpkgCheckout }
+            Invoke-Native { git -C $vcpkgDir checkout --quiet --detach FETCH_HEAD }
+            Write-Host "vcpkg checked out at $VcpkgCheckout"
+        } else {
+            Invoke-Native { git clone https://github.com/microsoft/vcpkg.git $vcpkgDir }
+        }
     }
     # Clone with core.autocrlf=false: git-for-Windows defaults to autocrlf=true,
     # which rewrites checked-out text files to CRLF. The OPM test data contains
@@ -415,6 +453,26 @@ if ($OpmPins) {
     }
 } else {
     Write-Host "OPM sources: not pinned - a new clone takes the head of $OpmOrg/$(if ($OpmBranch) { $OpmBranch } else { 'its default branch' })"
+}
+
+# The same for vcpkg and Trilinos. A vcpkg checkout moved by hand would not
+# change what is installed already, so here even more than for OPM the build
+# only says so. Trilinos is cloned with Zoltan, later, if this build needs it.
+$deps = @(@{ Name = 'vcpkg';    Dir = 'vcpkg';         Pin = $VcpkgPin;    Ref = $VcpkgRef;    Lock = $lock.vcpkg },
+          @{ Name = 'Trilinos'; Dir = 'deps\Trilinos'; Pin = $TrilinosPin; Ref = $TrilinosRef; Lock = $lock.trilinos })
+foreach ($d in $deps) {
+    if ($d.Name -eq 'Trilinos' -and -not $Mpi) { continue }
+    if ($d.Ref) {
+        Write-Host "$($d.Name): $($d.Ref) (given), not the pinned commit"
+    } elseif ($d.Pin) {
+        Write-Host "$($d.Name): the commit opm-sources.json pins ($($d.Lock.date))"
+        $head = Get-GitHead (Join-Path $Root $d.Dir)
+        if ($head -and $head -ne $d.Pin) {
+            Write-Warning ("{0}\ is at {1}, not at the pinned {2}: the dependencies are built from what is checked out. update-opm-pins.ps1 -Check compares; README.md, 'Pinned OPM sources', says how to move it." -f $d.Dir, $head.Substring(0, 10), $d.Pin.Substring(0, 10))
+        }
+    } else {
+        Write-Host "$($d.Name): not pinned - a new clone takes its default branch"
+    }
 }
 
 # --------------------------------------------------------------------------

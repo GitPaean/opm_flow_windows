@@ -19,5 +19,13 @@
       "commit": "4d73182b15bfb66b7967a32e506f982216e4abd9",
       "upstream": "17545de1f8bcca0efcfcbfe99fde5d87ed706d75"
     }
+  },
+  "vcpkg": {
+    "commit": "a0400024711b283056538ac19ced80b91a83c24c",
+    "date": "2026-06-26"
+  },
+  "trilinos": {
+    "commit": "77c7ad90c149c1f98f29150fb6aa4634c0327d44",
+    "date": "2026-06-22"
   }
 }

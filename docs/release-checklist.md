@@ -74,10 +74,12 @@ hold next:
 ```
 
 It refuses a module with local changes, or a commit that is not on the fork's
-branch on GitHub. The nightly workflow's pinned job builds the pins with the
-runner's MSVC 19.51 from the next night on; to know before a release, start the
-windows-weekly workflow by hand with `sources: pinned` once the harness commit
-below is pushed.
+branch on GitHub. The vcpkg and Trilinos pins stay as they are; to move them as
+well, build against the newer ones first (`-VcpkgRef`, `-TrilinosRef`; the
+nightly canary already does, with their newest) and add `-Dependencies`. The
+nightly workflow's pinned job builds the pins with the runner's MSVC 19.51 from
+the next night on; to know before a release, start the windows-weekly workflow
+by hand with `sources: pinned` once the harness commit below is pushed.
 
 The snapshot's date is that of the newest upstream commit of the three. Set it
 as the version defaults in `package-flow.ps1` (`master-YYYY-MM-DD`),
@@ -85,7 +87,7 @@ as the version defaults in `package-flow.ps1` (`master-YYYY-MM-DD`),
 (`YYYY.M.D.0`, since an MSIX version has to be numeric) and commit them together
 with `opm-sources.json` and README.md (whose quick start `update-opm-pins.ps1`
 keeps naming the snapshot), so the harness commit the packages stamp names the
-snapshot and the OPM commits too.
+snapshot and every commit they were built from: OPM, vcpkg and Trilinos.
 
 ## 2. Build
 
@@ -131,9 +133,9 @@ Note the quotes around `"-DCMAKE_PREFIX_PATH=..."`. PowerShell does not expand
 confusing "Qt6 not found".
 
 On a machine that has built before, keep its trees and run the same command with
-`-SkipClone -SkipDeps`, with `src\` at the pinned commits:
-`.\update-opm-pins.ps1 -Check` says whether it is, and `build-all.ps1` warns
-when it is not. `package-flow.ps1` warns too.
+`-SkipClone -SkipDeps`, with `src\`, `vcpkg\` and `deps\Trilinos` at the pinned
+commits: `.\update-opm-pins.ps1 -Check` says whether they are, and
+`build-all.ps1` warns when they are not. `package-flow.ps1` warns too.
 
 ## 3. Package
 

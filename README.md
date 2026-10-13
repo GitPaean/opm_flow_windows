@@ -61,10 +61,12 @@ dependencies, and builds in order. Result:
 top - the commits [opm-sources.json](opm-sources.json) pins, built and run
 together, not whatever the forks' `windows` branches hold on the day you clone
 (see [Pinned OPM sources](#pinned-opm-sources)). `--version` reports the
-development version OPM master carried then, not a release number. The vcpkg
-dependencies, and for `-Mpi` Trilinos (for Zoltan), are not pinned: they come
-from those projects' current master. For the configuration the release packages
-ship - every model in one `flow`, MPI + OpenMP - see
+development version OPM master carried then, not a release number. The rest is
+pinned too: DUNE to 2.10.0, and vcpkg - whose ports decide the version of
+every dependency, Boost, fmt, SuiteSparse and the rest - and, for `-Mpi`,
+Trilinos (for Zoltan) to the commits `opm-sources.json` names. For the
+configuration the release packages ship - every model in one `flow`, MPI +
+OpenMP - see
 [Build your own copy of the release packages](#build-your-own-copy-of-the-release-packages).
 
 ## Quick start (parallel / MPI)
@@ -150,7 +152,7 @@ that was built and run together (SPE1 and Norne), the way DUNE is pinned to
 branch, since GitHub serves commits by id.
 ```powershell
 .\build-all.ps1 -OpmLatest           # the branch heads instead of the pins
-.\update-opm-pins.ps1 -Check         # is src\opm-* at the pinned commits?
+.\update-opm-pins.ps1 -Check         # are src\opm-*, vcpkg\ and deps\Trilinos at the pins?
 .\update-opm-pins.ps1                # pin what src\opm-* holds now
 ```
 A checkout already in `src\` is never moved - it may be where you work on the
@@ -161,6 +163,22 @@ quick start above gives; it refuses a commit with local changes or one that is
 not pushed to the fork's branch. Commit `opm-sources.json` and README.md with
 the harness:
 [docs/release-checklist.md](docs/release-checklist.md) §1 has the whole round.
+
+The same file pins **vcpkg** - its ports decide the version of every dependency
+- and **Trilinos**, where Zoltan comes from for `-Mpi`: today the commits the
+release packages were built with. A new clone fetches just that commit of each.
+`update-opm-pins.ps1` carries these pins over as they are; moving them is its
+own decision, made after building against the newer ones:
+```powershell
+.\build-all.ps1 -VcpkgRef master -TrilinosRef develop   # build against their newest
+.\update-opm-pins.ps1 -Dependencies   # then pin what vcpkg\ and deps\Trilinos hold
+```
+An existing `vcpkg\` is not moved either, with a warning when it is not at its
+pin - and moving it by hand changes nothing already installed. To bring a tree
+to new vcpkg pins, check the commit out
+(`git -C vcpkg fetch --depth 1 origin <commit>; git -C vcpkg checkout --detach FETCH_HEAD`),
+run `vcpkg\bootstrap-vcpkg.bat`, delete `vcpkg\installed` and run `build-all.ps1`
+again; then rebuild DUNE and OPM against what it installed.
 
 ## Options
 ```powershell
@@ -175,6 +193,7 @@ the harness:
 .\build-all.ps1 -DuneVersion v2.10.0
 .\build-all.ps1 -OpmOrg <user> -OpmBranch <branch>   # default GitPaean / windows
 .\build-all.ps1 -OpmLatest           # new clones at the branch heads, not the pinned commits
+.\build-all.ps1 -VcpkgRef <ref>      # a new vcpkg clone at <ref>, not the pinned commit (also -TrilinosRef)
 ```
 `-Mpi` and `-OpenMP` are independent and compose. For hybrid runs use
 `mpiexec -n <ranks> flow_blackoil <deck> --threads-per-process=<threads>`.
@@ -198,14 +217,18 @@ the workflow does not compare output arrays with a Linux reference.
 Every night it runs two jobs side by side:
 
 - **pinned** - the build a user gets: it clones nothing itself, but runs
-  `build-all.ps1` as you would, which checks out the commits `opm-sources.json`
-  pins. The pins move only when someone updates them, so a failure here comes
-  from everything else - the runner image and its MSVC 19.51 (newer than most
-  local compilers), vcpkg ports, the Intel MPI wheels - or from a pin update
-  that was only checked locally.
+  `build-all.ps1` as you would, which checks out OPM, vcpkg and Trilinos at the
+  commits `opm-sources.json` pins. The pins move only when someone updates
+  them, so a failure here comes from everything else - the runner image and its
+  MSVC 19.51 (newer than most local compilers), the Intel MPI wheels, a download
+  a pinned vcpkg port can no longer get - or from a pin update that was only
+  checked locally.
 - **latest** - the canary: the `windows` branch heads, rebased onto that day's
-  upstream master, so a break upstream shows up the day it lands. Its summary
-  also says, per module, whether the harness pin is the branch head.
+  upstream master, built against vcpkg's master and Trilinos' develop, so a
+  break upstream - in OPM or in a dependency - shows up the day it lands. Its
+  summary also says, per module, whether the harness pin is the branch head.
+
+Both jobs list which vcpkg and Trilinos commits they built from.
 
 Each job keeps its own failure issue (labels `windows-pinned` and
 `windows-weekly`), commented on while it stays broken and closed by the next

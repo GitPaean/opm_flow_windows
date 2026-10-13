@@ -24,15 +24,18 @@
 # a conflict needs a human judgement about the code, a build failure usually
 # names the upstream commit that caused it.
 #
-# That is the 'latest' job. Beside it runs 'pinned': the build a user gets.
-# build-all.ps1 builds the commits the harness pins (opm-sources.json), not the
-# branch heads, so that job clones nothing itself - it runs build-all.ps1 as a
-# user would and lets it check out the pins. The pins only move when someone
-# updates them, so what breaks that job is everything else: the runner image
-# and its compiler (MSVC 19.51 already miscompiled OPM once), vcpkg ports, the
-# Intel MPI wheels - or a pin update that was only checked with an older
-# compiler. Each job files its own failure report: a broken canary means the
-# series needs work, a broken pinned build means users are affected now.
+# That is the 'latest' job, and it takes vcpkg (master) and Trilinos (develop)
+# at their newest as well, so a dependency update that breaks the build shows
+# up there first. Beside it runs 'pinned': the build a user gets. build-all.ps1
+# builds the OPM commits, the vcpkg commit and the Trilinos commit the harness
+# pins (opm-sources.json), so that job clones nothing itself - it runs
+# build-all.ps1 as a user would and lets it check out the pins. The pins only
+# move when someone updates them, so what breaks that job is everything else:
+# the runner image and its compiler (MSVC 19.51 already miscompiled OPM once),
+# the Intel MPI wheels, a download a pinned port can no longer get - or a pin
+# update that was only checked with an older compiler. Each job files its own
+# failure report: a broken canary means the series or a dependency update
+# needs work, a broken pinned build means users are affected now.
 #
 # Deliberately NOT triggered by pull_request. If this is ever moved to a
 # self-hosted runner, a fork PR would otherwise run arbitrary code on that
@@ -278,11 +281,17 @@ jobs:
           if (-not $target) { $target = 'flow_blackoil' }
           Write-Host "building target: $target (MPI), sources: ${{ matrix.sources }}"
           # -Mpi: DUNE and the OPM modules built against MS-MPI, plus Zoltan
-          # from a Trilinos clone, into build-mpi\ / install-mpi\. The canary
-          # passes -OpmLatest: its trees are the branch heads on purpose, and
-          # build-all.ps1 should not warn that they are not the pins.
-          $latest = '${{ matrix.sources }}' -eq 'latest'
-          .\build-all.ps1 -Mpi -SimTarget $target -Jobs 4 -OpmLatest:$latest
+          # from a Trilinos clone, into build-mpi\ / install-mpi\. The pinned
+          # job takes everything as opm-sources.json pins it. The canary takes
+          # everything at its newest: the OPM branch heads above (-OpmLatest,
+          # so build-all.ps1 does not warn that they are not the pins), vcpkg's
+          # master and Trilinos' develop - so that a dependency update that
+          # breaks the build shows here before anyone moves the pins to it.
+          $sources = @{}
+          if ('${{ matrix.sources }}' -eq 'latest') {
+            $sources = @{ OpmLatest = $true; VcpkgRef = 'master'; TrilinosRef = 'develop' }
+          }
+          .\build-all.ps1 -Mpi -SimTarget $target -Jobs 4 @sources
           if ($LASTEXITCODE -ne 0) { throw "build failed" }
 
       # Here, not before the build: build-all.ps1 is what cloned the sources.
@@ -325,6 +334,49 @@ jobs:
           $summary | Out-File -Append $env:GITHUB_STEP_SUMMARY
           if ($off.Count -gt 0) {
             Write-Host "::error title=Not the pins::build-all.ps1 built $($off -join ', ') at commits other than opm-sources.json pins"
+            exit 1
+          }
+
+      # Both jobs: which vcpkg and Trilinos the build used. The pinned job must
+      # have used the pins; the canary's are whatever was newest, recorded so
+      # that a break can be traced to a dependency update.
+      - name: Record the dependencies
+        if: always()
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $pinned = '${{ matrix.sources }}' -eq 'pinned'
+          $lock = Get-Content -Raw opm-sources.json | ConvertFrom-Json
+          $rows = @()
+          $record = [ordered]@{}
+          $off = @()
+          foreach ($d in @(@('vcpkg', 'vcpkg', $lock.vcpkg), @('trilinos', 'deps/Trilinos', $lock.trilinos))) {
+            $key, $dir, $pin = $d
+            $pinSha = if ($pin) { $pin.commit } else { $null }
+            $head = $null
+            $date = $null
+            if (Test-Path "$dir/.git") {
+              $head = "$(git -C $dir rev-parse HEAD)".Trim()
+              $date = "$(git -C $dir log -1 --format=%cs)".Trim()
+            }
+            $built = if (-not $head) { 'not cloned' } elseif ($head -eq $pinSha) { 'the pin' } else { "``$($head.Substring(0, 9))`` of $date" }
+            if ($pinned -and $head -and $head -ne $pinSha) { $off += $key }
+            $pinCell = if ($pinSha) { "``$($pinSha.Substring(0, 9))`` of $($pin.date)" } else { 'none' }
+            $rows += "| $key | $pinCell | $built |"
+            $record[$key] = [ordered]@{ pinned = $pinSha; used = $head; date = $date }
+          }
+          "`n## Dependencies`n"       | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          "| | pinned | built from |" | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          "|---|---|---|"              | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          $rows | Out-File -Append $env:GITHUB_STEP_SUMMARY
+
+          # Into the revision record the steps above wrote.
+          if (Test-Path source-revisions.json) {
+            $rev = Get-Content -Raw source-revisions.json | ConvertFrom-Json
+            $rev | Add-Member -NotePropertyName dependencies -NotePropertyValue $record -Force
+            $rev | ConvertTo-Json -Depth 6 | Set-Content -Encoding utf8 source-revisions.json
+          }
+          if ($off.Count -gt 0) {
+            Write-Host "::error title=Not the pins::the pinned job built $($off -join ', ') from commits other than opm-sources.json pins"
             exit 1
           }
 
@@ -533,16 +585,19 @@ jobs:
             const what = pinned ? [
               `The nightly build of the pinned OPM sources failed: [run ${context.runId}](${url}).`,
               '',
-              'This is the build a user gets from build-all.ps1: the commits',
-              'opm-sources.json pins. Unless the pins just changed, look at what',
-              'did: the runner image and its MSVC, the vcpkg ports, the Intel MPI',
-              'wheels. The step summary on that run says what failed.'
+              'This is the build a user gets from build-all.ps1: OPM, vcpkg and',
+              'Trilinos at the commits opm-sources.json pins. Unless the pins just',
+              'changed, look at what did: the runner image and its MSVC, the Intel',
+              'MPI wheels, a download a pinned vcpkg port can no longer get. The',
+              'step summary on that run says what failed.'
             ] : [
               `The nightly canary failed: [run ${context.runId}](${url}).`,
               '',
               'The step summary on that run says which module conflicted or what',
               'the build said. A **conflict** needs the patch series rebased by',
-              'hand; a **build failure** usually names the upstream commit.'
+              'hand; a **build failure** usually names the upstream commit - or',
+              'it came from vcpkg master or Trilinos develop, which this job takes',
+              'at their newest (the summary lists what it used).'
             ];
             const body = [
               ...what,

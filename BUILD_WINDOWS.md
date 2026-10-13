@@ -82,8 +82,16 @@ $Root = "C:\Users\<you>\Desktop\opm_flow"   # pick any path without spaces
 New-Item -ItemType Directory -Force -Path $Root\src | Out-Null
 Set-Location $Root
 
-# vcpkg
-git clone https://github.com/microsoft/vcpkg.git vcpkg
+# The commits this harness pins - vcpkg, the OPM modules, Trilinos - as
+# build-all.ps1 checks them out
+$lock = Get-Content -Raw opm-sources.json | ConvertFrom-Json
+
+# vcpkg at the pinned commit: its ports decide every dependency's version. One
+# commit is all classic-mode vcpkg needs.
+git init vcpkg
+git -C vcpkg remote add origin https://github.com/microsoft/vcpkg.git
+git -C vcpkg fetch --depth 1 origin $lock.vcpkg.commit
+git -C vcpkg checkout --detach FETCH_HEAD
 
 # DUNE core modules, pinned to the 2.10.0 release
 # (https://github.com/dune-project/$m.git mirrors them if the GitLab is down)
@@ -95,9 +103,8 @@ foreach ($m in 'dune-common','dune-geometry','dune-grid','dune-istl') {
 # OPM modules: the 'windows' branch of the forks carrying the Windows fixes on
 # top of OPM master - upstream does not build with MSVC on its own - checked out
 # at the commits opm-sources.json pins, a set verified to build together
-$pins = (Get-Content -Raw opm-sources.json | ConvertFrom-Json).modules
 foreach ($m in 'opm-common','opm-grid','opm-simulators') {
-  $pin = $pins.$m.commit
+  $pin = $lock.modules.$m.commit
   git clone -c core.autocrlf=false --branch windows https://github.com/GitPaean/$m.git src\$m
   git -C src\$m fetch origin $pin     # a later rebase may have taken it off the branch
   git -C src\$m checkout --detach $pin
@@ -419,9 +426,11 @@ disturb the serial build.
 .\build-all.ps1 -Mpi
 ```
 
-This: ensures MS-MPI is installed, clones Trilinos and builds the **Zoltan
-package only** (against MS-MPI), then builds DUNE + opm-common/grid/simulators
-with MPI enabled. Output: `build-mpi\opm-simulators\bin\flow_blackoil.exe`.
+This: ensures MS-MPI is installed, fetches Trilinos at the commit
+`opm-sources.json` pins (just that commit; `-TrilinosRef` names another) and
+builds the **Zoltan package only** (against MS-MPI), then builds DUNE +
+opm-common/grid/simulators with MPI enabled. Output:
+`build-mpi\opm-simulators\bin\flow_blackoil.exe`.
 
 ### Prerequisites (one-time)
 
