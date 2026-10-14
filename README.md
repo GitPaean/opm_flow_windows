@@ -165,8 +165,11 @@ the harness:
 [docs/release-checklist.md](docs/release-checklist.md) §1 has the whole round.
 
 The same file pins **vcpkg** - its ports decide the version of every dependency
-- and **Trilinos**, where Zoltan comes from for `-Mpi`: today the commits the
-release packages were built with. A new clone fetches just that commit of each.
+- and **Trilinos**, where Zoltan comes from for `-Mpi`. A new clone fetches just
+that commit of each. Trilinos is pinned where the release packages were built;
+vcpkg is newer than the one they were built with, which cannot build LAPACK
+where Visual Studio 2026 has its C++ Clang tools (see
+[BUILD_WINDOWS.md](BUILD_WINDOWS.md) §5).
 `update-opm-pins.ps1` carries these pins over as they are; moving them is its
 own decision, made after building against the newer ones:
 ```powershell

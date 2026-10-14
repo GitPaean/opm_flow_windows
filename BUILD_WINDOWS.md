@@ -134,8 +134,15 @@ Set-Location $Root\vcpkg
 ```
 
 What this gives OPM:
-- **`lapack`** → pulls **OpenBLAS** (provides both BLAS and LAPACK; no Fortran
-  compiler needed) and makes `find_package(BLAS)`/`find_package(LAPACK)` work.
+- **`lapack`** → reference LAPACK over **OpenBLAS**'s BLAS, and makes
+  `find_package(BLAS)`/`find_package(LAPACK)` work. Reference LAPACK is
+  Fortran: vcpkg compiles it with a MinGW gfortran it downloads itself, so no
+  Fortran compiler needs installing (the gfortran runtime DLLs then ship beside
+  `flow.exe`). A vcpkg from before July 2026 (microsoft/vcpkg#52938) takes any
+  Fortran compiler it finds instead - on Visual Studio 2026 with the C++ Clang
+  tools, as GitHub's windows-latest runners have it, the `flang.exe` those
+  include, which stops on `Cannot parse module file for module
+  'iso_fortran_env'`. The harness pins a vcpkg newer than that.
 - **`suitesparse-umfpack`** → UMFPACK (+ its AMD/CHOLMOD deps). We deliberately
   use `suitesparse-umfpack`, **not** the full `suitesparse` metapackage, to skip
   GraphBLAS/SPEX (heavy, need GMP/MPFR, unused by OPM).

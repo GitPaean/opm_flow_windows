@@ -21,8 +21,8 @@
     }
   },
   "vcpkg": {
-    "commit": "a0400024711b283056538ac19ced80b91a83c24c",
-    "date": "2026-06-26"
+    "commit": "e456309491fd875487bf02b8a0dca76c1b1b00cc",
+    "date": "2026-10-10"
   },
   "trilinos": {
     "commit": "77c7ad90c149c1f98f29150fb6aa4634c0327d44",
