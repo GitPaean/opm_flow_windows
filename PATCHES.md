@@ -3,7 +3,7 @@
 Patches applied to the source trees to build OPM-flow natively on Windows with
 MSVC. Kept here so they can be upstreamed as PRs.
 
-## The series as it stands (2026-10-13, on OPM master of that day)
+## The series as it stands (2026-10-14, on OPM master of that day)
 
 The sections below are the working record, in the order things were found.
 What is on the branches is the folded result: one commit per topic, each
@@ -14,9 +14,9 @@ those pins.
 
 | repository (`windows` branch of GitPaean/...) | commits |
 |---|---|
-| opm-common | Portability and cross-platform fixes exposed by a Windows build · Pin LF line endings for Eclipse test data · Windows/MSVC enablement · Link MPI directly when the DUNE modules do not propagate it · Share the FCMacros.h fallback through opm-common · Add the <stdexcept> that std::invalid_argument needs · Keep the hysteresis snapshot loops out of line on MSVC · Keep the dates before 1970 that MSVC's C runtime refuses |
+| opm-common | Portability and cross-platform fixes exposed by a Windows build · Pin LF line endings for Eclipse test data · Windows/MSVC enablement · Link MPI directly when the DUNE modules do not propagate it · Share the FCMacros.h fallback through opm-common · Add the <stdexcept> that std::invalid_argument needs · Keep the hysteresis snapshot loops out of line on MSVC |
 | opm-grid | Enable Fortran only when a compiler exists, and fall back for FCMacros.h · Make cpgrid compile with MSVC · Index-based chunk access so OpenMP loops build on MSVC · Use unsigned rather than the POSIX uint typedef in tests · Pin LF line endings for Eclipse test data |
-| opm-simulators | Portability fixes and bugs exposed by a Windows build · Work around MSVC front-end limitations · Provide Windows equivalents for the POSIX interfaces used · Exempt the simulator from Windows power throttling · Pin LF line endings for Eclipse test data · Harden reservoir coupling slave spawning for process-manager launch contexts · Date the economic-limit messages without fmt::gmtime() |
+| opm-simulators | Portability fixes and bugs exposed by a Windows build · Work around MSVC front-end limitations · Provide Windows equivalents for the POSIX interfaces used · Exempt the simulator from Windows power throttling · Pin LF line endings for Eclipse test data · Harden reservoir coupling slave spawning for process-manager launch contexts |
 | opm-upscaling | Build on MSVC: Fortran only when a compiler exists, fall back for FCMacros.h · Disambiguate FieldMatrix operator*= for MSVC · Pin LF line endings for the Eclipse test data |
 
 Review vehicles: GitPaean/opm-common#7, opm-grid#2, opm-simulators#4,
@@ -25,7 +25,11 @@ mirrors upstream, so they are not meant to be merged there.
 
 Gone upstream, so no longer on the branches: opm-common's "Write the time
 conversions with the C++20 <chrono> calendar types", merged in reworked form as
-OPM/opm-common#5467 on 2026-10-13.
+OPM/opm-common#5467 on 2026-10-13; opm-common's "Keep the dates before 1970
+that MSVC's C runtime refuses" and opm-simulators' "Date the economic-limit
+messages without fmt::gmtime()", superseded on 2026-10-14 by
+OPM/opm-common#5342 and OPM/opm-simulators#7556, which keep OPM's times as
+`<chrono>` time points (see "dates before 1970" below).
 
 What still relies on this harness's `compat/include` shims: opm-common's
 `examples/` and `test_util/` tools (`getopt.h`) and `EclipseGridTests.cpp`
@@ -238,8 +242,10 @@ Found 2026-10-13: the Windows build ran SPE10 (opm-tests `spe10/`, `START 1 JAN
   calls, and opm-simulators' economic-limit (WECON/CECON/GECON) message, now
   format the `std::tm` of the new `Opm::asTm(TimeStampUTC)`, which works on
   the `<chrono>` calendar types as `TimeStampUTC` does.
-- Portable code without an `#ifdef`, and no change on Linux, so it can go
-  upstream as it is, next to OPM/opm-common#5467.
+- Upstream since 2026-10-14, and so off the branches: OPM/opm-common#5342
+  carries OPM's times as `<chrono>` time points instead of `time_t`, drops the
+  `difftime()` and `fmt::gmtime()` calls and formats dates through its own
+  `asTm()`; OPM/opm-simulators#7556 moves the economic-limit message onto it.
 
 ## MPI support — MS-MPI on Windows  (RESOLVED — see "Zoltan for Windows" + "MPI RESULT" below)
 MS-MPI installed; DUNE (all 4) + opm-common build with MPI. opm-grid couples MPI
