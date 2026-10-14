@@ -87,7 +87,10 @@ fixing latent CMake assumptions that the tool targets always exist:
   with `if(TARGET compareECL AND TARGET rst_deck)`.
 - `cmake/Modules/OpmLibMain.cmake`: gate the `additionals` satellite on `BUILD_EXAMPLES`.
 A Windows `getopt.h` shim exists at `compat/include/getopt.h` (added to the include
-path via build-module.ps1) for when the tools are eventually built.
+path via build-module.ps1) for when the tools are eventually built. It has
+`getopt_long()` as well since 2026-10-14: `networkgraph` takes
+`--input-skip-mode` since upstream 1c844c02b (2026-09-29), and did not compile
+on Windows without it.
 `examples/wellgraph.cpp`: `.stem()` -> `.stem().string()`.
 
 ## opm-grid (master)
