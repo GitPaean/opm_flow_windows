@@ -4,7 +4,7 @@
   "branch": "windows",
   "modules": {
     "opm-common": {
-      "commit": "a60f305d55e1322ad6ba50d64239fc976490f59d",
+      "commit": "37a6de8fec964ad4b71e00d2b21d72a21e0d5a96",
       "upstream": "73c5fefc3813853caeadd646b3af2dca0835eae5"
     },
     "opm-grid": {

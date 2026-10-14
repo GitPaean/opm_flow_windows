@@ -92,6 +92,13 @@ path via build-module.ps1) for when the tools are eventually built. It has
 `--input-skip-mode` since upstream 1c844c02b (2026-09-29), and did not compile
 on Windows without it.
 `examples/wellgraph.cpp`: `.stem()` -> `.stem().string()`.
+The tools' `.string()` calls are needed only where a path goes into a
+`std::string`; on Windows a path converts implicitly to `std::wstring` only.
+Upstream's EclIO readers (`ERst`, `EclFile`, `ESmry`, `ExtESmry`),
+`EclIO::fileExists()` and `FileDeck::dump_stdout()` take
+`std::filesystem::path` now, so on 2026-10-14 the series dropped its
+`.string()` at the 7 calls into them, in `make_ext_smry`, `networkgraph`,
+`arraylist`, `summary` and `rst_deck`. MSVC compiles all 7 without it.
 
 ## opm-grid (master)
 - `CMakeLists.txt`: `project(opm-grid C CXX Fortran)` -> `project(opm-grid C CXX)`
