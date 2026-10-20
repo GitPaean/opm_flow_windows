@@ -8,8 +8,11 @@ Windows compatibility shims, the DUNE patches, and a CI workflow. It does **not*
 contain the OPM / DUNE / Trilinos sources — `build-all.ps1` clones those into
 `src/`, `deps/`, and `vcpkg/` (all git-ignored) when you run it.
 
-> Status: validated end-to-end from a clean checkout — serial and 2-rank MPI runs
-> of SPE1 pass (see [VALIDATION.md](VALIDATION.md)).
+> Status: what the quick start builds - the pinned OPM sources - is built and run
+> on Norne, with MS-MPI and with Intel MPI, every night by
+> [CI](#continuous-integration); an open issue labelled `windows-pinned` means
+> that build is currently broken. The first clean-checkout walkthrough is in
+> [VALIDATION.md](VALIDATION.md).
 
 ## flow-gui at a glance
 The bundled [flow-gui](flow-gui/) workbench (Windows / Linux / macOS), here on
@@ -46,13 +49,25 @@ From a clone of this repo:
 ```powershell
 .\build-all.ps1
 ```
-Clones vcpkg + DUNE (v2.10.0) + OPM - the `windows` branch of the forks that
-carry the Windows fixes, see [below](#where-the-opm-windows-fixes-live) - applies
-the DUNE patches, installs deps, and builds in order. Result:
-`build\opm-simulators\bin\flow_blackoil.exe`. Run it:
+Clones vcpkg, DUNE (v2.10.0) and OPM, applies the DUNE patches, installs the
+dependencies, and builds in order. Result:
+`build\opm-simulators\bin\flow_blackoil.exe`, the black-oil simulator. Run it:
 ```powershell
 .\build\opm-simulators\bin\flow_blackoil.exe <deck>.DATA --output-dir=<dir>
 ```
+
+**Which OPM this builds:** OPM master of
+<!-- opm-snapshot -->2026-10-14<!-- /opm-snapshot --> with the Windows fixes on
+top - the commits [opm-sources.json](opm-sources.json) pins, built and run
+together, not whatever the forks' `windows` branches hold on the day you clone
+(see [Pinned OPM sources](#pinned-opm-sources)). `--version` reports the
+development version OPM master carried then, not a release number. The rest is
+pinned too: DUNE to 2.10.0, and vcpkg - whose ports decide the version of
+every dependency, Boost, fmt, SuiteSparse and the rest - and, for `-Mpi`,
+Trilinos (for Zoltan) to the commits `opm-sources.json` names. For the
+configuration the release packages ship - every model in one `flow`, MPI +
+OpenMP - see
+[Build your own copy of the release packages](#build-your-own-copy-of-the-release-packages).
 
 ## Quick start (parallel / MPI)
 ```powershell
@@ -105,7 +120,9 @@ variant - built for hybrid MPI + OpenMP, beside flow-gui:
 ```powershell
 .\build-all.ps1 -Mpi -OpenMP -SimTarget flow -Jobs 4
 ```
-Then build flow-gui against that tree (Qt 6; see [flow-gui/README.md](flow-gui/README.md#windows-this-harness))
+That builds the OPM commits the harness pins (see
+[Pinned OPM sources](#pinned-opm-sources)), not whatever the `windows` branches
+hold that day. Then build flow-gui against that tree (Qt 6; see [flow-gui/README.md](flow-gui/README.md#windows-this-harness))
 and, if you want the zip, installer or MSIX as well, package it.
 [docs/release-checklist.md](docs/release-checklist.md) goes through all of it,
 from a bare machine to the installer, including the Intel MPI variant.
@@ -125,6 +142,47 @@ are merged there - is one switch away:
 .\build-all.ps1 -Mpi -OpmOrg OPM -OpmBranch master
 ```
 
+### Pinned OPM sources
+The `windows` branches move with every rebase, and in between a branch head can
+be a rebase in progress, or one module rebased onto a master the others have not
+caught up with. So `build-all.ps1` does not build the branch heads: it checks
+each module out at the commit [opm-sources.json](opm-sources.json) pins - a set
+that was built and run together (SPE1 and Norne), the way DUNE is pinned to
+`v2.10.0`. A pinned commit stays fetchable after a rebase takes it off the
+branch, since GitHub serves commits by id.
+```powershell
+.\build-all.ps1 -OpmLatest           # the branch heads instead of the pins
+.\update-opm-pins.ps1 -Check         # are src\opm-*, vcpkg\ and deps\Trilinos at the pins?
+.\update-opm-pins.ps1                # pin what src\opm-* holds now
+```
+A checkout already in `src\` is never moved - it may be where you work on the
+series - but the build warns when it is not at its pin, since it then builds
+something other than the verified set. After rebasing the series and checking
+the result, `update-opm-pins.ps1` records the new set, and the snapshot date the
+quick start above gives; it refuses a commit with local changes or one that is
+not pushed to the fork's branch. Commit `opm-sources.json` and README.md with
+the harness:
+[docs/release-checklist.md](docs/release-checklist.md) §1 has the whole round.
+
+The same file pins **vcpkg** - its ports decide the version of every dependency
+- and **Trilinos**, where Zoltan comes from for `-Mpi`. A new clone fetches just
+that commit of each. Trilinos is pinned where the release packages were built;
+vcpkg is newer than the one they were built with, which cannot build LAPACK
+where Visual Studio 2026 has its C++ Clang tools (see
+[BUILD_WINDOWS.md](BUILD_WINDOWS.md) §5).
+`update-opm-pins.ps1` carries these pins over as they are; moving them is its
+own decision, made after building against the newer ones:
+```powershell
+.\build-all.ps1 -VcpkgRef master -TrilinosRef develop   # build against their newest
+.\update-opm-pins.ps1 -Dependencies   # then pin what vcpkg\ and deps\Trilinos hold
+```
+An existing `vcpkg\` is not moved either, with a warning when it is not at its
+pin - and moving it by hand changes nothing already installed. To bring a tree
+to new vcpkg pins, check the commit out
+(`git -C vcpkg fetch --depth 1 origin <commit>; git -C vcpkg checkout --detach FETCH_HEAD`),
+run `vcpkg\bootstrap-vcpkg.bat`, delete `vcpkg\installed` and run `build-all.ps1`
+again; then rebuild DUNE and OPM against what it installed.
+
 ## Options
 ```powershell
 .\build-all.ps1 -Mpi                 # parallel build (MPI + Zoltan)
@@ -137,6 +195,8 @@ are merged there - is one switch away:
 .\build-all.ps1 -Jobs 6              # parallel compile jobs per module (default 4; raise on a high-RAM machine)
 .\build-all.ps1 -DuneVersion v2.10.0
 .\build-all.ps1 -OpmOrg <user> -OpmBranch <branch>   # default GitPaean / windows
+.\build-all.ps1 -OpmLatest           # new clones at the branch heads, not the pinned commits
+.\build-all.ps1 -VcpkgRef <ref>      # a new vcpkg clone at <ref>, not the pinned commit (also -TrilinosRef)
 ```
 `-Mpi` and `-OpenMP` are independent and compose. For hybrid runs use
 `mpiexec -n <ranks> flow_blackoil <deck> --threads-per-process=<threads>`.
@@ -151,18 +211,39 @@ uses its own build trees:
 
 ## Continuous integration
 
-The [weekly Windows workflow](.github/workflows/windows-weekly.yml) builds
+The [nightly Windows workflow](.github/workflows/windows-weekly.yml) builds
 opm-common, opm-grid and opm-simulators against both MPI implementations. It runs
 Norne with **4 MS-MPI ranks x 1 OpenMP thread** and **2 Intel MPI ranks x 2 OpenMP
 threads**. The two decompositions exercise MPI and hybrid MPI/OpenMP execution;
 the workflow does not compare output arrays with a Linux reference.
 
-Each run records the harness commit and each OPM module's cloned fork commit,
-fetched upstream commit and resolved commit after any rebase in
-`source-revisions.json`. Download it from the `opm-source-revisions` artifact;
-it is also included with a successful `flow-windows-x64` binary artifact. Once
-source resolution has completed, the revision artifact is uploaded even if a
-rebase conflict or later build failure prevents a binary from being produced.
+Every night it runs two jobs side by side:
+
+- **pinned** - the build a user gets: it clones nothing itself, but runs
+  `build-all.ps1` as you would, which checks out OPM, vcpkg and Trilinos at the
+  commits `opm-sources.json` pins. The pins move only when someone updates
+  them, so a failure here comes from everything else - the runner image and its
+  MSVC 19.51 (newer than most local compilers), the Intel MPI wheels, a download
+  a pinned vcpkg port can no longer get - or from a pin update that was only
+  checked locally.
+- **latest** - the canary: the `windows` branch heads, rebased onto that day's
+  upstream master, built against vcpkg's master and Trilinos' develop, so a
+  break upstream - in OPM or in a dependency - shows up the day it lands. Its
+  summary also says, per module, whether the harness pin is the branch head.
+
+Both jobs list which vcpkg and Trilinos commits they built from.
+
+Each job keeps its own failure issue (labels `windows-pinned` and
+`windows-weekly`), commented on while it stays broken and closed by the next
+pass. Started by hand, the workflow runs both jobs or either one (**sources**).
+
+Each job records the harness commit and, per OPM module, the pinned commit and
+what it built - for the canary also the cloned fork commit, the fetched upstream
+commit and the commit after any rebase - in `source-revisions.json`. Download it
+from the `opm-source-revisions-<job>` artifact; it is also included with a
+successful `flow-windows-x64-<job>` binary artifact. Once source resolution has
+completed, the revision artifact is uploaded even if a rebase conflict or later
+build failure prevents a binary from being produced.
 
 ## What's in this repo
 | Path | Purpose |
@@ -173,6 +254,8 @@ rebase conflict or later build failure prevents a binary from being produced.
 | `setup-env.ps1` | Loads MSVC (vcvars64) + vcpkg (+ MS-MPI) into the shell |
 | `compat/include/` | POSIX/Fortran shim headers MSVC lacks (getopt, unistd, sys/*, FCMacros) |
 | `patches/` | DUNE Windows patches, auto-applied after the DUNE checkout |
+| `opm-sources.json` | The OPM commits `build-all.ps1` checks out: a set verified to build and run together |
+| `update-opm-pins.ps1` | Writes `opm-sources.json` from `src\opm-*` after a verified rebase; `-Check` compares |
 | `probes/` | Stand-alone programs that each settle one question about the build (MS-MPI spawning, autodiff constants, C++-only package consumption); see its README |
 | `build-clang.ps1` | Build one module with clang-cl instead of MSVC, against the same DUNE/vcpkg tree; what the forks' smaller `windows_clang` branches are built with |
 | `flow-gui/` | The Qt 6 graphical workbench for flow (Windows/Linux/macOS): run/monitor with live progress, summary plotting & case comparison, 3D results viewer, deck editor, projects (see its README) |
@@ -182,7 +265,7 @@ rebase conflict or later build failure prevents a binary from being produced.
 | `PACKAGING.md` | Distribution guide: portable zip, installer, MSIX/Store, licensing notes |
 | `release-notes/` | Per-release notes shown on the GitHub Releases page (e.g. `master-2026-10-12.md`, named after the OPM master snapshot); published with `gh release edit --notes-file` (see [PACKAGING.md](PACKAGING.md)) |
 | `ci/windows.yml` | GitHub Actions workflow |
-| `.github/workflows/windows-weekly.yml` | Weekly build and Norne runs against both MPI implementations, with source revision records |
+| `.github/workflows/windows-weekly.yml` | Nightly build and Norne runs against both MPI implementations, of the pinned sources and of the branch heads on upstream master, with source revision records |
 | `BUILD_WINDOWS.md` | Full step-by-step guide (§1–14): toolchain, deps, flags, MPI, patches, CI |
 | `PATCHES.md` | Record of every source-level Windows/MSVC fix |
 | `VALIDATION.md` | Clean-room validation walkthrough + results |

@@ -1,0 +1,31 @@
+{
+  "snapshot": "2026-10-14",
+  "org": "GitPaean",
+  "branch": "windows",
+  "modules": {
+    "opm-common": {
+      "commit": "37a6de8fec964ad4b71e00d2b21d72a21e0d5a96",
+      "upstream": "73c5fefc3813853caeadd646b3af2dca0835eae5"
+    },
+    "opm-grid": {
+      "commit": "0e8f4ab19a7309d4c2e9554b94a093824792d460",
+      "upstream": "29cd00c43219af1fea393c34c84e6afec33c7b71"
+    },
+    "opm-simulators": {
+      "commit": "c5a661093e9c01a43d9703126878d3de1f4a5cd6",
+      "upstream": "0fea1f74383e9d6529d2de8fc48dd007985cd796"
+    },
+    "opm-upscaling": {
+      "commit": "5eddd1383bc7c12a9b8df4b7a988db00ba95d57b",
+      "upstream": "30515032c0bc066484b67c98e9bc45780baecd62"
+    }
+  },
+  "vcpkg": {
+    "commit": "e456309491fd875487bf02b8a0dca76c1b1b00cc",
+    "date": "2026-10-10"
+  },
+  "trilinos": {
+    "commit": "77c7ad90c149c1f98f29150fb6aa4634c0327d44",
+    "date": "2026-06-22"
+  }
+}

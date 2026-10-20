@@ -1,7 +1,8 @@
 # Copyright (C) 2026 SINTEF Digital, Mathematics & Cybernetics; GPL-3.0-or-later (see LICENSE).
 #
-# Weekly canary: does the Windows patch series still build against today's
-# upstream OPM, and does what it builds still run?
+# Nightly, two questions side by side: does the build a user gets from this
+# harness still build and run ('pinned'), and does the Windows patch series
+# still build against today's upstream OPM ('latest', the canary)?
 #
 # It builds the configurations the packages ship - hybrid MPI+OpenMP against
 # MS-MPI, and the same against Intel MPI for the no-administrator package - and
@@ -16,12 +17,25 @@
 # onto upstream master as it moves. Left alone, the cost of that rebase grows
 # with the gap: a week of upstream is usually one small conflict, three months
 # is a pile of them plus a build failure with a dozen candidate causes. So this
-# rebases first and builds the result - the point is to hear about a break in
-# the week it happens, not at the next release.
+# rebases first and builds the result - the point is to hear about a break the
+# day it happens, not at the next release.
 #
 # A conflict and a build failure are reported as different outcomes on purpose:
 # a conflict needs a human judgement about the code, a build failure usually
 # names the upstream commit that caused it.
+#
+# That is the 'latest' job, and it takes vcpkg (master) and Trilinos (develop)
+# at their newest as well, so a dependency update that breaks the build shows
+# up there first. Beside it runs 'pinned': the build a user gets. build-all.ps1
+# builds the OPM commits, the vcpkg commit and the Trilinos commit the harness
+# pins (opm-sources.json), so that job clones nothing itself - it runs
+# build-all.ps1 as a user would and lets it check out the pins. The pins only
+# move when someone updates them, so what breaks that job is everything else:
+# the runner image and its compiler (MSVC 19.51 already miscompiled OPM once),
+# the Intel MPI wheels, a download a pinned port can no longer get - or a pin
+# update that was only checked with an older compiler. Each job files its own
+# failure report: a broken canary means the series or a dependency update
+# needs work, a broken pinned build means users are affected now.
 #
 # Deliberately NOT triggered by pull_request. If this is ever moved to a
 # self-hosted runner, a fork PR would otherwise run arbitrary code on that
@@ -31,14 +45,13 @@ name: windows-weekly
 
 on:
   schedule:
-    # Friday, end of the working day: a break is heard about while the week is
-    # still open, and nothing lands on Monday morning. Cron is always UTC and
-    # does not follow DST, so a fixed time drifts an hour across the year:
-    # 15:17 UTC is 17:17 in Norway on summer time and 16:17 on winter time -
-    # late afternoon either way. The odd minute is deliberate; runs scheduled
-    # on the hour queue behind everyone else's.
-    # For Saturday early morning instead, use '17 3 * * 6' (05:17 / 04:17 local).
-    - cron: '17 15 * * 5'
+    # Every night: a break then comes from one day of upstream changes, and the
+    # result is waiting at the start of the working day. Cron is always UTC and
+    # does not follow DST: 00:17 UTC is 02:17 in Norway on summer time and 01:17
+    # on winter time. The odd minute is deliberate; runs scheduled on the hour
+    # queue behind everyone else's.
+    # For every other day instead, use '17 0 */2 * *' (odd days of the month).
+    - cron: '17 0 * * *'
   workflow_dispatch:
     inputs:
       sim_target:
@@ -47,9 +60,14 @@ on:
         options: [flow_blackoil, flow]
         default: flow_blackoil
       rebase:
-        description: 'Rebase onto upstream master before building'
+        description: 'latest: rebase onto upstream master before building'
         type: boolean
         default: true
+      sources:
+        description: 'Which jobs: the pinned commits (as build-all.ps1 builds them), the rebased branch heads, or both'
+        type: choice
+        options: [both, pinned, latest]
+        default: both
 
 permissions:
   contents: read
@@ -65,6 +83,12 @@ concurrency:
 
 jobs:
   build:
+    # A scheduled run has no inputs, so it runs both.
+    strategy:
+      fail-fast: false
+      matrix:
+        sources: ${{ fromJSON(inputs.sources == 'pinned' && '["pinned"]' || inputs.sources == 'latest' && '["latest"]' || '["pinned", "latest"]') }}
+    name: build (${{ matrix.sources }})
     runs-on: windows-latest
     # Below the 6 h hosted-runner ceiling, so an overrun is reported as a
     # timeout here rather than as an opaque cancellation.
@@ -148,14 +172,19 @@ jobs:
             Format-Table -AutoSize | Out-String | Write-Host
           Write-Host "workspace: $env:GITHUB_WORKSPACE"
 
+      # The canary only. The pinned job leaves the cloning to build-all.ps1.
       - name: Fetch the forks and rebase onto upstream
         id: rebase
+        if: matrix.sources == 'latest'
         run: |
           $ErrorActionPreference = 'Continue'
           git config --global user.email 'windows-weekly@users.noreply.github.com'
           git config --global user.name  'windows-weekly'
           # An input is empty on a scheduled run, so default to rebasing.
           $doRebase = '${{ inputs.rebase }}' -ne 'false'
+          # Where the harness pins stand, for the summary.
+          $pins = $null
+          if (Test-Path opm-sources.json) { $pins = (Get-Content -Raw opm-sources.json | ConvertFrom-Json).modules }
           New-Item -ItemType Directory -Force -Path src | Out-Null
 
           function Get-SourceRevision($dir, $ref) {
@@ -177,6 +206,9 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw "could not fetch upstream/$m" }
 
             $forkHead = Get-SourceRevision "src/$m" HEAD
+            $pin = $null
+            if ($pins -and $pins.$m) { $pin = $pins.$m.commit }
+            $pinNote = if (-not $pin) { 'none' } elseif ($pin -eq $forkHead) { 'branch head' } else { "``$($pin.Substring(0, 9))``" }
             $upstreamHead = Get-SourceRevision "src/$m" upstream/master
             $behind = (git -C "src/$m" rev-list --count 'HEAD..upstream/master').Trim()
             $ahead  = (git -C "src/$m" rev-list --count 'upstream/master..HEAD').Trim()
@@ -189,20 +221,21 @@ jobs:
                 git -C "src/$m" rebase --abort
                 $conflicted += $m
                 $rebaseResult = 'conflict'
-                $summary += "| $m | $ahead | $behind | **conflict** |"
+                $summary += "| $m | $ahead | $behind | **conflict** | $pinNote |"
                 Write-Host "::warning title=Rebase conflict::$m does not rebase cleanly onto upstream/master"
               } else {
                 $rebaseResult = 'rebased'
-                $summary += "| $m | $ahead | $behind | rebased |"
+                $summary += "| $m | $ahead | $behind | rebased | $pinNote |"
               }
             } else {
               $rebaseResult = if ($behind -eq '0') { 'up to date' } else { 'rebase disabled' }
-              $summary += "| $m | $ahead | $behind | $rebaseResult |"
+              $summary += "| $m | $ahead | $behind | $rebaseResult | $pinNote |"
             }
             $resolvedHead = Get-SourceRevision "src/$m" HEAD
             $revisions += [ordered]@{
               name = $m
               forkHead = $forkHead
+              pinned = $pin
               upstreamHead = $upstreamHead
               resolvedHead = $resolvedHead
               rebaseResult = $rebaseResult
@@ -217,13 +250,14 @@ jobs:
           [ordered]@{
             harnessHead = Get-SourceRevision . HEAD
             runUrl = "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
+            sources = 'latest'
             rebaseRequested = $doRebase
             repositories = $revisions
           } | ConvertTo-Json -Depth 4 | Set-Content -Encoding utf8 source-revisions.json
 
           "## Rebase onto upstream master`n"                      | Out-File -Append $env:GITHUB_STEP_SUMMARY
-          "| module | patch commits | upstream commits behind | result |" | Out-File -Append $env:GITHUB_STEP_SUMMARY
-          "|---|---|---|---|"                                     | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          "| module | patch commits | upstream commits behind | result | harness pin |" | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          "|---|---|---|---|---|"                                 | Out-File -Append $env:GITHUB_STEP_SUMMARY
           $summary | Out-File -Append $env:GITHUB_STEP_SUMMARY
 
           if ($conflicted.Count -gt 0) {
@@ -235,19 +269,116 @@ jobs:
           }
 
       # build-all.ps1 clones vcpkg and DUNE and applies the DUNE MSVC patches.
-      # It skips any OPM module that is already present, so the rebased trees
-      # above are kept. Do NOT pass -SkipClone: that also skips Apply-DunePatch,
-      # and the DUNE build then fails on Windows.
+      # It skips any OPM module that is already present, so the canary's
+      # rebased trees above are kept; in the pinned job nothing is there yet, so
+      # it clones the forks and checks out the pins itself, as for a user. Do
+      # NOT pass -SkipClone: that also skips Apply-DunePatch, and the DUNE build
+      # then fails on Windows.
       - name: Build
         id: build
         run: |
           $target = '${{ inputs.sim_target }}'
           if (-not $target) { $target = 'flow_blackoil' }
-          Write-Host "building target: $target (MPI)"
+          Write-Host "building target: $target (MPI), sources: ${{ matrix.sources }}"
           # -Mpi: DUNE and the OPM modules built against MS-MPI, plus Zoltan
-          # from a Trilinos clone, into build-mpi\ / install-mpi\.
-          .\build-all.ps1 -Mpi -SimTarget $target -Jobs 4
+          # from a Trilinos clone, into build-mpi\ / install-mpi\. The pinned
+          # job takes everything as opm-sources.json pins it. The canary takes
+          # everything at its newest: the OPM branch heads above (-OpmLatest,
+          # so build-all.ps1 does not warn that they are not the pins), vcpkg's
+          # master and Trilinos' develop - so that a dependency update that
+          # breaks the build shows here before anyone moves the pins to it.
+          $sources = @{}
+          if ('${{ matrix.sources }}' -eq 'latest') {
+            $sources = @{ OpmLatest = $true; VcpkgRef = 'master'; TrilinosRef = 'develop' }
+          }
+          .\build-all.ps1 -Mpi -SimTarget $target -Jobs 4 @sources
           if ($LASTEXITCODE -ne 0) { throw "build failed" }
+
+      # Here, not before the build: build-all.ps1 is what cloned the sources.
+      # Runs when the build failed too, so the record says what it was given.
+      - name: Record the pinned sources
+        if: always() && matrix.sources == 'pinned'
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $lock = Get-Content -Raw opm-sources.json | ConvertFrom-Json
+          $summary = @()
+          $revisions = @()
+          $off = @()
+          foreach ($m in 'opm-common', 'opm-grid', 'opm-simulators') {
+            $pin  = $lock.modules.$m.commit
+            $base = $lock.modules.$m.upstream
+            $head = $null
+            if (Test-Path "src/$m/.git") { $head = "$(git -C "src/$m" rev-parse HEAD)".Trim() }
+            $built = if (-not $head) { 'not cloned' } elseif ($head -eq $pin) { 'the pin' } else { "**``$($head.Substring(0, 9))``**" }
+            if ($head -and $head -ne $pin) { $off += $m }
+            $summary += "| $m | ``$($pin.Substring(0, 9))`` | ``$($base.Substring(0, 9))`` | $built |"
+            $revisions += [ordered]@{
+              name = $m
+              pinned = $pin
+              upstreamBase = $base
+              resolvedHead = $head
+            }
+          }
+          [ordered]@{
+            harnessHead = "$(git rev-parse HEAD)".Trim()
+            runUrl = "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
+            sources = 'pinned'
+            snapshot = $lock.snapshot
+            repositories = $revisions
+          } | ConvertTo-Json -Depth 4 | Set-Content -Encoding utf8 source-revisions.json
+
+          "## The pinned OPM sources (opm-sources.json, snapshot $($lock.snapshot))`n" |
+            Out-File -Append $env:GITHUB_STEP_SUMMARY
+          "| module | pinned commit | on OPM master | built |" | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          "|---|---|---|---|"                                  | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          $summary | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          if ($off.Count -gt 0) {
+            Write-Host "::error title=Not the pins::build-all.ps1 built $($off -join ', ') at commits other than opm-sources.json pins"
+            exit 1
+          }
+
+      # Both jobs: which vcpkg and Trilinos the build used. The pinned job must
+      # have used the pins; the canary's are whatever was newest, recorded so
+      # that a break can be traced to a dependency update.
+      - name: Record the dependencies
+        if: always()
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $pinned = '${{ matrix.sources }}' -eq 'pinned'
+          $lock = Get-Content -Raw opm-sources.json | ConvertFrom-Json
+          $rows = @()
+          $record = [ordered]@{}
+          $off = @()
+          foreach ($d in @(@('vcpkg', 'vcpkg', $lock.vcpkg), @('trilinos', 'deps/Trilinos', $lock.trilinos))) {
+            $key, $dir, $pin = $d
+            $pinSha = if ($pin) { $pin.commit } else { $null }
+            $head = $null
+            $date = $null
+            if (Test-Path "$dir/.git") {
+              $head = "$(git -C $dir rev-parse HEAD)".Trim()
+              $date = "$(git -C $dir log -1 --format=%cs)".Trim()
+            }
+            $built = if (-not $head) { 'not cloned' } elseif ($head -eq $pinSha) { 'the pin' } else { "``$($head.Substring(0, 9))`` of $date" }
+            if ($pinned -and $head -and $head -ne $pinSha) { $off += $key }
+            $pinCell = if ($pinSha) { "``$($pinSha.Substring(0, 9))`` of $($pin.date)" } else { 'none' }
+            $rows += "| $key | $pinCell | $built |"
+            $record[$key] = [ordered]@{ pinned = $pinSha; used = $head; date = $date }
+          }
+          "`n## Dependencies`n"       | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          "| | pinned | built from |" | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          "|---|---|---|"              | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          $rows | Out-File -Append $env:GITHUB_STEP_SUMMARY
+
+          # Into the revision record the steps above wrote.
+          if (Test-Path source-revisions.json) {
+            $rev = Get-Content -Raw source-revisions.json | ConvertFrom-Json
+            $rev | Add-Member -NotePropertyName dependencies -NotePropertyValue $record -Force
+            $rev | ConvertTo-Json -Depth 6 | Set-Content -Encoding utf8 source-revisions.json
+          }
+          if ($off.Count -gt 0) {
+            Write-Host "::error title=Not the pins::the pinned job built $($off -join ', ') from commits other than opm-sources.json pins"
+            exit 1
+          }
 
       # Norne rather than SPE1: a real field case with faults, multi-segment
       # wells and a decade of schedule exercises far more of the simulator than
@@ -321,11 +452,11 @@ jobs:
 
       # The Intel MPI tree is the second thing released - the package for a
       # locked-down machine, where MS-MPI cannot be installed without an
-      # administrator - so it is worth the same weekly question. It reuses the
-      # rebased sources and the Trilinos clone from above and rebuilds the
-      # chain against Intel MPI into build-impi\, which roughly doubles the
-      # build time; disk is not the constraint, the workspace is on a volume
-      # with ~147 GB free.
+      # administrator - so it is worth the same nightly question. It reuses the
+      # sources (pinned or rebased) and the Trilinos clone from above and
+      # rebuilds the chain against Intel MPI into build-impi\, which roughly
+      # doubles the build time; disk is not the constraint, the workspace is on
+      # a volume with ~147 GB free.
       - name: Disk before the Intel MPI build
         run: |
           Get-PSDrive -PSProvider FileSystem |
@@ -415,7 +546,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: opm-source-revisions
+          name: opm-source-revisions-${{ matrix.sources }}
           retention-days: 14
           path: source-revisions.json
           if-no-files-found: warn
@@ -424,7 +555,7 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: flow-windows-x64
+          name: flow-windows-x64-${{ matrix.sources }}
           retention-days: 14
           path: |
             source-revisions.json
@@ -434,29 +565,53 @@ jobs:
             build-impi/opm-simulators/bin/*.dll
 
       # Say so somewhere that survives a missed e-mail. One issue is kept open
-      # and commented on rather than a fresh one filed every Friday: the point
+      # and commented on rather than a fresh one filed every night: the point
       # is to notice a break, and a pile of identical issues is how a canary
       # stops being read. It closes itself when a run passes again, so an open
-      # issue means "still broken" without anyone having to tend it.
+      # issue means "still broken" without anyone having to tend it. Each job
+      # keeps its own report, under its own label: they mean different things.
       - name: Report a failure as an issue
         if: failure()
         uses: actions/github-script@v7
         with:
           script: |
-            const title = 'windows-weekly: the Windows patch series stopped building';
+            const pinned = '${{ matrix.sources }}' === 'pinned';
+            const label = pinned ? 'windows-pinned' : 'windows-weekly';
+            const title = pinned
+              ? 'windows-weekly: the pinned OPM sources stopped building'
+              : 'windows-weekly: the Windows patch series stopped building';
             const url = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}` +
                         `/actions/runs/${context.runId}`;
-            const body = [
-              `The weekly canary failed: [run ${context.runId}](${url}).`,
+            const what = pinned ? [
+              `The nightly build of the pinned OPM sources failed: [run ${context.runId}](${url}).`,
+              '',
+              'This is the build a user gets from build-all.ps1: OPM, vcpkg and',
+              'Trilinos at the commits opm-sources.json pins. Unless the pins just',
+              'changed, look at what did: the runner image and its MSVC, the Intel',
+              'MPI wheels, a download a pinned vcpkg port can no longer get. The',
+              'step summary on that run says what failed.'
+            ] : [
+              `The nightly canary failed: [run ${context.runId}](${url}).`,
               '',
               'The step summary on that run says which module conflicted or what',
               'the build said. A **conflict** needs the patch series rebased by',
-              'hand; a **build failure** usually names the upstream commit.',
+              'hand; a **build failure** usually names the upstream commit - or',
+              'it came from vcpkg master or Trilinos develop, which this job takes',
+              'at their newest (the summary lists what it used).'
+            ];
+            const body = [
+              ...what,
               '',
               `_Triggered by \`${context.eventName}\` on \`${context.sha.slice(0, 9)}\`._`
             ].join('\n');
+            try {
+              await github.rest.issues.getLabel({ ...context.repo, name: label });
+            } catch (e) {
+              if (e.status !== 404) throw e;
+              await github.rest.issues.createLabel({ ...context.repo, name: label, color: 'b60205' });
+            }
             const open = await github.rest.issues.listForRepo({
-              ...context.repo, state: 'open', labels: 'windows-weekly', per_page: 10
+              ...context.repo, state: 'open', labels: label, per_page: 10
             });
             if (open.data.length > 0) {
               await github.rest.issues.createComment({
@@ -465,7 +620,7 @@ jobs:
               core.notice(`Commented on the open report, issue #${open.data[0].number}`);
             } else {
               const made = await github.rest.issues.create({
-                ...context.repo, title, body, labels: ['windows-weekly']
+                ...context.repo, title, body, labels: [label]
               });
               core.notice(`Opened issue #${made.data.number}`);
             }
@@ -475,8 +630,9 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
+            const label = '${{ matrix.sources }}' === 'pinned' ? 'windows-pinned' : 'windows-weekly';
             const open = await github.rest.issues.listForRepo({
-              ...context.repo, state: 'open', labels: 'windows-weekly', per_page: 10
+              ...context.repo, state: 'open', labels: label, per_page: 10
             });
             const url = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}` +
                         `/actions/runs/${context.runId}`;

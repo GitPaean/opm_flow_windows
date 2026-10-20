@@ -64,11 +64,30 @@ git -C src\opm-common push --force-with-lease origin windows
 # ... and the same for opm-grid and opm-simulators
 ```
 
+Build that in the same checkout (`build-all.ps1 -SkipClone -SkipDeps` with the
+§2 options) and check it with §4's SPE1 and Norne runs. Then pin it, so that the
+harness builds exactly this set from now on rather than whatever the branches
+hold next:
+
+```powershell
+.\update-opm-pins.ps1         # writes the src\opm-* commits to opm-sources.json
+```
+
+It refuses a module with local changes, or a commit that is not on the fork's
+branch on GitHub. The vcpkg and Trilinos pins stay as they are; to move them as
+well, build against the newer ones first (`-VcpkgRef`, `-TrilinosRef`; the
+nightly canary already does, with their newest) and add `-Dependencies`. The
+nightly workflow's pinned job builds the pins with the runner's MSVC 19.51 from
+the next night on; to know before a release, start the windows-weekly workflow
+by hand with `sources: pinned` once the harness commit below is pushed.
+
 The snapshot's date is that of the newest upstream commit of the three. Set it
 as the version defaults in `package-flow.ps1` (`master-YYYY-MM-DD`),
 `installer\opm-flow.iss` (the same) and `packaging\build-msix.ps1`
-(`YYYY.M.D.0`, since an MSIX version has to be numeric) and commit them, so the
-harness commit the packages stamp names the snapshot too.
+(`YYYY.M.D.0`, since an MSIX version has to be numeric) and commit them together
+with `opm-sources.json` and README.md (whose quick start `update-opm-pins.ps1`
+keeps naming the snapshot), so the harness commit the packages stamp names the
+snapshot and every commit they were built from: OPM, vcpkg and Trilinos.
 
 ## 2. Build
 
@@ -77,6 +96,9 @@ git clone https://github.com/GitPaean/opm_flow_windows C:\opm\opm_flow_windows
 cd C:\opm\opm_flow_windows
 .\build-all.ps1 -Mpi -OpenMP -SimTarget flow -Jobs 4 -OpmOrg GitPaean -OpmBranch windows
 ```
+
+That clones the forks and checks each module out at the commit
+`opm-sources.json` pins.
 
 **`-Jobs 4` on a 32 GB machine.** OPM's template-heavy translation units are
 RAM-hungry and more concurrent `cl.exe` processes than that can exhaust memory;
@@ -111,7 +133,9 @@ Note the quotes around `"-DCMAKE_PREFIX_PATH=..."`. PowerShell does not expand
 confusing "Qt6 not found".
 
 On a machine that has built before, keep its trees and run the same command with
-`-SkipClone -SkipDeps` after updating `src\` to the pushed branches.
+`-SkipClone -SkipDeps`, with `src\`, `vcpkg\` and `deps\Trilinos` at the pinned
+commits: `.\update-opm-pins.ps1 -Check` says whether they are, and
+`build-all.ps1` warns when they are not. `package-flow.ps1` warns too.
 
 ## 3. Package
 
@@ -146,8 +170,9 @@ dist\opm-flow-master-2026-10-12\bin\flow.exe `
     src\opm-simulators\python\test_data\SPE1CASE1a\SPE1CASE1.DATA `
     --output-dir=spe1_check --threads-per-process=1
 
-# The stamped commits must match what was actually built.
+# The stamped commits must match what was actually built - and the pins.
 Select-String -Path dist\opm-flow-master-2026-10-12\LICENSE.txt -Pattern '^\s+commit '
+.\update-opm-pins.ps1 -Check
 
 # The installer must be launchable without administrator rights.
 $b=[IO.File]::ReadAllBytes('dist\OPM-Flow-master-2026-10-12-Setup.exe')

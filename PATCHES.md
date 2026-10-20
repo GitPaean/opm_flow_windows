@@ -3,16 +3,18 @@
 Patches applied to the source trees to build OPM-flow natively on Windows with
 MSVC. Kept here so they can be upstreamed as PRs.
 
-## The series as it stands (2026-10-12, on OPM master of that day)
+## The series as it stands (2026-10-14, on OPM master of that day)
 
 The sections below are the working record, in the order things were found.
 What is on the branches is the folded result: one commit per topic, each
 message saying what it changes and why, with no fix-up commits. The trees
-are exactly what the record below describes.
+are exactly what the record below describes. The commits the harness builds
+are pinned in [opm-sources.json](opm-sources.json); the table is the series at
+those pins.
 
 | repository (`windows` branch of GitPaean/...) | commits |
 |---|---|
-| opm-common | Write the time conversions with the C++20 <chrono> calendar types · Portability and cross-platform fixes exposed by a Windows build · Pin LF line endings for Eclipse test data · Windows/MSVC enablement · Link MPI directly when the DUNE modules do not propagate it · Share the FCMacros.h fallback through opm-common · Add the <stdexcept> that std::invalid_argument needs · Keep the hysteresis snapshot loops out of line on MSVC |
+| opm-common | Portability and cross-platform fixes exposed by a Windows build · Pin LF line endings for Eclipse test data · Windows/MSVC enablement · Link MPI directly when the DUNE modules do not propagate it · Share the FCMacros.h fallback through opm-common · Add the <stdexcept> that std::invalid_argument needs · Keep the hysteresis snapshot loops out of line on MSVC |
 | opm-grid | Enable Fortran only when a compiler exists, and fall back for FCMacros.h · Make cpgrid compile with MSVC · Index-based chunk access so OpenMP loops build on MSVC · Use unsigned rather than the POSIX uint typedef in tests · Pin LF line endings for Eclipse test data |
 | opm-simulators | Portability fixes and bugs exposed by a Windows build · Work around MSVC front-end limitations · Provide Windows equivalents for the POSIX interfaces used · Exempt the simulator from Windows power throttling · Pin LF line endings for Eclipse test data · Harden reservoir coupling slave spawning for process-manager launch contexts |
 | opm-upscaling | Build on MSVC: Fortran only when a compiler exists, fall back for FCMacros.h · Disambiguate FieldMatrix operator*= for MSVC · Pin LF line endings for the Eclipse test data |
@@ -20,6 +22,14 @@ are exactly what the record below describes.
 Review vehicles: GitPaean/opm-common#7, opm-grid#2, opm-simulators#4,
 opm-upscaling#1 - each `windows` against `master` in the fork; `master`
 mirrors upstream, so they are not meant to be merged there.
+
+Gone upstream, so no longer on the branches: opm-common's "Write the time
+conversions with the C++20 <chrono> calendar types", merged in reworked form as
+OPM/opm-common#5467 on 2026-10-13; opm-common's "Keep the dates before 1970
+that MSVC's C runtime refuses" and opm-simulators' "Date the economic-limit
+messages without fmt::gmtime()", superseded on 2026-10-14 by
+OPM/opm-common#5342 and OPM/opm-simulators#7556, which keep OPM's times as
+`<chrono>` time points (see "dates before 1970" below).
 
 What still relies on this harness's `compat/include` shims: opm-common's
 `examples/` and `test_util/` tools (`getopt.h`) and `EclipseGridTests.cpp`
@@ -77,8 +87,18 @@ fixing latent CMake assumptions that the tool targets always exist:
   with `if(TARGET compareECL AND TARGET rst_deck)`.
 - `cmake/Modules/OpmLibMain.cmake`: gate the `additionals` satellite on `BUILD_EXAMPLES`.
 A Windows `getopt.h` shim exists at `compat/include/getopt.h` (added to the include
-path via build-module.ps1) for when the tools are eventually built.
+path via build-module.ps1) for when the tools are eventually built. It has
+`getopt_long()` as well since 2026-10-14: `networkgraph` takes
+`--input-skip-mode` since upstream 1c844c02b (2026-09-29), and did not compile
+on Windows without it.
 `examples/wellgraph.cpp`: `.stem()` -> `.stem().string()`.
+The tools' `.string()` calls are needed only where a path goes into a
+`std::string`; on Windows a path converts implicitly to `std::wstring` only.
+Upstream's EclIO readers (`ERst`, `EclFile`, `ESmry`, `ExtESmry`),
+`EclIO::fileExists()` and `FileDeck::dump_stdout()` take
+`std::filesystem::path` now, so on 2026-10-14 the series dropped its
+`.string()` at the 7 calls into them, in `make_ext_smry`, `networkgraph`,
+`arraylist`, `summary` and `rst_deck`. MSVC compiles all 7 without it.
 
 ## opm-grid (master)
 - `CMakeLists.txt`: `project(opm-grid C CXX Fortran)` -> `project(opm-grid C CXX)`
@@ -211,6 +231,31 @@ harness's VS 2022 has 19.44, which compiles the same code correctly.
   Re-ported on 2026-10-12 onto upstream's compact rollback storage (OPM/opm-common
   a9c14b9f0, "Reduce size of hysteresis rollback storage"). Keep it until a
   fixed MSVC reaches the runners.
+
+## opm-common, opm-simulators — dates before 1970 (MSVC's `difftime`, `gmtime_s`)
+Found 2026-10-13: the Windows build ran SPE10 (opm-tests `spe10/`, `START 1 JAN
+1967`) from 1970-01-01, every date three years late, in the summary's
+`STARTDAT` too. Present in every Windows package up to master-2026-10-12.
+- MSVC's `std::difftime()` returns 0 (and sets `errno` to `EINVAL`) when either
+  argument is negative; glibc's just subtracts. `TimeService::from_time_t()`
+  went through it, so every `time_t` before 1970 became the epoch. A `DATES`
+  entry before 1970 was then taken as not later than the step before it. The
+  other `difftime()` calls (ActionX's wait between runs, the WTEST close time
+  from a restart, the restart start-time drift) had the same blind spot. All
+  now subtract: OPM already takes `time_t` as seconds in `to_time_t()`.
+- `fmt::gmtime()` calls `gmtime_s()` on MSVC, which takes only 1969-12-31
+  12:00:00 to 3001-01-19 21:59:59 UTC (measured; documented as 1970 to 3000),
+  and fmt then throws `time_t value out of range` - which is where that
+  `DATES` error ended. `Schedule::formatDate()` formats every schedule log date
+  this way since OPM/opm-common#5463 (2026-10-13), so on that master a deck
+  starting in 3010 stopped at the parse, where master-2026-10-12 ran it. These
+  calls, and opm-simulators' economic-limit (WECON/CECON/GECON) message, now
+  format the `std::tm` of the new `Opm::asTm(TimeStampUTC)`, which works on
+  the `<chrono>` calendar types as `TimeStampUTC` does.
+- Upstream since 2026-10-14, and so off the branches: OPM/opm-common#5342
+  carries OPM's times as `<chrono>` time points instead of `time_t`, drops the
+  `difftime()` and `fmt::gmtime()` calls and formats dates through its own
+  `asTm()`; OPM/opm-simulators#7556 moves the economic-limit message onto it.
 
 ## MPI support — MS-MPI on Windows  (RESOLVED — see "Zoltan for Windows" + "MPI RESULT" below)
 MS-MPI installed; DUNE (all 4) + opm-common build with MPI. opm-grid couples MPI
@@ -392,6 +437,7 @@ Source fixes committed on the `windows` branches:
   `portable_gmtime` that replaces `std::gmtime`) are now written on the C++20
   `<chrono>` calendar types, as upstream's reviewer asked for on
   OPM/opm-common#5271; accepted years are `std::chrono::year`'s ±32767.
+  Upstream since OPM/opm-common#5467 (2026-10-13).
 - opm-simulators `test_outputdir.cpp`: fixture removed its own cwd while
   OpmLog held files in it open → throw in noexcept dtor → 0xC0000409.
   chdir out + drop log backends + non-throwing remove_all.

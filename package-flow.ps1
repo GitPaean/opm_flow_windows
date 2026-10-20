@@ -318,6 +318,28 @@ foreach ($r in $revCommon, $revGrid, $revSimulators) {
         Write-Warning "Source tree has uncommitted changes - the LICENSE.txt source statement cannot be satisfied by any published commit. Commit and push before releasing."
     }
 }
+# A release is built from the commits the harness pins (opm-sources.json), so
+# that the harness commit stamped below names what the package contains.
+# vcpkg and Trilinos too: the DLLs below come from vcpkg's ports, and Zoltan is
+# linked into the simulator.
+$pinFile = Join-Path $Root 'opm-sources.json'
+if (Test-Path $pinFile) {
+    $lockAll = Get-Content -Raw $pinFile | ConvertFrom-Json
+    $checks = @()
+    foreach ($m in 'opm-common', 'opm-grid', 'opm-simulators') {
+        if ($lockAll.modules.$m) { $checks += ,@("src\$m", $lockAll.modules.$m.commit) }
+    }
+    if ($lockAll.vcpkg)    { $checks += ,@('vcpkg', $lockAll.vcpkg.commit) }
+    if ($lockAll.trilinos) { $checks += ,@('deps\Trilinos', $lockAll.trilinos.commit) }
+    foreach ($c in $checks) {
+        $prevEA = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+        $head = (& git -C (Join-Path $Root $c[0]) rev-parse HEAD 2>$null)
+        $ErrorActionPreference = $prevEA
+        if ($head -and "$head".Trim() -ne $c[1]) {
+            Write-Warning "$($c[0]) is not at the commit opm-sources.json pins ($($c[1])). For a release, pin what was built and verified (update-opm-pins.ps1) and commit that first."
+        }
+    }
+}
 
 @"
 OPM Flow is developed by the Open Porous Media (OPM) initiative
