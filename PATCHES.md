@@ -3,7 +3,7 @@
 Patches applied to the source trees to build OPM-flow natively on Windows with
 MSVC. Kept here so they can be upstreamed as PRs.
 
-## The series as it stands (2026-10-14, on OPM master of that day)
+## The series as it stands (2026-10-24, on OPM master of that day)
 
 The sections below are the working record, in the order things were found.
 What is on the branches is the folded result: one commit per topic, each
@@ -104,10 +104,11 @@ Upstream's EclIO readers (`ERst`, `EclFile`, `ESmry`, `ExtESmry`),
 - `CMakeLists.txt`: `project(opm-grid C CXX Fortran)` -> `project(opm-grid C CXX)`
   and gate the FortranCInterface `language_hook` on `CMAKE_Fortran_COMPILER`
   (MSVC has no Fortran compiler; FCMacros.h is provided via compat/, see below).
-- `opm/grid/cpgrid/Geometry.hpp:1036`: `typename` added to dependent type
-  `Geometry<3,cdim>::ctype`.
-- `opm/grid/cpgrid/Geometry.hpp:641`: inside the `Geometry<3,cdim>` spec, the
-  hard-coded self type `cpgrid::Geometry<3,3>` -> dependent `cpgrid::Geometry<3,cdim>`.
+- `opm/grid/cpgrid/refinement/trilinear/GeometryRefinement.hpp`, where
+  `Geometry<3,cdim>::refineCellifiedPatch` is defined since upstream moved it
+  out of Geometry.hpp: `typename` added to dependent type
+  `Geometry<3,cdim>::ctype`, and the hard-coded `cpgrid::Geometry<3,3>` of
+  `refined_cells` -> dependent `cpgrid::Geometry<3,cdim>`.
 - `opm/grid/cpgrid/DefaultGeometryPolicy.hpp`: **key fix** - forward-declare the
   partial specializations `Geometry<0,dim>`/`Geometry<2,dim>`/`Geometry<3,dim>`
   next to the primary. This header instantiates `Geometry<3,3>` before Geometry.hpp

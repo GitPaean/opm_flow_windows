@@ -57,7 +57,7 @@ dependencies, and builds in order. Result:
 ```
 
 **Which OPM this builds:** OPM master of
-<!-- opm-snapshot -->2026-10-14<!-- /opm-snapshot --> with the Windows fixes on
+<!-- opm-snapshot -->2026-10-24<!-- /opm-snapshot --> with the Windows fixes on
 top - the commits [opm-sources.json](opm-sources.json) pins, built and run
 together, not whatever the forks' `windows` branches hold on the day you clone
 (see [Pinned OPM sources](#pinned-opm-sources)). `--version` reports the
