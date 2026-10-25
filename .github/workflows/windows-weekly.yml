@@ -30,10 +30,12 @@
 # builds the OPM commits, the vcpkg commit and the Trilinos commit the harness
 # pins (opm-sources.json), so that job clones nothing itself - it runs
 # build-all.ps1 as a user would and lets it check out the pins. The pins only
-# move when someone updates them, so what breaks that job is everything else:
-# the runner image and its compiler (MSVC 19.51 already miscompiled OPM once),
-# the Intel MPI wheels, a download a pinned port can no longer get - or a pin
-# update that was only checked with an older compiler. Each job files its own
+# move after a build of the new set - the canary pins the branch heads when it
+# built them as they are - so what breaks that job is everything else: the
+# runner image and its compiler (MSVC 19.51 already miscompiled OPM once), the
+# Intel MPI wheels, a download a pinned port can no longer get - or a pin
+# update that was only checked with an older compiler, or by the canary against
+# newer vcpkg and Trilinos than the pinned ones. Each job files its own
 # failure report: a broken canary means the series or a dependency update
 # needs work, a broken pinned build means users are affected now.
 #
@@ -70,7 +72,9 @@ on:
         default: both
 
 permissions:
-  contents: read
+  # Write, so the canary can commit the pins when it has verified the branch
+  # heads (see "Pin the branch heads it built").
+  contents: write
   # ... and to file the failure report below. A scheduled run that only fails
   # by e-mail is a run nobody hears about: GitHub mails the account that last
   # touched the cron, if that account has Actions notifications on, and leaves
@@ -531,6 +535,61 @@ jobs:
               throw "expected 2 Intel MPI ranks x 2 threads, the run reported: $ranks x $threads"
           }
           "Norne also ran to completion on $ranks Intel MPI ranks x $threads OpenMP threads." |
+            Out-File -Append $env:GITHUB_STEP_SUMMARY
+
+      # A canary that built the branch heads as they are has verified a set
+      # anyone can fetch, so pin it: build-all.ps1 builds it from then on. That
+      # is a run started after a rebase was pushed, before upstream moved, or
+      # with rebase off. When the heads were rebased here first, what was built
+      # is on no branch and nothing is pinned. Only from master, where the pins
+      # live. The build and both runs passed by now, so a failure here is a
+      # warning rather than a failed job: a broken series is not the news.
+      - name: Pin the branch heads it built
+        if: success() && matrix.sources == 'latest' && github.ref == 'refs/heads/master'
+        continue-on-error: true
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $rev = Get-Content -Raw source-revisions.json | ConvertFrom-Json
+          $rebased = @($rev.repositories | Where-Object { $_.resolvedHead -ne $_.forkHead } |
+                       ForEach-Object { $_.name })
+          if ($rebased.Count -gt 0) {
+            "`n## Pins`nNot moved: $($rebased -join ', ') rebased here before the build, so what was built is not on the branches." |
+              Out-File -Append $env:GITHUB_STEP_SUMMARY
+            exit 0
+          }
+
+          # opm-upscaling is not built here; the script keeps its pin as it is.
+          $modules = @($rev.repositories | ForEach-Object { $_.name })
+          try {
+            .\update-opm-pins.ps1 -Modules $modules
+          } catch {
+            Write-Host "::warning title=Not pinned::$($_.Exception.Message)"
+            exit 1
+          }
+          git add opm-sources.json README.md
+          git diff --cached --quiet
+          if ($LASTEXITCODE -eq 0) {
+            "`n## Pins`nopm-sources.json already pins the heads this built." | Out-File -Append $env:GITHUB_STEP_SUMMARY
+            exit 0
+          }
+
+          $snapshot = (Get-Content -Raw opm-sources.json | ConvertFrom-Json).snapshot
+          $runUrl = "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
+          git commit --quiet -m "Pin OPM master of $snapshot, as the canary built it" `
+            -m "The windows branch heads of $($modules -join ', '), built against MS-MPI and Intel MPI and run on Norne: $runUrl"
+          # Master may have moved during the build.
+          git pull --quiet --rebase origin master
+          if ($LASTEXITCODE -ne 0) {
+            git rebase --abort
+            Write-Host "::warning title=Not pinned::the pin commit does not rebase onto origin/master"
+            exit 1
+          }
+          git push --quiet origin HEAD:master
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "::warning title=Not pinned::could not push the pin commit"
+            exit 1
+          }
+          "`n## Pins`nPinned the heads this built as the snapshot of $snapshot ($(git rev-parse --short HEAD))." |
             Out-File -Append $env:GITHUB_STEP_SUMMARY
 
       - name: Free disk after

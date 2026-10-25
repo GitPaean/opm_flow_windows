@@ -161,7 +161,9 @@ something other than the verified set. After rebasing the series and checking
 the result, `update-opm-pins.ps1` records the new set, and the snapshot date the
 quick start above gives; it refuses a commit with local changes or one that is
 not pushed to the fork's branch. Commit `opm-sources.json` and README.md with
-the harness:
+the harness - or push the rebase and start the
+[nightly workflow](#continuous-integration) by hand with **rebase** off, which
+pins the heads once it has built them and run Norne:
 [docs/release-checklist.md](docs/release-checklist.md) §1 has the whole round.
 
 The same file pins **vcpkg** - its ports decide the version of every dependency
@@ -221,15 +223,19 @@ Every night it runs two jobs side by side:
 
 - **pinned** - the build a user gets: it clones nothing itself, but runs
   `build-all.ps1` as you would, which checks out OPM, vcpkg and Trilinos at the
-  commits `opm-sources.json` pins. The pins move only when someone updates
-  them, so a failure here comes from everything else - the runner image and its
+  commits `opm-sources.json` pins. The pins move only after a build of the new
+  set, so a failure here comes from everything else - the runner image and its
   MSVC 19.51 (newer than most local compilers), the Intel MPI wheels, a download
   a pinned vcpkg port can no longer get - or from a pin update that was only
-  checked locally.
+  checked locally, or by the canary against newer vcpkg and Trilinos.
 - **latest** - the canary: the `windows` branch heads, rebased onto that day's
   upstream master, built against vcpkg's master and Trilinos' develop, so a
   break upstream - in OPM or in a dependency - shows up the day it lands. Its
   summary also says, per module, whether the harness pin is the branch head.
+  When it built the heads as they are - started after a rebase was pushed,
+  before upstream moved, or with **rebase** off - and both Norne runs passed,
+  it pins them itself: it runs `update-opm-pins.ps1` and pushes
+  `opm-sources.json` and README.md to master.
 
 Both jobs list which vcpkg and Trilinos commits they built from.
 

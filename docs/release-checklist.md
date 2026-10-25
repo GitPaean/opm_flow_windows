@@ -74,12 +74,16 @@ hold next:
 ```
 
 It refuses a module with local changes, or a commit that is not on the fork's
-branch on GitHub. The vcpkg and Trilinos pins stay as they are; to move them as
-well, build against the newer ones first (`-VcpkgRef`, `-TrilinosRef`; the
-nightly canary already does, with their newest) and add `-Dependencies`. The
-nightly workflow's pinned job builds the pins with the runner's MSVC 19.51 from
-the next night on; to know before a release, start the windows-weekly workflow
-by hand with `sources: pinned` once the harness commit below is pushed.
+branch on GitHub. The windows-weekly workflow does the same on its own: started
+by hand with `sources: latest` and `rebase` off once the branches are pushed,
+its canary builds the heads, runs Norne, and pins them. It does not touch
+opm-upscaling's pin, which it does not build. The vcpkg and Trilinos pins stay
+as they are; to move them as well, build against the newer ones first
+(`-VcpkgRef`, `-TrilinosRef`; the nightly canary already does, with their
+newest) and add `-Dependencies`. The nightly workflow's pinned job builds the
+pins with the runner's MSVC 19.51 from the next night on; to know before a
+release, start the windows-weekly workflow by hand with `sources: pinned` once
+the harness commit below is pushed.
 
 The snapshot's date is that of the newest upstream commit of the three. Set it
 as the version defaults in `package-flow.ps1` (`master-YYYY-MM-DD`),
