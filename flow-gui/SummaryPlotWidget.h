@@ -241,10 +241,9 @@ private:
 
     QString activePath() const;
     QString activeLabel() const;
-    // A case's name as the plots, exports and status line give it: its own,
-    // or "Case N" by its place in the list while the names are hidden.
+    // A case's name as the plots and their exports give it: its own, or
+    // "Case N" by its place in the list while the names are hidden.
     QString shownName(const QListWidgetItem* it) const;
-    QString shownPath(const QString& file) const;   // a file in the status line
     bool namesHidden() const;
     void caseItemChanged(QListWidgetItem* it);   // check toggle or rename
     // Name every case by what tells it apart: its own name while that is

@@ -42,7 +42,6 @@
 #include <QTextStream>
 #include <QLabel>
 #include <QKeyEvent>
-#include <QHelpEvent>
 #include <QLineEdit>
 #include <QLegendMarker>
 #include <QLineSeries>
@@ -64,7 +63,6 @@
 #include <QSet>
 #include <QSpinBox>
 #include <QSplitter>
-#include <QStyledItemDelegate>
 #include <QTimer>
 #include <QToolButton>
 #include <QCursor>
@@ -725,49 +723,12 @@ void sortItems(QStringList& items)
     });
 }
 
-// What a case is called while the names are hidden: its place in the list,
-// which is also its place in the legend and the CSV columns.
+// What the plots call a case while the names are hidden: its place in the
+// list, which is also its place in the legend and the CSV columns.
 QString hiddenCaseName(int row)
 {
     return QStringLiteral("Case %1").arg(row + 1);
 }
-
-// Shows each case as "Case N" while the names are hidden. The item keeps its
-// real name, so the session, renames and the other tabs are unaffected.
-class CaseNameDelegate : public QStyledItemDelegate
-{
-public:
-    CaseNameDelegate(std::function<bool()> hidden, QObject* parent)
-        : QStyledItemDelegate(parent), hidden_(std::move(hidden)) {}
-
-    // An editor would put the real name back on screen.
-    QWidget* createEditor(QWidget* parent, const QStyleOptionViewItem& opt,
-                          const QModelIndex& index) const override
-    {
-        return hidden_() ? nullptr : QStyledItemDelegate::createEditor(parent, opt, index);
-    }
-
-    // The tooltip is the run's path, which often names the field too.
-    bool helpEvent(QHelpEvent* ev, QAbstractItemView* view,
-                   const QStyleOptionViewItem& opt, const QModelIndex& index) override
-    {
-        if (hidden_() && ev->type() == QEvent::ToolTip) {
-            QToolTip::hideText();
-            return true;
-        }
-        return QStyledItemDelegate::helpEvent(ev, view, opt, index);
-    }
-
-protected:
-    void initStyleOption(QStyleOptionViewItem* opt, const QModelIndex& index) const override
-    {
-        QStyledItemDelegate::initStyleOption(opt, index);
-        if (hidden_()) opt->text = hiddenCaseName(index.row());
-    }
-
-private:
-    std::function<bool()> hidden_;
-};
 
 } // namespace
 
@@ -1178,9 +1139,9 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
         hideNames_ = new QCheckBox(QStringLiteral("hide case names"));
         hideNames_->setToolTip(QStringLiteral(
             "call the cases Case 1, Case 2, ... by their place in the list - in "
-            "the list, the plot titles and legends, saved figures and CSV files - "
-            "for when a field or case name is confidential.\nThe names are kept "
-            "and come back when this is unticked"));
+            "the plot titles and legends, saved figures and CSV files - for when "
+            "a field or case name is confidential.\nThe list keeps the real names, "
+            "so it still says which case is which"));
         row->addWidget(hideNames_);
         // no separate "Layout:" label - the button already reads
         // "Layout: 2 x 2", and a lone label can wrap away from its control
@@ -1219,11 +1180,9 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
                 [this, syncStagger](bool) { syncStagger(); replot(); });
         connect(stagger_,  &QCheckBox::toggled, this, [this](bool) { replot(); });
         connect(hideNames_, &QCheckBox::toggled, this, [this](bool on) {
-            caseList_->viewport()->update();
-            // The status line may still name the case from before.
-            setStatus(on ? QStringLiteral("case names hidden - the cases are "
-                                          "Case 1, Case 2, ... by their place in the list")
-                         : QStringLiteral("case names shown"));
+            setStatus(on ? QStringLiteral("the plots call the cases Case 1, Case 2, ... "
+                                          "by their place in the list")
+                         : QStringLiteral("the plots name the cases"));
             replot();
         });
         connect(lineWidthSpin_, &QDoubleSpinBox::valueChanged, this, [this](double) { replot(); });
@@ -1500,20 +1459,16 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
                 QDesktopServices::openUrl(QUrl::fromLocalFile(fi.absolutePath()));
             } else if (chosen == copy) {
                 QGuiApplication::clipboard()->setText(QDir::toNativeSeparators(path));
-                setStatus(namesHidden() ? QStringLiteral("copied the path")
-                                        : QStringLiteral("copied %1").arg(QDir::toNativeSeparators(path)));
+                setStatus(QStringLiteral("copied %1").arg(QDir::toNativeSeparators(path)));
             } else if (chosen == copyDir) {
                 const QString d = QDir::toNativeSeparators(fi.absolutePath());
                 QGuiApplication::clipboard()->setText(d);
-                setStatus(namesHidden() ? QStringLiteral("copied the folder")
-                                        : QStringLiteral("copied %1").arg(d));
+                setStatus(QStringLiteral("copied %1").arg(d));
             }
         });
         // double-click / F2 edits the name in place
         caseList_->setEditTriggers(QAbstractItemView::DoubleClicked
                                    | QAbstractItemView::EditKeyPressed);
-        caseList_->setItemDelegate(
-            new CaseNameDelegate([this] { return namesHidden(); }, caseList_));
 
         tree_ = new QTreeWidget;
         tree_->setHeaderHidden(true);
@@ -1556,9 +1511,7 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
         });
         connect(bremove, &QToolButton::clicked, this, [this] { removeCurrentCase(); });
         connect(brename, &QPushButton::clicked, this, [this] {
-            if (namesHidden())
-                setStatus(QStringLiteral("untick \"hide case names\" to rename a case"));
-            else if (auto* it = caseList_->currentItem()) caseList_->editItem(it);
+            if (auto* it = caseList_->currentItem()) caseList_->editItem(it);
             else setStatus(QStringLiteral("highlight a case in the list first"));
         });
         connect(caseList_, &QListWidget::currentItemChanged, this,
@@ -1607,7 +1560,7 @@ void SummaryPlotWidget::setStatus(const QString& s) { status_->setText(s); }
 
 void SummaryPlotWidget::savePng()
 {
-    QString suggested = activeLabel();
+    QString suggested = shownName(caseList_->currentItem());
     if (suggested.isEmpty()) suggested = QStringLiteral("summary");
     // PDF keeps the curves and the text as vectors, which is what a figure in
     // a paper wants; the PNG is rendered at 3x and tagged 300 dpi rather than
@@ -1668,8 +1621,8 @@ void SummaryPlotWidget::savePng()
             ok = img.save(f);
         }
     }
-    setStatus(ok ? QStringLiteral("chart saved to %1").arg(shownPath(f))
-                 : QStringLiteral("could not save %1").arg(shownPath(f)));
+    setStatus(ok ? QStringLiteral("chart saved to %1").arg(QDir::toNativeSeparators(f))
+                 : QStringLiteral("could not save %1").arg(QDir::toNativeSeparators(f)));
 }
 
 QString SummaryPlotWidget::activePath() const
@@ -1680,7 +1633,8 @@ QString SummaryPlotWidget::activePath() const
 
 QString SummaryPlotWidget::activeLabel() const
 {
-    return shownName(caseList_->currentItem());
+    auto* it = caseList_->currentItem();
+    return it ? it->text() : QString();
 }
 
 bool SummaryPlotWidget::namesHidden() const
@@ -1692,12 +1646,6 @@ QString SummaryPlotWidget::shownName(const QListWidgetItem* it) const
 {
     if (!it) return {};
     return namesHidden() ? hiddenCaseName(caseList_->row(it)) : it->text();
-}
-
-// A saved file's folder is often named after the field as well.
-QString SummaryPlotWidget::shownPath(const QString& file) const
-{
-    return namesHidden() ? QFileInfo(file).fileName() : QDir::toNativeSeparators(file);
 }
 
 // Folder over file, each on its own line. A wall of one path is hard to read
@@ -2408,8 +2356,7 @@ void SummaryPlotWidget::reload(bool keepSelection)
     const QString path = activePath();
     if (path.isEmpty()) return;
     if (!QFileInfo::exists(path)) {
-        setStatus(QStringLiteral("waiting for %1 ...")
-                      .arg(namesHidden() ? activeLabel() : path));
+        setStatus(QStringLiteral("waiting for %1 ...").arg(path));
         return;
     }
 
@@ -2462,11 +2409,8 @@ void SummaryPlotWidget::reload(bool keepSelection)
             rebuildFilters();
             replot();
         }
-        // The reader's message names the file, so it goes while names are hidden.
-        setStatus(namesHidden()
-            ? QStringLiteral("could not read %1 (still being written?)").arg(activeLabel())
-            : QStringLiteral("could not read %1 (still being written?): %2")
-                  .arg(activeLabel(), QString::fromLocal8Bit(e.what())));
+        setStatus(QStringLiteral("could not read %1 (still being written?): %2")
+                      .arg(activeLabel(), QString::fromLocal8Bit(e.what())));
         return;
     }
     smry_ = std::move(next);
@@ -2526,8 +2470,7 @@ void SummaryPlotWidget::reload(bool keepSelection)
     loadedStamp_ = stamp;
 
     QString loaded = QStringLiteral("%1: %2 vectors, %3 timesteps")
-                         .arg(namesHidden() ? activeLabel()
-                                            : QFileInfo(path).completeBaseName())
+                         .arg(QFileInfo(path).completeBaseName())
                          .arg(vecs_.size())
                          .arg(int(smry_->numberOfTimeSteps()));
     if (duplicateNodes > 0)
@@ -2978,7 +2921,7 @@ std::vector<std::pair<QString, Opm::EclIO::ESmry*>> SummaryPlotWidget::checkedCa
         const QString p = item->data(Qt::UserRole).toString();
         if (p == active) {
             if (smry_) plotCases.push_back({ shownName(item), smry_.get() });
-            else       unreadable_ << shownName(item);
+            else       unreadable_ << item->text();
             continue;
         }
         auto it = others_.find(p);
@@ -2987,11 +2930,11 @@ std::vector<std::pair<QString, Opm::EclIO::ESmry*>> SummaryPlotWidget::checkedCa
             try { s = std::make_unique<Opm::EclIO::ESmry>(p.toStdString()); }
             // A checked case that cannot be read is not plotted, and silence
             // there reads as "this run has no such curve": name it instead.
-            catch (...) { unreadable_ << shownName(item); continue; }
+            catch (...) { unreadable_ << item->text(); continue; }
             it = others_.emplace(p, std::move(s)).first;
         }
         if (it->second) plotCases.push_back({ shownName(item), it->second.get() });
-        else            unreadable_ << shownName(item);
+        else            unreadable_ << item->text();
     }
     return plotCases;
 }
@@ -3826,7 +3769,7 @@ int SummaryPlotWidget::plotChart(QChart* chart, const QList<int>& sel,
         chart->legend()->setFont(lf);
     }
     if (sel.isEmpty() || plotCases.empty()) {
-        chart->setTitle(!title.isEmpty() ? title : activeLabel());
+        chart->setTitle(!title.isEmpty() ? title : shownName(caseList_->currentItem()));
         return 0;
     }
     // Name the case in every entry as soon as more than one is CHECKED - not
@@ -4291,7 +4234,7 @@ void SummaryPlotWidget::saveCsv()
         return;
     }
 
-    QString suggested = activeLabel();
+    QString suggested = shownName(caseList_->currentItem());
     if (suggested.isEmpty()) suggested = QStringLiteral("summary");
     const QString f = QFileDialog::getSaveFileName(
         this, QStringLiteral("Export plotted vectors as CSV"),
@@ -4331,7 +4274,7 @@ void SummaryPlotWidget::saveCsv()
 
     QFile out(f);
     if (!out.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        setStatus(QStringLiteral("could not write %1").arg(shownPath(f)));
+        setStatus(QStringLiteral("could not write %1").arg(QDir::toNativeSeparators(f)));
         return;
     }
     QTextStream ts(&out);
@@ -4351,5 +4294,5 @@ void SummaryPlotWidget::saveCsv()
     }
     out.close();
     setStatus(QStringLiteral("exported %1 column(s) x %2 row(s) to %3")
-        .arg(int(cols.size())).arg(qsizetype(rows)).arg(shownPath(f)));
+        .arg(int(cols.size())).arg(qsizetype(rows)).arg(QDir::toNativeSeparators(f)));
 }

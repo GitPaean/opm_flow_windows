@@ -293,9 +293,9 @@ results, animate them in 3D, and edit decks — all in one window.
   so removing a case lets the survivor go back to reading plainly, and a
   name you typed yourself is never tagged. Where a field or case name is
   confidential, **hide case names** calls the cases *Case 1*, *Case 2*, …
-  by their place in the list — in the list itself, the plot titles and
-  legends, saved figures and CSV files, and the status line — and drops the
-  path tooltips; the real names are kept and come back when it is unticked.
+  by their place in the list — in the plot titles and legends, saved
+  figures and CSV files. The list keeps the real names, so it still says
+  which case is which.
   The **order of the list is the order of the plot** — of the curves, their
   colours and dashes, the legend and the CSV columns — so it can be set:
   *Sort* by name (either way), plotted-first or back to the order loaded;
