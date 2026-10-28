@@ -108,6 +108,12 @@ results, animate them in 3D, and edit decks — all in one window.
   sized to the figure (7 in wide, no margins — drop it straight into
   `\includegraphics`) or a **300 dpi PNG** rendered at 3×, not grabbed off
   the screen; *Save CSV* exports the plotted curves of every checked case.
+  The arrow beside *Save figure* offers **Every listed vector (PDF)**: one
+  PDF holding every vector the tree currently lists — so after the
+  category, item and search filters and *hide all-zero* — each in its own
+  subplot with every checked case drawn in it, paged in the current
+  *Layout* grid (1 chart = one vector a page, 2×2 = four). Pages are drawn
+  at the size the grid has on screen, so they read like *Save figure*'s.
   Any external `SMSPEC` can be opened too.
 - **3D View tab** (when built with opm-common): the corner-point grid
   rendered with a self-contained OpenGL widget (no external engine) —

@@ -289,6 +289,14 @@ private:
     void caseOrderChanged();
     void savePng();
     void saveCsv();
+    // Every vector the tree lists - after the category, item and search
+    // filters and "hide all-zero" - into one PDF, a subplot per vector with
+    // every checked case in it, paged in the current subplot grid.
+    void saveListedPdf();
+    bool writeListedPdf(const QString& file, const QList<int>& sel,
+                        const std::vector<std::pair<QString, Opm::EclIO::ESmry*>>& plotCases);
+    QList<QTreeWidgetItem*> listedLeaves() const;   // the tree's leaves, in order
+    QChart* makeChart();            // a new chart, styled and legend-tracked
     // Put the legend where legendBox_ asks: docked to an edge, floating in a
     // corner of the plot area, or hidden.
     void placeLegend(QChart* chart);

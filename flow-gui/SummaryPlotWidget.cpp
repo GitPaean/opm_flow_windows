@@ -33,6 +33,7 @@
 #include <QFileInfo>
 #include <QFontMetrics>
 #include <QMargins>
+#include <QGraphicsScene>
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QHash>
@@ -1059,7 +1060,22 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
         zoomMenu->addAction(QStringLiteral("This subplot only"), this,
                             [this] { resetZoom(true); });
         bzoom->setMenu(zoomMenu);
-        auto* bpng  = new QPushButton(QStringLiteral("Save figure..."));
+        // The arrow is for the whole filtered list at once: a review of every
+        // well's curves across runs is a document to page through, not a
+        // figure, and plotting them one by one to save each is the chore.
+        auto* bpng  = new QToolButton;
+        bpng->setText(QStringLiteral("Save figure..."));
+        bpng->setPopupMode(QToolButton::MenuButtonPopup);
+        bpng->setToolTip(QStringLiteral(
+            "save the figure as shown; the arrow also writes every vector the "
+            "list shows - after the filters and 'hide all-zero' - into one PDF, "
+            "a subplot each with every checked case, paged in the current layout"));
+        auto* saveMenu = new QMenu(bpng);
+        saveMenu->addAction(QStringLiteral("This figure..."), this,
+                            [this] { savePng(); });
+        saveMenu->addAction(QStringLiteral("Every listed vector (PDF)..."), this,
+                            [this] { saveListedPdf(); });
+        bpng->setMenu(saveMenu);
         auto* bcsv  = new QPushButton(QStringLiteral("Save CSV..."));
         bcsv->setToolTip(QStringLiteral("export the plotted vectors of every checked case"));
         layoutBtn_ = new QToolButton;
@@ -1195,7 +1211,7 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
         connect(legendScaleSpin_, &QDoubleSpinBox::valueChanged, this, [this](double) { replot(); });
         connect(autoScale_, &QCheckBox::toggled, this, [this](bool) { replot(); });
         connect(bzoom, &QToolButton::clicked, this, [this] { resetZoom(false); });
-        connect(bpng,  &QPushButton::clicked, this, [this] { savePng(); });
+        connect(bpng,  &QToolButton::clicked, this, [this] { savePng(); });
         connect(bcsv,  &QPushButton::clicked, this, [this] { saveCsv(); });
         timer_ = new QTimer(this);
         timer_->setInterval(kFastRefreshMs);
@@ -1288,12 +1304,7 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
             "matches are plotted in one go"));
         row->addWidget(plotAll);
         connect(plotAll, &QPushButton::clicked, this, [this] {
-            QList<QTreeWidgetItem*> leaves;
-            for (int i = 0; i < tree_->topLevelItemCount(); ++i) {
-                auto* g = tree_->topLevelItem(i);
-                if (g->childCount() == 0) { leaves << g; continue; }
-                for (int j = 0; j < g->childCount(); ++j) leaves << g->child(j);
-            }
+            const QList<QTreeWidgetItem*> leaves = listedLeaves();
             if (leaves.isEmpty()) {
                 setStatus(QStringLiteral("nothing to plot: the filter matches no vector"));
                 return;
@@ -1623,6 +1634,126 @@ void SummaryPlotWidget::savePng()
     }
     setStatus(ok ? QStringLiteral("chart saved to %1").arg(QDir::toNativeSeparators(f))
                  : QStringLiteral("could not save %1").arg(QDir::toNativeSeparators(f)));
+}
+
+QList<QTreeWidgetItem*> SummaryPlotWidget::listedLeaves() const
+{
+    QList<QTreeWidgetItem*> leaves;
+    for (int i = 0; i < tree_->topLevelItemCount(); ++i) {
+        auto* g = tree_->topLevelItem(i);
+        if (g->childCount() == 0) { leaves << g; continue; }
+        for (int j = 0; j < g->childCount(); ++j) leaves << g->child(j);
+    }
+    return leaves;
+}
+
+void SummaryPlotWidget::saveListedPdf()
+{
+    // The vectors and readers are looked up only once the dialogs are closed:
+    // their event loops let an auto-refresh reload the cases underneath.
+    auto listed = [this] {
+        QHash<QString, int> byKey;
+        for (int i = 0; i < vecs_.size(); ++i) byKey.insert(vecs_[i].key, i);
+        QList<int> sel;
+        for (const auto* it : listedLeaves()) {
+            const auto k = byKey.constFind(it->data(0, RoleVecIndex).toString());
+            if (k != byKey.constEnd()) sel << k.value();
+        }
+        return sel;
+    };
+    if (!smry_) { setStatus(QStringLiteral("no case loaded - nothing to export")); return; }
+    const int count = int(listed().size());
+    if (count == 0) {
+        setStatus(QStringLiteral("nothing to export: the filter matches no vector"));
+        return;
+    }
+    if (checkedCases().empty()) {
+        setStatus(QStringLiteral("no case is checked - nothing to export"));
+        return;
+    }
+    const int perPage = layoutRows_ * layoutCols_;
+    // Drawing is quick (a few hundred pages a second); a PDF this long is more
+    // likely a filter left wide open than a document anyone will page through.
+    if (const int pages = (count + perPage - 1) / perPage;
+        pages > 500 &&
+        QMessageBox::question(this, QStringLiteral("Summary plots"),
+            QStringLiteral("Write %1 vectors on %2 pages?\n"
+                           "Narrow the filter, or pick a larger layout, for fewer.")
+                .arg(count).arg(pages))
+            != QMessageBox::Yes)
+        return;
+
+    QString suggested = shownName(caseList_->currentItem());
+    if (suggested.isEmpty()) suggested = QStringLiteral("summary");
+    const QString f = QFileDialog::getSaveFileName(
+        this, QStringLiteral("Save every listed vector"),
+        QDir(flowgui::startDir(QStringLiteral("figure")))
+            .filePath(suggested + QStringLiteral("-listed.pdf")),
+        QStringLiteral("PDF (*.pdf)"));
+    if (f.isEmpty()) return;
+    flowgui::rememberDir(QStringLiteral("figure"), f);
+
+    const QList<int> sel = listed();
+    const auto plotCases = checkedCases();
+    if (!smry_ || sel.isEmpty() || plotCases.empty()) {
+        setStatus(QStringLiteral("the cases changed while saving - nothing exported"));
+        return;
+    }
+    const int pages = (int(sel.size()) + perPage - 1) / perPage;
+    QGuiApplication::setOverrideCursor(Qt::WaitCursor);
+    const bool ok = writeListedPdf(f, sel, plotCases);
+    QGuiApplication::restoreOverrideCursor();
+    setStatus(ok ? QStringLiteral("%1 vector(s) on %2 page(s) saved to %3")
+                       .arg(sel.size()).arg(pages).arg(QDir::toNativeSeparators(f))
+                 : QStringLiteral("could not save %1").arg(QDir::toNativeSeparators(f)));
+}
+
+// Each page is laid out at the size the subplot grid has on screen and scaled
+// onto a page like the one Save figure writes, so the text, curves and tick
+// counts come out as they do there.
+bool SummaryPlotWidget::writeListedPdf(const QString& file, const QList<int>& sel,
+    const std::vector<std::pair<QString, Opm::EclIO::ESmry*>>& plotCases)
+{
+    // One bulk read per case, as in rescanZeroVectors().
+    if (sel.size() > 20)
+        for (const auto& [label, smry] : plotCases)
+            if (smry) { try { smry->loadData(); } catch (...) {} }
+
+    const int rows = layoutRows_, cols = layoutCols_;
+    QSizeF area = chartArea_->size();
+    if (area.isEmpty()) area = QSizeF(1100, 700);
+    const QSizeF cell(area.width() / cols, area.height() / rows);
+
+    QPdfWriter pdf(file);
+    pdf.setResolution(600);
+    pdf.setPageSize(QPageSize(QSizeF(7.0, 7.0 * area.height() / area.width()),
+                              QPageSize::Inch, QStringLiteral("figure"),
+                              QPageSize::ExactMatch));
+    pdf.setPageMargins(QMarginsF(0, 0, 0, 0));
+    QPainter p;
+    if (!p.begin(&pdf)) return false;
+    p.setRenderHint(QPainter::Antialiasing);
+
+    QGraphicsScene scene;
+    const QRectF page(QPointF(), area);
+    scene.setSceneRect(page);
+    for (int first = 0; first < sel.size(); first += rows * cols) {
+        if (first > 0) pdf.newPage();
+        scene.clear();
+        for (int k = 0; k < rows * cols && first + k < sel.size(); ++k) {
+            QChart* chart = makeChart();
+            scene.addItem(chart);
+            chart->setGeometry(QRectF(QPointF((k % cols) * cell.width(),
+                                              (k / cols) * cell.height()), cell));
+            plotChart(chart, { sel[first + k] }, QString(), plotCases);
+        }
+        // The charts lay themselves out on a posted event. Only that one is
+        // let through: a refresh could swap the cases out from under the export.
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::LayoutRequest);
+        scene.render(&p, QRectF(0, 0, pdf.width(), pdf.height()), page);
+    }
+    p.end();
+    return true;
 }
 
 QString SummaryPlotWidget::activePath() const
@@ -2990,6 +3121,7 @@ double SummaryPlotWidget::plotScale(QChart* chart) const
     QSize s;
     const int idx = charts_.indexOf(chart);
     if (idx >= 0 && idx < chartViews_.size()) s = chartViews_[idx]->size();
+    else s = chart->size().toSize();          // drawn off screen for an export
     if (s.isEmpty() && chartArea_) s = chartArea_->size();
     if (s.isEmpty()) return 1.0;
     // 1.0 at about the size of one chart in a normal window. Area, not width,
@@ -3354,7 +3486,7 @@ void SummaryPlotWidget::applyTreeSelection()
 //
 // A fresh chart cannot inherit what it never had. QChartView::setChart hands
 // back the old one, which is ours to destroy.
-QChart* SummaryPlotWidget::freshChart(int i)
+QChart* SummaryPlotWidget::makeChart()
 {
     auto* c = new QChart;
     c->legend()->setVisible(true);
@@ -3362,6 +3494,12 @@ QChart* SummaryPlotWidget::freshChart(int i)
     styleChart(c);
     connect(c, &QChart::plotAreaChanged, this,
             [this, c](const QRectF&) { placeLegend(c); });
+    return c;
+}
+
+QChart* SummaryPlotWidget::freshChart(int i)
+{
+    auto* c = makeChart();
     QChart* old = chartViews_[i]->chart();
     // Recorded before the swap: setChart can emit plotAreaChanged, and the
     // handler above looks the chart up in charts_ to find its view.
@@ -3875,8 +4013,9 @@ int SummaryPlotWidget::plotChart(QChart* chart, const QList<int>& sel,
     // as the Axis box goes up - otherwise turning it up to be legible is what
     // makes the dates elide, which is the opposite of the point.
     const int vidx = charts_.indexOf(chart);
-    const QSize vsz = (vidx >= 0 && vidx < chartViews_.size())
-                          ? chartViews_[vidx]->size() : QSize(900, 600);
+    QSize vsz = (vidx >= 0 && vidx < chartViews_.size())
+                    ? chartViews_[vidx]->size() : chart->size().toSize();
+    if (vsz.isEmpty()) vsz = QSize(900, 600);
     const double axisS = std::clamp(axisScaleSpin_ ? axisScaleSpin_->value() : 1.0,
                                     0.4, 4.0);
     const int xTicks = std::clamp(int(vsz.width()  / ((useDates ? 170 : 130) * axisS)), 2, 6);
