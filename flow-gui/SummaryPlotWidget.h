@@ -271,6 +271,10 @@ private:
     void rescanZeroVectors();
     QSet<QString> zeroKeys_;
     bool          zeroScanValid_ = false;
+    // A case came, went or finished writing: scan again, and while "hide
+    // all-zero" is on rebuild the tree once the batch of changes is through.
+    void zeroScanStale();
+    bool          zeroRebuildQueued_ = false;
     // Start, stop or re-pace the auto-refresh timer for the current state.
     void syncRefreshTimer();
     // The tree's selection -> the focused subplot's curve list.

@@ -1797,10 +1797,14 @@ QString SummaryPlotWidget::caseTip(const QString& smspecPath)
 
 void SummaryPlotWidget::refreshCaseTips()
 {
+    // Quietly: itemChanged would take each tip for a check toggle and rescan
+    // and replot once per case.
+    caseList_->blockSignals(true);
     for (int i = 0; i < caseList_->count(); ++i) {
         auto* it = caseList_->item(i);
         it->setToolTip(caseTip(it->data(Qt::UserRole).toString()));
     }
+    caseList_->blockSignals(false);
 }
 
 void SummaryPlotWidget::addCase(const QString& label, const QString& rawPath,
@@ -1824,7 +1828,9 @@ void SummaryPlotWidget::addCase(const QString& label, const QString& rawPath,
     caseList_->blockSignals(true);       // no premature replot from itemChanged
     caseList_->addItem(it);
     caseList_->blockSignals(false);
-    zeroScanValid_ = false;
+    // The first case of a batch is activated, and scanned, before the rest
+    // are in the list; without a rescan the tree hides by that case alone.
+    zeroScanStale();
     relabelCases();                      // tag this one and its twins, if any
     if (caseList_->count() == 1) caseList_->setCurrentItem(it);
     emit caseAdded(it->text(), smspecPath);
@@ -2259,6 +2265,7 @@ void SummaryPlotWidget::caseFinished(const QString& rawPath)
     refreshCaseTips();           // it has just written; the tip said otherwise
     if (flowgui::sameCasePath(activePath(), smspecPath)) { reload(true); return; }
     others_.erase(smspecPath);   // drop a possibly stale comparison reader
+    zeroScanStale();             // it may have been unreadable when last scanned
     replot();
 }
 
@@ -2399,7 +2406,7 @@ int SummaryPlotWidget::removeRows(QList<int> rows)
     // Bottom up, so the rows still to be taken keep the indices they had.
     std::sort(rows.begin(), rows.end(), std::greater<int>());
 
-    zeroScanValid_ = false;
+    zeroScanStale();
     QStringList gone;
     for (int row : std::as_const(rows)) {
         QListWidgetItem* it = caseList_->takeItem(row);   // fires currentItemChanged
@@ -2885,6 +2892,18 @@ void SummaryPlotWidget::rescanZeroVectors()
         }
         if (seen && allZero) zeroKeys_.insert(v.key);
     }
+}
+
+void SummaryPlotWidget::zeroScanStale()
+{
+    zeroScanValid_ = false;
+    if (!hideZero_ || !hideZero_->isChecked() || zeroRebuildQueued_) return;
+    zeroRebuildQueued_ = true;
+    QTimer::singleShot(0, this, [this] {
+        zeroRebuildQueued_ = false;
+        // A reload in the meantime has already rebuilt it with a fresh scan.
+        if (!zeroScanValid_ && hideZero_->isChecked()) rebuildTree({});
+    });
 }
 
 void SummaryPlotWidget::rebuildTree(const QStringList& reselect)
