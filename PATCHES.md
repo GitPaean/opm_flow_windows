@@ -29,7 +29,10 @@ OPM/opm-common#5467 on 2026-10-13; opm-common's "Keep the dates before 1970
 that MSVC's C runtime refuses" and opm-simulators' "Date the economic-limit
 messages without fmt::gmtime()", superseded on 2026-10-14 by
 OPM/opm-common#5342 and OPM/opm-simulators#7556, which keep OPM's times as
-`<chrono>` time points (see "dates before 1970" below).
+`<chrono>` time points (see "dates before 1970" below). The global MPI fixture
+that opm-simulators' "Portability fixes" commit gave
+`tests/test_networkpressure.cpp` went on 2026-11-08: OPM/opm-simulators#7656
+(2026-11-06) initialises MPI in that test itself.
 
 What still relies on this harness's `compat/include` shims: opm-common's
 `examples/` and `test_util/` tools (`getopt.h`) and `EclipseGridTests.cpp`
