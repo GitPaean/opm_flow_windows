@@ -16,6 +16,7 @@
 
 #include <map>
 #include <memory>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -169,6 +170,19 @@ private:
         bool hasR = false; double rmin = 0, rmax = 0;
     };
     QVector<ZoomSnap> zoomSnap_;
+
+    // A y range fixed by hand for one axis of a subplot; an open end stays
+    // automatic. Kept with the unit the axis showed and applied only while it
+    // shows that unit, so another quantity is not squeezed into it.
+    struct YLimits {
+        QString unit;
+        std::optional<double> lo, hi;
+        bool set() const { return lo || hi; }
+    };
+    struct YRange { YLimits left, right; };
+    QVector<YRange> yRange_;
+    void editYRange();               // the focused subplot's, in a dialog
+    void clearYRanges();             // every subplot back to automatic
 
     // A floating legend the user dragged: position per chart, normalised to
     // the chart rect so it survives a resize. Null = park it in the corner

@@ -78,7 +78,7 @@ results, animate them in 3D, and edit decks — all in one window.
   one gets a blue frame — and the vector tree then shows and edits that
   subplot's curves; subplots are equally sized, and shrinking the layout
   keeps the focused one. **Ctrl+drag a subplot onto another to swap them**,
-  which moves the vectors, the zoom and the legend position together — the
+  which moves the vectors, the zoom, the y range and the legend position together — the
   order of a figure is a presentation decision. Charts are built as a
   layout asks for them, so a session that stays on one chart pays for one.
   How dense a grid is *useful* is a matter of screen: 2×2 is comfortable
@@ -89,7 +89,14 @@ results, animate them in 3D, and edit decks — all in one window.
   or eliding them, so a dense grid stays readable as far as it can. Drag to
   zoom — a zoomed view survives refreshes until *Reset zoom*, which clears
   every subplot, or just the focused one from the arrow beside it — and
-  refreshes also keep the tree's expansion and scroll position. Calendar
+  refreshes also keep the tree's expansion and scroll position.
+  **Y range...** fixes the focused subplot's y axis: a min and a max for
+  each axis it has, either left empty to follow the data. A range is kept
+  with the unit its axis showed, so plotting a quantity in another unit in
+  that subplot lets the axis scale itself again (and coming back brings the
+  range back); a zoom still works on top, and *Reset zoom* returns to it.
+  The arrow beside the button puts every subplot back to automatic.
+  Ranges are saved with the session and the project. Calendar
   dates on the X axis by default (untick *date axis* for days).
   The **legend** can be docked to any edge, floated in a corner *inside* the
   plot (on a translucent plate, above the curves), or hidden — and a

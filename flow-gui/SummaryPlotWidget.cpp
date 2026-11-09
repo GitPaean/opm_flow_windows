@@ -21,6 +21,8 @@
 #include <QComboBox>
 #include <QDateTime>
 #include <QDateTimeAxis>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QDoubleSpinBox>
 #include <QDir>
 #include <QTimeZone>
@@ -76,10 +78,12 @@
 #include <QValueAxis>
 
 #include <algorithm>
+#include <array>
 #include <numeric>
 #include <chrono>
 #include <cmath>
 #include <memory>
+#include <optional>
 #include <limits>
 #include <exception>
 #include <functional>
@@ -463,6 +467,10 @@ constexpr int kCaseDashCount = int(sizeof(kCaseDashes) / sizeof(kCaseDashes[0]))
 // Object name of the empty stand-in series that carries a curve's legend
 // entry (see plotChart); its marker is the one the legend actually shows.
 const QString kLegendSample = QStringLiteral("flow-gui.legend-sample");
+
+// Property on a y axis holding the unit it shows ("" for none), so a fixed
+// range can be matched to it after the plot is built.
+constexpr const char* kAxisUnit = "flow-gui.unit";
 
 // Side of the box the legend sample's marker is drawn in. Qt lays a legend row
 // out at max(marker, font) plus its own padding, so this - not the font alone -
@@ -1060,6 +1068,19 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
         zoomMenu->addAction(QStringLiteral("This subplot only"), this,
                             [this] { resetZoom(true); });
         bzoom->setMenu(zoomMenu);
+        auto* byrange = new QToolButton;
+        byrange->setText(QStringLiteral("Y range..."));
+        byrange->setPopupMode(QToolButton::MenuButtonPopup);
+        byrange->setToolTip(QStringLiteral(
+            "fix the y range of the focused subplot - either end of each axis, "
+            "the other left automatic; the arrow puts every subplot back to "
+            "automatic"));
+        auto* yMenu = new QMenu(byrange);
+        yMenu->addAction(QStringLiteral("This subplot..."), this,
+                         [this] { editYRange(); });
+        yMenu->addAction(QStringLiteral("Automatic on every subplot"), this,
+                         [this] { clearYRanges(); });
+        byrange->setMenu(yMenu);
         // The arrow is for the whole filtered list at once: a review of every
         // well's curves across runs is a document to page through, not a
         // figure, and plotting them one by one to save each is the chore.
@@ -1163,6 +1184,7 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
         // "Layout: 2 x 2", and a lone label can wrap away from its control
         row->addWidget(layoutBtn_);
         row->addWidget(bzoom);
+        row->addWidget(byrange);
         row->addWidget(bpng);
         row->addWidget(bcsv);
 
@@ -1211,6 +1233,7 @@ SummaryPlotWidget::SummaryPlotWidget(QWidget* parent)
         connect(legendScaleSpin_, &QDoubleSpinBox::valueChanged, this, [this](double) { replot(); });
         connect(autoScale_, &QCheckBox::toggled, this, [this](bool) { replot(); });
         connect(bzoom, &QToolButton::clicked, this, [this] { resetZoom(false); });
+        connect(byrange, &QToolButton::clicked, this, [this] { editYRange(); });
         connect(bpng,  &QToolButton::clicked, this, [this] { savePng(); });
         connect(bcsv,  &QPushButton::clicked, this, [this] { saveCsv(); });
         timer_ = new QTimer(this);
@@ -2044,6 +2067,8 @@ QJsonObject SummaryPlotWidget::uiState() const
     int used = visibleCharts_;
     for (int i = 0; i < chartSel_.size(); ++i)
         if (!chartSel_[i].isEmpty()) used = std::max(used, i + 1);
+    for (int i = 0; i < yRange_.size(); ++i)
+        if (yRange_[i].left.set() || yRange_[i].right.set()) used = std::max(used, i + 1);
     QJsonArray sel;
     for (int i = 0; i < used && i < chartSel_.size(); ++i) {
         QJsonArray a;
@@ -2067,6 +2092,24 @@ QJsonObject SummaryPlotWidget::uiState() const
     }
     o[QStringLiteral("legendPos")] = lpos;
     o[QStringLiteral("legend")]    = legendBox_ ? legendBox_->currentIndex() : 0;
+
+    // Fixed y ranges, subplot by subplot; an empty object is automatic.
+    QJsonArray yr;
+    for (int i = 0; i < used && i < yRange_.size(); ++i) {
+        QJsonObject r;
+        auto put = [&r](const char* side, const YLimits& y) {
+            if (!y.set()) return;
+            QJsonObject s;
+            s[QStringLiteral("unit")] = y.unit;
+            if (y.lo) s[QStringLiteral("min")] = *y.lo;
+            if (y.hi) s[QStringLiteral("max")] = *y.hi;
+            r[QLatin1String(side)] = s;
+        };
+        put("left", yRange_[i].left);
+        put("right", yRange_[i].right);
+        yr.append(r);
+    }
+    o[QStringLiteral("yRanges")] = yr;
 
     o[QStringLiteral("dateAxis")]    = dateAxis_ && dateAxis_->isChecked();
     o[QStringLiteral("span")]        = spanBox_ ? spanBox_->currentIndex() : 0;
@@ -2213,6 +2256,21 @@ void SummaryPlotWidget::restoreUiState(const QJsonObject& state)
             const QJsonArray xy = lpos[i].toArray();
             legendPos_[i] = xy.size() == 2 ? QPointF(xy[0].toDouble(), xy[1].toDouble())
                                            : QPointF();
+        }
+    }
+    if (has("yRanges")) {
+        const QJsonArray yr = val("yRanges").toArray();
+        auto get = [](const QJsonObject& r, const char* side) {
+            YLimits y;
+            const QJsonObject s = r.value(QLatin1String(side)).toObject();
+            y.unit = s.value(QStringLiteral("unit")).toString();
+            if (s.value(QStringLiteral("min")).isDouble()) y.lo = s.value(QStringLiteral("min")).toDouble();
+            if (s.value(QStringLiteral("max")).isDouble()) y.hi = s.value(QStringLiteral("max")).toDouble();
+            return y;
+        };
+        for (int i = 0; i < yRange_.size(); ++i) {
+            const QJsonObject r = i < yr.size() ? yr[i].toObject() : QJsonObject();
+            yRange_[i] = { get(r, "left"), get(r, "right") };
         }
     }
     auto restoreSplit = [](QSplitter* sp, const QString& state) {
@@ -3130,6 +3188,7 @@ void SummaryPlotWidget::ensureCharts(int n)
         chartViews_.push_back(v);
         chartSel_.push_back({});
         zoomSnap_.push_back({});
+        yRange_.push_back({});
         legendPos_.push_back(QPointF());
     }
 }
@@ -3238,10 +3297,11 @@ void SummaryPlotWidget::applyChartLayout(int rows, int cols)
     // runs when the layout button is used, not on a replot.
 
     // Shrinking below the focused subplot: the focused one survives, in the
-    // last still-visible slot (its curves and kept zoom move with it).
+    // last still-visible slot (its curves, kept zoom and y range move with it).
     if (focusChart_ >= n) {
         std::swap(chartSel_[focusChart_], chartSel_[n - 1]);
         std::swap(zoomSnap_[focusChart_], zoomSnap_[n - 1]);
+        std::swap(yRange_[focusChart_], yRange_[n - 1]);
         focusChart_ = n - 1;
     }
     for (auto* v : chartViews_) chartGrid_->removeWidget(v);
@@ -3285,6 +3345,144 @@ void SummaryPlotWidget::resetZoom(bool focusedOnly)
                       .arg(focusChart_ + 1));
 }
 
+// Fix the focused subplot's y range. Only the axes it has are offered, named
+// as on the plot; an empty box leaves that end automatic.
+void SummaryPlotWidget::editYRange()
+{
+    const int c = focusChart_;
+    if (c < 0 || c >= visibleCharts_ || c >= charts_.size()) return;
+    const QString which = visibleCharts_ > 1 ? QStringLiteral("subplot %1").arg(c + 1)
+                                             : QStringLiteral("the plot");
+    // Read off before the dialog opens: a refresh while it is up replaces the chart.
+    struct Side {
+        QString title, unit;
+        double shownLo = 0, shownHi = 0;
+        QLineEdit* lo = nullptr;
+        QLineEdit* hi = nullptr;
+    };
+    std::vector<Side> sides;
+    for (auto* a : charts_[c]->axes(Qt::Vertical))     // left, then right
+        if (auto* v = qobject_cast<QValueAxis*>(a); v && sides.size() < 2)
+            sides.push_back({v->titleText(), v->property(kAxisUnit).toString(),
+                             v->min(), v->max()});
+    if (sides.empty()) {
+        setStatus(QStringLiteral("nothing is plotted in %1 - select a vector first").arg(which));
+        return;
+    }
+
+    QDialog dlg(this);
+    dlg.setWindowTitle(QStringLiteral("Y range - %1").arg(which));
+    auto* lay = new QVBoxLayout(&dlg);
+    auto* grid = new QGridLayout;
+    grid->addWidget(new QLabel(QStringLiteral("min")), 0, 1);
+    grid->addWidget(new QLabel(QStringLiteral("max")), 0, 2);
+    for (int s = 0; s < int(sides.size()); ++s) {
+        Side& sd = sides[s];
+        const YLimits& y = s == 0 ? yRange_[c].left : yRange_[c].right;
+        const bool forThis = y.set() && y.unit == sd.unit;
+        auto box = [forThis](const std::optional<double>& v) {
+            auto* e = new QLineEdit;
+            e->setPlaceholderText(QStringLiteral("auto"));
+            if (forThis && v) e->setText(QString::number(*v, 'g', 10));
+            return e;
+        };
+        sd.lo = box(y.lo);
+        sd.hi = box(y.hi);
+        grid->addWidget(new QLabel((s == 0 ? QStringLiteral("left: ")
+                                           : QStringLiteral("right: ")) + sd.title), s + 1, 0);
+        grid->addWidget(sd.lo, s + 1, 1);
+        grid->addWidget(sd.hi, s + 1, 2);
+        grid->addWidget(new QLabel(QStringLiteral("shown: %1 to %2")
+                                       .arg(sd.shownLo, 0, 'g', 6).arg(sd.shownHi, 0, 'g', 6)),
+                        s + 1, 3);
+    }
+    lay->addLayout(grid);
+    auto* hint = new QLabel(QStringLiteral(
+        "An empty box lets that end follow the data. A range holds while its "
+        "axis shows the same unit: plot a quantity in another unit and the axis "
+        "scales itself again."));
+    hint->setWordWrap(true);
+    lay->addWidget(hint);
+    auto* err = new QLabel;
+    err->setStyleSheet(QStringLiteral("color: #b00020"));
+    err->hide();
+    lay->addWidget(err);
+    auto* bb = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+    auto* bauto = bb->addButton(QStringLiteral("Automatic"), QDialogButtonBox::ResetRole);
+    bauto->setToolTip(QStringLiteral("both axes of this subplot follow the data again"));
+    lay->addWidget(bb);
+
+    std::vector<YLimits> got(sides.size());
+    connect(bb, &QDialogButtonBox::accepted, &dlg, [&] {
+        QStringList bad;
+        for (std::size_t s = 0; s < sides.size(); ++s) {
+            got[s] = YLimits{sides[s].unit, {}, {}};
+            auto read = [&bad](QLineEdit* e, std::optional<double>& out) {
+                const QString t = e->text().trimmed();
+                if (t.isEmpty()) return;
+                bool ok = false;
+                const double v = t.toDouble(&ok);
+                if (ok && std::isfinite(v)) out = v;
+                else bad << QStringLiteral("'%1' is not a number (such as 250 or 1.5e6)").arg(t);
+            };
+            read(sides[s].lo, got[s].lo);
+            read(sides[s].hi, got[s].hi);
+            if (got[s].lo && got[s].hi && *got[s].lo >= *got[s].hi)
+                bad << QStringLiteral("the %1 axis' min is not below its max")
+                           .arg(s == 0 ? QStringLiteral("left") : QStringLiteral("right"));
+        }
+        if (!bad.isEmpty()) {
+            err->setText(bad.join(QLatin1Char('\n')));
+            err->show();
+            return;
+        }
+        dlg.accept();
+    });
+    connect(bb, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    connect(bauto, &QPushButton::clicked, &dlg, [&] {
+        got.assign(sides.size(), YLimits());
+        dlg.done(QDialog::Accepted + 1);
+    });
+    const int r = dlg.exec();
+    if (r == QDialog::Rejected || c >= yRange_.size()) return;
+
+    if (r == QDialog::Accepted + 1) {
+        yRange_[c] = YRange();
+    } else {
+        yRange_[c].left = got[0];
+        if (got.size() > 1) yRange_[c].right = got[1];
+    }
+    // Show the range just set, not a zoom left over from before it.
+    charts_[c]->zoomReset();
+    zoomSnap_[c] = ZoomSnap();
+    replot();
+
+    auto end = [](const std::optional<double>& v) {
+        return v ? QString::number(*v, 'g', 6) : QStringLiteral("auto");
+    };
+    QStringList parts;
+    for (std::size_t s = 0; s < got.size(); ++s)
+        if (got[s].set())
+            parts << QStringLiteral("%1 %2 to %3")
+                         .arg(s == 0 ? QStringLiteral("left") : QStringLiteral("right"),
+                              end(got[s].lo), end(got[s].hi));
+    setStatus(parts.isEmpty()
+                  ? QStringLiteral("%1: y range automatic").arg(which)
+                  : QStringLiteral("%1: y range fixed, %2").arg(which, parts.join(QStringLiteral(", "))));
+}
+
+void SummaryPlotWidget::clearYRanges()
+{
+    for (int i = 0; i < yRange_.size() && i < charts_.size(); ++i) {
+        if (!yRange_[i].left.set() && !yRange_[i].right.set()) continue;
+        yRange_[i] = YRange();
+        charts_[i]->zoomReset();
+        zoomSnap_[i] = ZoomSnap();
+    }
+    replot();
+    setStatus(QStringLiteral("every subplot's y range follows the data"));
+}
+
 // Which visible subplot is under this point on screen, or -1.
 int SummaryPlotWidget::chartAt(const QPoint& globalPos) const
 {
@@ -3296,8 +3494,8 @@ int SummaryPlotWidget::chartAt(const QPoint& globalPos) const
 }
 
 // Exchange what two subplots show. Everything that belongs to a subplot moves
-// with it - its vectors, the zoom it was left at and where its legend was
-// dragged - so the swap is of the plots, not just of the curves.
+// with it - its vectors, the zoom it was left at, its fixed y range and where
+// its legend was dragged - so the swap is of the plots, not just of the curves.
 void SummaryPlotWidget::swapCharts(int a, int b)
 {
     if (a < 0 || b < 0 || a == b || a >= chartSel_.size() || b >= chartSel_.size()) {
@@ -3306,6 +3504,7 @@ void SummaryPlotWidget::swapCharts(int a, int b)
     }
     std::swap(chartSel_[a], chartSel_[b]);
     std::swap(zoomSnap_[a], zoomSnap_[b]);
+    std::swap(yRange_[a], yRange_[b]);
     std::swap(legendPos_[a], legendPos_[b]);
     focusChart_ = b;                       // the tree follows what was dragged
     replot();
@@ -4054,12 +4253,15 @@ int SummaryPlotWidget::plotChart(QChart* chart, const QList<int>& sel,
         ax = a;
     }
     chart->addAxis(ax, Qt::AlignBottom);
+    auto rawUnit = [&kNoUnit](const QString& u) { return u == kNoUnit ? QString() : u; };
     QValueAxis* ayL = new QValueAxis;
     ayL->setTitleText(axisTitle(unitL, kwL));
+    ayL->setProperty(kAxisUnit, rawUnit(unitL));
     chart->addAxis(ayL, Qt::AlignLeft);
     QValueAxis* ayR = nullptr;
     if (haveR) {
         ayR = new QValueAxis; ayR->setTitleText(axisTitle(unitR, kwR));
+        ayR->setProperty(kAxisUnit, rawUnit(unitR));
         chart->addAxis(ayR, Qt::AlignRight);
     }
     styleAxis(ax); styleAxis(ayL); styleAxis(ayR);
@@ -4309,6 +4511,38 @@ int SummaryPlotWidget::plotChart(QChart* chart, const QList<int>& sel,
             applyTickFormat(ayL);
             applyTickFormat(ayR);
         }
+    }
+
+    // A range fixed for this subplot wins over all of the above, while the
+    // axis shows the unit it was set for. A chart drawn off screen for an
+    // export is no subplot and keeps its own.
+    if (vidx >= 0 && vidx < yRange_.size()) {
+        auto fix = [yTicks](QValueAxis* a, const YLimits& y) {
+            const double autoLo = a->min(), autoHi = a->max();
+            double lo = y.lo.value_or(autoLo), hi = y.hi.value_or(autoHi);
+            // One end on its own can land beyond the data's other end; keep
+            // the automatic span on the open side then.
+            if (hi <= lo) {
+                const double span = autoHi > autoLo ? autoHi - autoLo : 1.0;
+                if (y.lo) hi = lo + span; else lo = hi - span;
+            }
+            a->setRange(lo, hi);
+            // The range is exactly as typed, so the ticks cannot be widened to
+            // round numbers; use the most of them that fall on round steps.
+            auto round = [](double step) {
+                const double m = step / std::pow(10.0, std::floor(std::log10(step)));
+                return std::ranges::any_of(std::array{1.0, 2.0, 2.5, 5.0, 10.0},
+                                           [m](double r) { return std::abs(m - r) < 1e-6; });
+            };
+            int n = yTicks;
+            for (int k = yTicks; k >= 3; --k)
+                if (round((hi - lo) / (k - 1))) { n = k; break; }
+            a->setTickCount(n);
+            applyTickFormat(a);
+        };
+        const YRange& yr = yRange_[vidx];
+        if (yr.left.set() && yr.left.unit == rawUnit(unitL)) fix(ayL, yr.left);
+        if (ayR && yr.right.set() && yr.right.unit == rawUnit(unitR)) fix(ayR, yr.right);
     }
     // The title carries whatever the legend does not.
     //
