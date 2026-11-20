@@ -103,7 +103,7 @@ jobs:
 
     env:
       FORK_ORG: GitPaean
-      FORK_BRANCH: windows
+      FORK_BRANCH: windows-policy-test
       # vcpkg builds the dependencies once and restores them from the Actions
       # cache on later runs; without this every run pays for Boost from source.
       VCPKG_BINARY_SOURCES: 'clear;x-gha,readwrite'
@@ -630,7 +630,7 @@ jobs:
       # issue means "still broken" without anyone having to tend it. Each job
       # keeps its own report, under its own label: they mean different things.
       - name: Report a failure as an issue
-        if: failure()
+        if: failure() && github.ref == 'refs/heads/master'
         uses: actions/github-script@v7
         with:
           script: |
@@ -685,7 +685,7 @@ jobs:
             }
 
       - name: Close the failure report once it builds again
-        if: success()
+        if: success() && github.ref == 'refs/heads/master'
         uses: actions/github-script@v7
         with:
           script: |
