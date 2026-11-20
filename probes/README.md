@@ -9,6 +9,7 @@ four `windows` branches on 2026-09-03. None of them is part of the build.
 |---|---|---|
 | `mpi-spawn.c` | Does MS-MPI carry out `MPI_Comm_spawn`? | Yes, under `mpiexec` (MS-MPI 10.1.12498.52): the child reaches `MPI_Init`, the parent gets `MPI_SUCCESS`. Started without a process manager, the spawn fails - that is the launch context, not the API. |
 | `constants.cpp` | Do the constants that opm-common now computes as `constexpr` keep their value for an autodiff scalar? | Yes: for `Evaluation<float, 3>` the old in-Scalar expressions and the new constants agree to the last digit, as does plain `float`. |
+| `msvc-frontend/` | Does a newer MSVC still need the compiler workarounds on the branches? (2026-11-20) | Yes on 19.51, the newest MSVC on Compiler Explorer: all seven still fail without their workaround. One of them, SatfuncConsistencyChecks, is a missing `#include <array>` rather than a compiler limit. The raw-literal split is needed only for VS 2022. See its README. |
 | `cxx-consumer/` | Can a project that enables only CXX consume the installed opm-common package? | No, and not only because of `MPI::MPI_C`: the OpenMP-enabled package this harness builds also exports `OpenMP::OpenMP_C` (upstream's `UseOpenMP.cmake`), which needs C enabled; the exported `c_std_11` compile feature alone does not. With C enabled (`-DPROBE_ENABLE_C=ON`, the control) the package configures and the probe builds. |
 
 Build and run instructions are at the top of each file. All of them need the
