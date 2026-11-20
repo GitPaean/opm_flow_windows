@@ -14,6 +14,30 @@ contain the OPM / DUNE / Trilinos sources — `build-all.ps1` clones those into
 > that build is currently broken. The first clean-checkout walkthrough is in
 > [VALIDATION.md](VALIDATION.md).
 
+## Download
+Built packages are on the
+[**Releases page**](https://github.com/GitPaean/opm_flow_windows/releases):
+`flow.exe` (every model variant, MPI + OpenMP) with the flow-gui workbench,
+for Windows x64. Each release lists what it holds; in short:
+- `opm-flow-<snapshot>-win64.zip` - portable: unzip and run `bin\flow-gui.exe`
+  (needs Microsoft MPI; `redist\msmpisetup.exe` installs it).
+- `OPM-Flow-<snapshot>-Setup.exe` - installer; run as administrator it
+  installs Microsoft MPI too.
+- `opm-flow-<snapshot>-impi-win64.zip` - built against Intel MPI, whose runtime
+  installs with `pip`: the one that needs no administrator at any point, for a
+  locked-down work laptop.
+
+They are not code-signed, so SmartScreen warns once - see
+[Installing a released build](#installing-a-released-build-windows-smartscreen).
+These are independent builds of OPM Flow, not releases of the OPM project. On
+Linux there is no package: build flow-gui from source
+([flow-gui/README.md](flow-gui/README.md)) and bring your own `flow`. The
+nightly [CI](#continuous-integration) binaries - of the pinned sources and of
+the latest OPM master - are kept for 14 days as the
+`flow-windows-x64-<job>` artifact of each
+[windows-weekly run](https://github.com/GitPaean/opm_flow_windows/actions/workflows/windows-weekly.yml)
+(signed-in GitHub users only; bare executables, no installer).
+
 ## flow-gui at a glance
 The bundled [flow-gui](flow-gui/) workbench (Windows / Linux / macOS), here on
 the Norne benchmark case:
