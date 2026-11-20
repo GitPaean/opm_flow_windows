@@ -103,7 +103,7 @@ jobs:
 
     env:
       FORK_ORG: GitPaean
-      FORK_BRANCH: windows-policy-test
+      FORK_BRANCH: cpp-practice-test
       # vcpkg builds the dependencies once and restores them from the Actions
       # cache on later runs; without this every run pays for Boost from source.
       VCPKG_BINARY_SOURCES: 'clear;x-gha,readwrite'
