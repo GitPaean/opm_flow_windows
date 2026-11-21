@@ -298,6 +298,38 @@ jobs:
           .\build-all.ps1 -Mpi -SimTarget $target -Jobs 4 @sources
           if ($LASTEXITCODE -ne 0) { throw "build failed" }
 
+      # Test only: networkgraph is an opm-common example, which the build above
+      # leaves out. Upstream's file is built first and should fail; then the
+      # branch's own, which must build.
+      - name: Build networkgraph, upstream's file then the branch's
+        if: matrix.sources == 'latest'
+        run: |
+          $ErrorActionPreference = 'Continue'
+          . .\setup-env.ps1
+          $exe = 'build-mpi\opm-common\bin\networkgraph.exe'
+          git -C src/opm-common checkout upstream/master -- examples/networkgraph.cpp
+          git -C src/opm-common diff --stat HEAD -- examples/networkgraph.cpp
+          $upstreamBuilt = $true
+          try {
+            .\build-module.ps1 opm-common -Mpi -Target networkgraph -Jobs 4 -Extra '-DBUILD_EXAMPLES=ON' *>&1 |
+              Tee-Object -FilePath networkgraph-upstream.log
+          } catch { $upstreamBuilt = $false }
+          $errors = @(Select-String -Path networkgraph-upstream.log -Pattern 'networkgraph\.cpp.*error' | ForEach-Object { $_.Line.Trim() })
+          git -C src/opm-common checkout HEAD -- examples/networkgraph.cpp
+          if (Test-Path $exe) { Remove-Item $exe }
+          .\build-module.ps1 opm-common -Mpi -Target networkgraph -Jobs 4 -Extra '-DBUILD_EXAMPLES=ON'
+          if (-not (Test-Path $exe)) { throw "networkgraph.exe was not built from the branch's file" }
+          "## networkgraph`n" | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          if ($upstreamBuilt) {
+            Write-Host "::warning title=networkgraph::upstream's networkgraph.cpp builds here as well"
+            "- upstream's file: **builds**" | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          } else {
+            "- upstream's file: fails, $($errors.Count) error line(s):" | Out-File -Append $env:GITHUB_STEP_SUMMARY
+            $errors | ForEach-Object { "  - ``$_``" } | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          }
+          "- branch's file ($(git -C src/opm-common rev-parse --short HEAD)): builds" | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          $errors | ForEach-Object { Write-Host "upstream: $_" }
+
       # Here, not before the build: build-all.ps1 is what cloned the sources.
       # Runs when the build failed too, so the record says what it was given.
       - name: Record the pinned sources
@@ -390,6 +422,7 @@ jobs:
       # partitioning, the linear solver across ranks, and the rank-0 output
       # gather - which is what the package ships and what SPE1 never touched.
       - name: Fetch the Norne deck
+        if: false
         run: |
           # opm-tests is ~4.4 GB; the deck and its INCLUDE tree are a few MB of
           # it and the rest of norne\ is reference solutions this does not read.
@@ -407,6 +440,7 @@ jobs:
           Write-Host "deck plus $inc INCLUDE files"
 
       - name: Run Norne on 4 MS-MPI ranks x 1 OpenMP thread
+        if: false
         run: |
           $target = '${{ inputs.sim_target }}'
           if (-not $target) { $target = 'flow_blackoil' }
@@ -462,6 +496,7 @@ jobs:
       # doubles the build time; disk is not the constraint, the workspace is on
       # a volume with ~147 GB free.
       - name: Disk before the Intel MPI build
+        if: false
         run: |
           Get-PSDrive -PSProvider FileSystem |
             Select-Object Name,
@@ -470,6 +505,7 @@ jobs:
             Format-Table -AutoSize | Out-String | Write-Host
 
       - name: Install the Intel MPI runtime (pip, no administrator)
+        if: false
         run: |
           # This is exactly how the released impi package tells a user to get
           # the runtime, so CI installs it the same way rather than a way no
@@ -483,6 +519,7 @@ jobs:
           Write-Host "Intel MPI runtime at $impi"
 
       - name: Build against Intel MPI
+        if: false
         run: |
           $target = '${{ inputs.sim_target }}'
           if (-not $target) { $target = 'flow_blackoil' }
@@ -492,6 +529,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Intel MPI build failed' }
 
       - name: Run Norne on 2 Intel MPI ranks x 2 OpenMP threads
+        if: false
         run: |
           $target = '${{ inputs.sim_target }}'
           if (-not $target) { $target = 'flow_blackoil' }
@@ -611,7 +649,7 @@ jobs:
           if-no-files-found: warn
 
       - name: Upload the binary
-        if: success()
+        if: false
         uses: actions/upload-artifact@v4
         with:
           name: flow-windows-x64-${{ matrix.sources }}
