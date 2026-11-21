@@ -15,7 +15,7 @@ those pins.
 | repository (`windows` branch of GitPaean/...) | commits |
 |---|---|
 | opm-common | Portability and cross-platform fixes exposed by a Windows build · Pin LF line endings for Eclipse test data · Windows/MSVC enablement · Link MPI directly when the DUNE modules do not propagate it · Share the FCMacros.h fallback through opm-common · Add the <stdexcept> that std::invalid_argument needs · Keep the hysteresis snapshot loops out of line on MSVC |
-| opm-grid | Enable Fortran only when a compiler exists, and fall back for FCMacros.h · Make cpgrid compile with MSVC · Index-based chunk access so OpenMP loops build on MSVC · Use unsigned rather than the POSIX uint typedef in tests · Pin LF line endings for Eclipse test data |
+| opm-grid | Enable Fortran only when a compiler exists, and fall back for FCMacros.h · Make cpgrid compile with MSVC · Index-based chunk access so OpenMP loops build on MSVC · Pin LF line endings for Eclipse test data |
 | opm-simulators | Portability fixes and bugs exposed by a Windows build · Work around MSVC front-end limitations · Provide Windows equivalents for the POSIX interfaces used · Exempt the simulator from Windows power throttling · Pin LF line endings for Eclipse test data · Harden reservoir coupling slave spawning for process-manager launch contexts |
 | opm-upscaling | Build on MSVC: Fortran only when a compiler exists, fall back for FCMacros.h · Disambiguate FieldMatrix operator*= for MSVC · Pin LF line endings for the Eclipse test data |
 
@@ -32,7 +32,12 @@ OPM/opm-common#5342 and OPM/opm-simulators#7556, which keep OPM's times as
 `<chrono>` time points (see "dates before 1970" below). The global MPI fixture
 that opm-simulators' "Portability fixes" commit gave
 `tests/test_networkpressure.cpp` went on 2026-11-08: OPM/opm-simulators#7656
-(2026-11-06) initialises MPI in that test itself.
+(2026-11-06) initialises MPI in that test itself. On 2026-11-21
+OPM/opm-grid#1104 took opm-grid's "Use unsigned rather than the POSIX uint
+typedef in tests", the `std::size_t{1}` in `createThreadIterators` and, in
+another form, the `getIndex` fix; OPM/opm-grid#1103 replaced the
+`DefaultGeometryPolicy` fix. "Make cpgrid compile with MSVC" and "Index-based
+chunk access" keep the rest (see the opm-grid sections below).
 
 What still relies on this harness's `compat/include` shims: opm-common's
 `examples/` and `test_util/` tools (`getopt.h`) and `EclipseGridTests.cpp`
@@ -119,7 +124,11 @@ Upstream's EclIO readers (`ERst`, `EclFile`, `ESmry`, `ExtESmry`),
   `Geometry<3,3>` to the empty *primary* template and caches it, after which the
   partial specialization is never selected (symptom: "volume/center/ctype is not a
   member of Dune::cpgrid::Geometry<3,3>", note points at the primary). GCC defers
-  the instantiation so it is unaffected.
+  the instantiation so it is unaffected. Replaced on 2026-11-21 by
+  OPM/opm-grid#1103, which defines the constructors - the code that creates the
+  geometry containers - in `DefaultGeometryPolicy.cpp`, after Geometry.hpp, so
+  the series no longer forward-declares the specializations or moves the
+  `geomVector()` getters.
 - `FCMacros.h`: opm-common `blas_lapack.h` needs Fortran name-mangling macros
   (only `FC_GLOBAL`). Provided hand-written at `compat/include/FCMacros.h`
   (gfortran/OpenBLAS ABI: lowercase + trailing underscore). C files need it too,
@@ -154,7 +163,8 @@ Source fixes:
   -> `_aligned_malloc`/`_aligned_free` (+`<malloc.h>`) under `_MSC_VER`.
 - opm-grid `opm/grid/utility/createThreadIterators.hpp`: `std::max(.., 1ul)` ->
   `std::max(.., std::size_t{1})` (LLP64: `unsigned long` is 32-bit on Windows, so
-  the two std::max args had different types).
+  the two std::max args had different types). Upstream since 2026-11-21
+  (OPM/opm-grid#1104).
 More compat shims: `compat/include/sys/stat.h` not needed (S_ISDIR defined inline).
 Additional source fixes:
 - Missing includes: `<numeric>` in RegionPhasePVAverage.cpp, GasLiftStage2.cpp,
@@ -313,7 +323,10 @@ opm's FindZOLTAN finds it in install-mpi (accepts lib name "zoltan").
 - `opm/grid/cpgrid/CpGridData.cpp` getIndex(T): MSVC's std::array<int,N> iterator
   is a wrapper class (not raw const int* as in libstdc++), so the template
   overload was chosen and `i->index()` failed. Added `if constexpr
-  (is_integral pointee) return *i; else return i->index();`.
+  (is_integral pointee) return *i; else return i->index();`. Replaced on
+  2026-11-21 by OPM/opm-grid#1104: `getIndex` is overloaded on the table entry
+  (`int`, `EntityRep<1>`) and called on `*f`, so the iterator type no longer
+  matters.
 
 ## opm-simulators (MPI build) source fix
 - `opm/simulators/flow/rescoup/ReservoirCouplingSpawnSlaves.{cpp,hpp}`:
