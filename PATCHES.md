@@ -47,7 +47,20 @@ declaration, the `EclipseIO` scope in `test_msim_ACTIONX`, the
 (removed), and made `FileDeck`'s input directory, `NNModel::loadModel()` and
 `networkgraph`'s restart helpers take `std::filesystem::path`, so their
 `.string()` calls went too. opm-common's "Portability and cross-platform fixes"
-keeps the binary-mode Eclipse file I/O and the `rst_deck` fixes.
+keeps the binary-mode Eclipse file I/O and the `rst_deck` fixes. Also on
+2026-11-23, OPM/opm-simulators#7725 took the `std::filesystem` check of the
+output directory, `std::this_thread::sleep_for` for `sleep()`/`usleep()`, the
+unused POSIX includes in `parametersystem.cpp` and `writeNlddFile()`'s
+`std::filesystem::path` parameter; #7726 took the `std::countr_zero` in
+`PvsPrimaryVariables::lowestPresentPhaseIdx()` with its check for no phase
+present; #7723 took the explicit exit-status check in `test_tasklets_failure`'s
+POSIX branch. opm-simulators' "Portability fixes" now keeps
+`tests/test_outputdir.cpp`, the `path::string()` conversions, the `DebugFlags`
+renaming and the OpenMP index loops. "Provide Windows equivalents" keeps the
+`_WIN32` parts: `isTty()` and the signal guards in `terminal.cpp`, the POSIX-only
+writability check in `simulatorOutputDir()` and the `_spawnl` child in
+`test_tasklets_failure`. OPM/opm-simulators#7722 adds the model tests only when
+the examples are built.
 
 What still relies on this harness's `compat/include` shims: opm-common's
 `examples/` and `test_util/` tools (`getopt.h`) and `EclipseGridTests.cpp`
@@ -162,6 +175,8 @@ Result: `opmgrid.lib` + cmake config installed.
   `add_dependencies(test-suite <example-target>)` on example targets that were
   never created -> configure error.
   (opm-simulators reads opm-common's CMake modules from the source tree.)
+  Since 2026-11-23 opm-simulators itself includes modelTests.cmake only when
+  `BUILD_EXAMPLES` is on (OPM/opm-simulators#7722).
 
 ## opm-simulators (master) — compile stage (flow_blackoil)
 POSIX compatibility shims added under `compat/include/` (on the include path):
@@ -185,6 +200,8 @@ Additional source fixes:
   WellInterfaceFluidSystem.cpp; `<stdexcept>` in KeywordValidation.hpp. All
   upstream by 2026-11-22, the last through OPM/opm-simulators#7720.
 - `simulatorutils.cpp`: define `S_ISDIR` for MSVC (`(mode & _S_IFMT) == _S_IFDIR`).
+  Superseded by `std::filesystem::status()`, upstream since 2026-11-23
+  (OPM/opm-simulators#7725).
 - `terminal.cpp`: guard `{SIGKILL,...}` map entry with `#ifdef SIGKILL`.
 - `Banners.cpp`: replace `sysconf(_SC_PHYS_PAGES)` with `GlobalMemoryStatusEx`
   on `_WIN32` (include <windows.h> with WIN32_LEAN_AND_MEAN+NOMINMAX).

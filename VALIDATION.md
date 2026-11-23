@@ -124,10 +124,11 @@ To re-verify on Windows, build each module with testing on:
 ./build-module.ps1 <module> -Mpi -OpenMP -Target all -Extra '-DBUILD_TESTING=ON','-DBUILD_EXAMPLES=ON'
 ```
 
-`BUILD_EXAMPLES=ON` is required alongside `BUILD_TESTING=ON`: opm-simulators'
-`modelTests.cmake` registers tests against `obstacle_immiscible` and
-`obstacle_pvs`, which are built from `EXAMPLE_SOURCE_FILES`. That is an upstream
-constraint, not something these patches introduce.
+Keep `BUILD_EXAMPLES=ON` alongside `BUILD_TESTING=ON`: opm-simulators'
+`modelTests.cmake` runs `obstacle_immiscible`, `obstacle_pvs` and the other
+programs built from `EXAMPLE_SOURCE_FILES`. Since OPM/opm-simulators#7722
+(2026-11-23) those tests are only added when the examples are built, so
+without the examples the configure succeeds but the model tests are missing.
 
 Neither module reaches a green ctest on Windows, and that is expected:
 
