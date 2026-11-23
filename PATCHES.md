@@ -14,7 +14,7 @@ those pins.
 
 | repository (`windows` branch of GitPaean/...) | commits |
 |---|---|
-| opm-common | Portability and cross-platform fixes exposed by a Windows build · Pin LF line endings for Eclipse test data · Windows/MSVC enablement · Link MPI directly when the DUNE modules do not propagate it · Share the FCMacros.h fallback through opm-common · Add the <stdexcept> that std::invalid_argument needs · Keep the hysteresis snapshot loops out of line on MSVC |
+| opm-common | Portability and cross-platform fixes exposed by a Windows build · Pin LF line endings for Eclipse test data · Windows/MSVC enablement · Link MPI directly when the DUNE modules do not propagate it · Share the FCMacros.h fallback through opm-common · Keep the hysteresis snapshot loops out of line on MSVC |
 | opm-grid | Enable Fortran only when a compiler exists, and fall back for FCMacros.h · Make cpgrid compile with MSVC · Index-based chunk access so OpenMP loops build on MSVC · Pin LF line endings for Eclipse test data |
 | opm-simulators | Portability fixes and bugs exposed by a Windows build · Work around MSVC front-end limitations · Provide Windows equivalents for the POSIX interfaces used · Exempt the simulator from Windows power throttling · Pin LF line endings for Eclipse test data · Harden reservoir coupling slave spawning for process-manager launch contexts |
 | opm-upscaling | Build on MSVC: Fortran only when a compiler exists, fall back for FCMacros.h · Disambiguate FieldMatrix operator*= for MSVC · Pin LF line endings for the Eclipse test data |
@@ -37,7 +37,17 @@ OPM/opm-grid#1104 took opm-grid's "Use unsigned rather than the POSIX uint
 typedef in tests", the `std::size_t{1}` in `createThreadIterators` and, in
 another form, the `getIndex` fix; OPM/opm-grid#1103 replaced the
 `DefaultGeometryPolicy` fix. "Make cpgrid compile with MSVC" and "Index-based
-chunk access" keep the rest (see the opm-grid sections below).
+chunk access" keep the rest (see the opm-grid sections below). On 2026-11-20
+OPM/opm-common#5585 took opm-common's missing includes, the whole of "Add the
+<stdexcept> that std::invalid_argument needs" among them. On 2026-11-22
+OPM/opm-simulators#7720 took opm-simulators' missing includes. On 2026-11-23
+OPM/opm-common#5589 took the `PiecewiseLinearTwoPhaseMaterialParams` forward
+declaration, the `EclipseIO` scope in `test_msim_ACTIONX`, the
+`test_EclipseIO_LGR` capture, the `isPower2` test literal and `WorkArea::org_path`
+(removed), and made `FileDeck`'s input directory, `NNModel::loadModel()` and
+`networkgraph`'s restart helpers take `std::filesystem::path`, so their
+`.string()` calls went too. opm-common's "Portability and cross-platform fixes"
+keeps the binary-mode Eclipse file I/O and the `rst_deck` fixes.
 
 What still relies on this harness's `compat/include` shims: opm-common's
 `examples/` and `test_util/` tools (`getopt.h`) and `EclipseGridTests.cpp`
@@ -72,16 +82,20 @@ Configured via `build-module.ps1` `CMAKE_CXX_FLAGS`:
   is implicit only on POSIX (on Windows path→wstring), so changed the parameter
   to `const std::filesystem::path&` and use `.string()` internally.
 - `opm/input/eclipse/Deck/FileDeck.cpp:181`: `input_directory` (std::string) was
-  initialised directly from a `fs::path` result; added `.string()`.
+  initialised directly from a `fs::path` result; added `.string()`. Replaced on
+  2026-11-23 by OPM/opm-common#5589: `input_directory` is a
+  `std::filesystem::path` now.
 - `opm/input/eclipse/EclipseState/Grid/Fault.cpp`: added `#include <algorithm>`
   for `std::ranges::equal` (MSVC stdlib needs the explicit include).
 - `opm/input/eclipse/Schedule/Well/NameOrder.cpp` and `PAvgCalculator.cpp`:
-  added `#include <iterator>` for `std::back_inserter`.
+  added `#include <iterator>` for `std::back_inserter`. These includes are
+  upstream since 2026-11-20 (OPM/opm-common#5585).
 - `opm/material/fluidmatrixinteractions/PiecewiseLinearTwoPhaseMaterialParams.hpp`:
   forward-declaration of the class was at global scope while the class lives in
   `namespace Opm`; under MSVC `/permissive-` the namespace-qualified friend
   `Opm::gpuistl::make_view` couldn't match. Moved the forward declaration into
   `namespace Opm` and dropped its duplicate default template argument.
+  Upstream since 2026-11-23 (OPM/opm-common#5589).
 - `CMakeLists.txt`: guard the unconditional `set_source_files_properties(... -Wno-shadow)`
   on Python.cpp with `if(NOT MSVC)` (MSVC rejects `/Wno-shadow` as `D8021`).
 
@@ -168,7 +182,8 @@ Source fixes:
 More compat shims: `compat/include/sys/stat.h` not needed (S_ISDIR defined inline).
 Additional source fixes:
 - Missing includes: `<numeric>` in RegionPhasePVAverage.cpp, GasLiftStage2.cpp,
-  WellInterfaceFluidSystem.cpp; `<stdexcept>` in KeywordValidation.hpp.
+  WellInterfaceFluidSystem.cpp; `<stdexcept>` in KeywordValidation.hpp. All
+  upstream by 2026-11-22, the last through OPM/opm-simulators#7720.
 - `simulatorutils.cpp`: define `S_ISDIR` for MSVC (`(mode & _S_IFMT) == _S_IFDIR`).
 - `terminal.cpp`: guard `{SIGKILL,...}` map entry with `#ifdef SIGKILL`.
 - `Banners.cpp`: replace `sysconf(_SC_PHYS_PAGES)` with `GlobalMemoryStatusEx`
@@ -194,7 +209,8 @@ Batch 3/4 (down to last files):
 - `terminal.cpp`: guard `SIGHUP`/`SIGPIPE` signal() calls with `#ifdef` (absent on Windows).
 - `Banners.cpp`: `getlogin()` -> `getenv("USERNAME")` on `_WIN32`.
 - `SatfuncConsistencyChecks.hpp`: `ViolationCollection` stays a `std::array`
-  (with an explicit `<array>` include); moving the element type out to
+  (with an explicit `<array>` include, upstream since 2026-11-22 through
+  OPM/opm-simulators#7720); moving the element type out to
   `Detail::` (previous item) is sufficient for MSVC.
 - `vtkmultiwriter.hh`: `fullPath.filename()` -> `.filename().string()`.
 - `ConvergenceOutputConfiguration.cpp`: pass `options.data()`/`data()+size()`
