@@ -4,16 +4,16 @@
   "branch": "windows",
   "modules": {
     "opm-common": {
-      "commit": "f74fb1c6636659600ac25c03cea001dd7cd5e9cd",
-      "upstream": "5cda41ac96cedba696555612866d78ee8902e23f"
+      "commit": "1446844b3733bca4ca37b3b87f8289e11c2bc83b",
+      "upstream": "4b238a130158479a86aac612325ec373445a6ae1"
     },
     "opm-grid": {
       "commit": "a137e883fad4fe70bb85949262229a3610f79ef9",
       "upstream": "5794dd681c243dffa20a8f6af2f9c5f84a12abcc"
     },
     "opm-simulators": {
-      "commit": "b137d202f607ba1086fa660d7bc0c8791c552d85",
-      "upstream": "a59b5aa584dfcb962901330a552e0843f631f6ff"
+      "commit": "bdff4d18bff605261586366497e41f65606cefa8",
+      "upstream": "2071ea0624c78cbcfb9f7e44bd017a7ce7ea67c0"
     },
     "opm-upscaling": {
       "commit": "31f0afc0734e5bf17b0e52f98a572abd950eaefb",
