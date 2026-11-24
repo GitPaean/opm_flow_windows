@@ -10,12 +10,16 @@ kept and only what changed is recompiled.
 
 ## 0. Prerequisites
 
+The packages are built with Visual Studio 2026 (MSVC 19.52 for
+master-2026-11-24), the compiler the nightly runners have. `setup-env.ps1`
+takes the newest Visual Studio installed, so VS 2022 may stay alongside.
+
 ```powershell
-winget install --id Microsoft.VisualStudio.2022.BuildTools -e `
+winget install --id Microsoft.VisualStudio.BuildTools -e `
   --override "--quiet --wait --norestart `
     --add Microsoft.VisualStudio.Workload.VCTools `
     --add Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
-    --add Microsoft.VisualStudio.Component.Windows11SDK.22621 `
+    --add Microsoft.VisualStudio.Component.Windows11SDK.26100 `
     --add Microsoft.VisualStudio.Component.VC.CMake.Project --includeRecommended"
 winget install -e --id Git.Git
 winget install -e --id Microsoft.msmpi          # runtime
@@ -81,7 +85,7 @@ opm-upscaling's pin, which it does not build. The vcpkg and Trilinos pins stay
 as they are; to move them as well, build against the newer ones first
 (`-VcpkgRef`, `-TrilinosRef`; the nightly canary already does, with their
 newest) and add `-Dependencies`. The nightly workflow's pinned job builds the
-pins with the runner's MSVC 19.51 from the next night on; to know before a
+pins with the runner's MSVC from the next night on; to know before a
 release, start the windows-weekly workflow by hand with `sources: pinned` once
 the harness commit below is pushed.
 

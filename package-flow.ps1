@@ -66,7 +66,11 @@ function Step($m) { Write-Host "==== $m ====" -ForegroundColor Cyan }
 if (-not $env:VCToolsRedistDir) {
     . (Join-Path $Root 'setup-env.ps1') | Out-Null
 }
-$crtDir  = Join-Path $env:VCToolsRedistDir 'x64\Microsoft.VC143.CRT'
+# The CRT folder is named after the toolset: Microsoft.VC143.CRT with VS 2022,
+# Microsoft.VC145.CRT with VS 2026. The DLLs in it are msvcp140.dll & co. either way.
+$crtDir  = Get-ChildItem (Join-Path $env:VCToolsRedistDir 'x64') -Directory -Filter 'Microsoft.VC14*.CRT' |
+           Sort-Object Name -Descending | Select-Object -First 1 -ExpandProperty FullName
+if (-not $crtDir) { throw "no x64\Microsoft.VC14*.CRT under $env:VCToolsRedistDir" }
 $ompDll  = Get-ChildItem -Recurse (Join-Path $env:VCToolsRedistDir 'x64') `
                -Filter 'libomp140.x86_64.dll' -ErrorAction SilentlyContinue |
            Select-Object -First 1 -ExpandProperty FullName
@@ -175,8 +179,10 @@ if (Test-Path (Join-Path $GuiBin 'flow-gui.exe')) {
 # --- prerequisite runtime installers ------------------------------------------
 Step "download prerequisite installers (cached in redist\)"
 $dl = @(
+    # The current v14 runtime (VS 2017-2026). The older aka.ms/vs/17 link
+    # stopped at VS 2022's 14.44, which is older than what VS 2026 builds need.
     @{ Name = 'vc_redist.x64.exe'
-       Url  = 'https://aka.ms/vs/17/release/vc_redist.x64.exe' }
+       Url  = 'https://aka.ms/vc14/vc_redist.x64.exe' }
 )
 # MS-MPI ships its installer here because installing it needs administrator
 # rights; the Intel MPI variant has no installer to bundle, since pip puts that

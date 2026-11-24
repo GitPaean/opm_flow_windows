@@ -389,7 +389,8 @@ costs nothing.
   (C3016), and OPM's `ElementChunks` idiom uses OpenMP-5.0 range-based-for (which
   MSVC does not support at all); the switch uses `/openmp:llvm` (OpenMP 3.1+) and
   the OPM modules carry index-based loop equivalents. Runtime: `libomp140.x86_64.dll`
-  (ships with MSVC under `VC\Redist\...\Microsoft.VC143.OpenMP.LLVM\`) must sit next
+  (ships with MSVC under `VC\Redist\...\Microsoft.VC14x.OpenMP.LLVM\`: VC143 in VS 2022,
+  VC145 in VS 2026) must sit next
   to the `.exe` or be on `PATH`. Set threads with `--threads-per-process=N`.
 - **MPI:** enabled with `build-all.ps1 -Mpi` (install MS-MPI first; see §13).
 - **Optional CLI tools**: the examples satellite (`opmpack`, `rst_deck`,
