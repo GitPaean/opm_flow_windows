@@ -11,7 +11,7 @@
     LICENSE.txt GPLv3 notice + source availability statement
 
   Options:
-    -Version    package version string          (default master-2026-10-12:
+    -Version    package version string          (default master-2026-11-24:
                 the date of the OPM master snapshot the package is built
                 from, not OPM's own version, which flow --version reports)
     -Simulators simulator exes to include       (default: flow — it contains
@@ -24,7 +24,7 @@
 #>
 [CmdletBinding()]
 param(
-    [string]  $Version    = 'master-2026-10-12',
+    [string]  $Version    = 'master-2026-11-24',
     [string[]]$Simulators = @('flow'),
     # Package the Intel MPI build (build-impi\) instead of the MS-MPI one.
     # The Intel MPI runtime is NOT redistributed here: flow.exe is GPLv3, and
