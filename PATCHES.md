@@ -15,7 +15,7 @@ those pins.
 | repository (`windows` branch of GitPaean/...) | commits |
 |---|---|
 | opm-common | Portability and cross-platform fixes exposed by a Windows build · Pin LF line endings for Eclipse test data · Windows/MSVC enablement · Link MPI directly when the DUNE modules do not propagate it · Share the FCMacros.h fallback through opm-common · Keep the hysteresis snapshot loops out of line on MSVC |
-| opm-grid | Enable Fortran only when a compiler exists, and fall back for FCMacros.h · Make cpgrid compile with MSVC · Index-based chunk access so OpenMP loops build on MSVC · Pin LF line endings for Eclipse test data |
+| opm-grid | Enable Fortran only when a compiler exists, and fall back for FCMacros.h · Make cpgrid compile with MSVC · Pin LF line endings for Eclipse test data |
 | opm-simulators | Portability fixes and bugs exposed by a Windows build · Work around MSVC front-end limitations · Provide Windows equivalents for the POSIX interfaces used · Exempt the simulator from Windows power throttling · Pin LF line endings for Eclipse test data · Harden reservoir coupling slave spawning for process-manager launch contexts |
 | opm-upscaling | Build on MSVC: Fortran only when a compiler exists, fall back for FCMacros.h · Disambiguate FieldMatrix operator*= for MSVC · Pin LF line endings for the Eclipse test data |
 
@@ -60,7 +60,20 @@ renaming and the OpenMP index loops. "Provide Windows equivalents" keeps the
 `_WIN32` parts: `isTty()` and the signal guards in `terminal.cpp`, the POSIX-only
 writability check in `simulatorOutputDir()` and the `_spawnl` child in
 `test_tasklets_failure`. OPM/opm-simulators#7722 adds the model tests only when
-the examples are built.
+the examples are built. On 2026-11-24 OPM/opm-common#5597 took the
+`if(MATH_LIBRARY)` guard in `FindSuiteSparse.cmake`, and #5596 took the
+`<cstdlib>` in `ParseContext_EXIT1` and made its POSIX child leave with status
+0 when `exit1()` does not exit; "Windows/MSVC enablement" keeps that test's
+`_spawnl` child. The same day OPM/opm-simulators#7736 took the three items
+"Work around MSVC front-end limitations" had for `parametersystem.hpp`,
+`ConvergenceOutputConfiguration.cpp` and `DILU.hpp`: finding the
+`Opm::Parameters::` qualifier in `getParamName()`, the `string_view::data()`
+iterators and the `<` test in `DILU::parallelUpdate()`. Also on 2026-11-24
+OPM/opm-common#5592 took the half of "Keep the hysteresis snapshot loops out of
+line on MSVC" that has the cell parameters go through the capture and restore
+helpers; the commit keeps the `__declspec(noinline)` on them. Also on 2026-11-24
+OPM/opm-grid#1106 took the whole of opm-grid's "Index-based chunk access so
+OpenMP loops build on MSVC", so the opm-grid series is down to three commits.
 
 What still relies on this harness's `compat/include` shims: opm-common's
 `examples/` and `test_util/` tools (`getopt.h`) and `EclipseGridTests.cpp`
@@ -168,6 +181,7 @@ Result: `opmgrid.lib` + cmake config installed.
 - opm-common `cmake/Modules/FindSuiteSparse.cmake`: `MATH_LIBRARY` (`find_library(m)`)
   is NOTFOUND on MSVC (no separate libm) and was added unconditionally to the
   UMFPACK try_compile link line, failing configure. Only append it `if(MATH_LIBRARY)`.
+  Upstream since 2026-11-24 (OPM/opm-common#5597).
 - opm-common `cmake/Modules/OpmLibMain.cmake`: only call `${project}_tests_hook`
   when `BUILD_TESTING` is ON **on Windows** (`AND (BUILD_TESTING OR NOT WIN32)`,
   so other platforms keep the historical always-call behaviour). With testing
@@ -232,7 +246,8 @@ Batch 3/4 (down to last files):
 - `vtkmultiwriter.hh`: `fullPath.filename()` -> `.filename().string()`.
 - `ConvergenceOutputConfiguration.cpp`: pass `options.data()`/`data()+size()`
   (const char*) to cregex_token_iterator — MSVC's string_view::begin() is a
-  checked-iterator class, not const char*.
+  checked-iterator class, not const char*. Upstream since 2026-11-24
+  (OPM/opm-simulators#7736).
 
 ## opm-simulators (master) — runtime fix (parameter names)
 flow_blackoil.exe built & linked but aborted at runtime: every CLI parameter
@@ -244,7 +259,8 @@ so the deck and all options were rejected as "unknown parameters".
   "struct Opm::Parameters::Xxx" (leading "struct "/"class "), so a fixed 17-char
   erase from position 0 cut "struct Opm::Para", leaving "eters::Xxx".
 - Fix: `find("Opm::Parameters::")` and erase up to past it (handles the prefix).
-  This corrects ALL parameter names on MSVC.
+  This corrects ALL parameter names on MSVC. Upstream since 2026-11-24
+  (OPM/opm-simulators#7736).
 
 ## opm-simulators — Windows power-throttling ("EcoQoS") opt-out
 Windows 11 clocks **background** processes down on modern laptops; the same
@@ -278,6 +294,9 @@ harness's VS 2022 has 19.44, which compiles the same code correctly.
   Re-ported on 2026-10-12 onto upstream's compact rollback storage (OPM/opm-common
   a9c14b9f0, "Reduce size of hysteresis rollback storage"). Keep it until a
   fixed MSVC reaches the runners.
+  Since 2026-11-24 the sharing of the helpers, with their renaming, is upstream
+  (OPM/opm-common#5592); the commit now only keeps the two helpers out of line
+  on MSVC.
 
 ## opm-common, opm-simulators — dates before 1970 (MSVC's `difftime`, `gmtime_s`)
 Found 2026-10-13: the Windows build ran SPE10 (opm-tests `spe10/`, `START 1 JAN
@@ -402,13 +421,16 @@ MSVC's default `/openmp` is OpenMP 2.0 and rejects OPM's unsigned/`size_t`
 parallel-for counters (C3016); OPM's `ElementChunks` idiom also uses OpenMP-5.0
 range-based-for after `#pragma omp parallel for`, which MSVC does not support at
 all. Enabled via MSVC's **`/openmp:llvm`** (OpenMP 3.1+) plus source changes:
-- opm-grid `ElementChunks.hpp`: added a random-access `operator[]`.
+- opm-grid `ElementChunks.hpp`: added a random-access `operator[]`. Upstream since
+  2026-11-24 (OPM/opm-grid#1106), with the docs, `griditer` and
+  `test_elementchunks` switched to the index-based loop.
 - opm-simulators (FIBlackoilModel, TracerModel, FacePropertiesTPSA_impl,
   Transmissibility_impl, getQuasiImpesWeights, tpsamodel) + opm-grid griditer
   example: converted the range-based `omp parallel for` loops to index-based
   (`for (size_t ci=0; ci<chunks.size(); ++ci) { auto chunk = chunks[ci]; ... }`).
+  The opm-simulators loops are proposed upstream as OPM/opm-simulators#7737.
 - opm-simulators `DILU.hpp`: MSVC C1001 ICE on `row != A_.N()` under omp; hoist
-  the bound and use `<`.
+  the bound and use `<`. Upstream since 2026-11-24 (OPM/opm-simulators#7736).
 All index-based/`operator[]` forms are equivalent on GCC (Linux-safe).
 `find_package(OpenMP)` is pre-seeded to `/openmp:llvm` + libomp in build-module.ps1.
 Runtime dep: `libomp140.x86_64.dll` (ships with MSVC). Threads via
