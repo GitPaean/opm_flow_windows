@@ -27,7 +27,7 @@
 ; The OPM master snapshot the package is built from, as package-flow.ps1 names
 ; it (see its -Version).
 #ifndef AppVersion
-  #define AppVersion "master-2026-11-24"
+  #define AppVersion "master-2026-11-24.1"
 #endif
 #define StageDir "..\dist\opm-flow-" + AppVersion
 

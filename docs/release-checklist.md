@@ -97,6 +97,10 @@ with `opm-sources.json` and README.md (whose quick start `update-opm-pins.ps1`
 keeps naming the snapshot), so the harness commit the packages stamp names the
 snapshot and every commit they were built from: OPM, vcpkg and Trilinos.
 
+A second package of a snapshot date that already has a release keeps that
+release and takes a suffix: `master-YYYY-MM-DD.1` (MSIX `YYYY.M.D.1`, so it
+installs as an upgrade over `.0`), as master-2026-11-24.1 did.
+
 ## 2. Build
 
 ```powershell

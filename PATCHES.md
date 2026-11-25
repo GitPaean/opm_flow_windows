@@ -9,15 +9,43 @@ The sections below are the working record, in the order things were found.
 What is on the branches is the folded result: one commit per topic, each
 message saying what it changes and why, with no fix-up commits. The trees
 are exactly what the record below describes. The commits the harness builds
-are pinned in [opm-sources.json](opm-sources.json); the table is the series at
-those pins.
+are pinned in [opm-sources.json](opm-sources.json). The table is the `windows`
+branch as of 2026-11-24.
 
 | repository (`windows` branch of GitPaean/...) | commits |
 |---|---|
-| opm-common | Portability and cross-platform fixes exposed by a Windows build · Pin LF line endings for Eclipse test data · Windows/MSVC enablement · Link MPI directly when the DUNE modules do not propagate it · Share the FCMacros.h fallback through opm-common · Keep the hysteresis snapshot loops out of line on MSVC |
+| opm-common | Portability and cross-platform fixes exposed by a Windows build · Pin LF line endings for Eclipse test data · Windows/MSVC enablement · Link MPI directly when the DUNE modules do not propagate it · Share the FCMacros.h fallback through opm-common |
 | opm-grid | Enable Fortran only when a compiler exists, and fall back for FCMacros.h · Make cpgrid compile with MSVC · Pin LF line endings for Eclipse test data |
 | opm-simulators | Portability fixes and bugs exposed by a Windows build · Work around MSVC front-end limitations · Provide Windows equivalents for the POSIX interfaces used · Exempt the simulator from Windows power throttling · Pin LF line endings for Eclipse test data · Harden reservoir coupling slave spawning for process-manager launch contexts |
 | opm-upscaling | Build on MSVC: Fortran only when a compiler exists, fall back for FCMacros.h · Disambiguate FieldMatrix operator*= for MSVC · Pin LF line endings for the Eclipse test data |
+
+### VS 2026 and VS 2022 branches (since 2026-11-24)
+
+`windows` and `windows-minimal` carry only what Visual Studio 2026 (MSVC
+19.52, the compiler of the packages and of the nightly runners) needs.
+Every compiler workaround on them was checked by building without it on
+19.52, and the ones it compiles correctly went:
+
+- opm-common "Keep the hysteresis snapshot loops out of line on MSVC" (both
+  branches): 19.52 compiles the snapshot correctly; Norne 4x1 and serial ran
+  with the same iteration counts without it. Only 19.51 miscompiled it (see
+  the hysteresis section below).
+- opm-common "Windows/MSVC enablement": the split of the raw string
+  literals over 16380 characters in `MultisegmentWellTests.cpp` and
+  `udq.data`. 19.52 takes them whole (19.44 does not, C2026).
+- opm-simulators "Work around MSVC front-end limitations": moving
+  `SatfuncConsistencyChecks`' `ViolationSample` out to `Detail::`. The C2079
+  was the missing `<array>`, which upstream includes since 2026-11-22
+  (OPM/opm-simulators#7720); 19.44 and 19.52 both compile the nested type
+  with it.
+
+The series as it was before, which VS 2022 (19.44) also builds with its
+tests, is kept as `windows-2022` and `windows-minimal-2022`. With VS 2022,
+`windows` still builds flow, but not opm-common's tests MultisegmentWellTests
+and UDQTests. The master-2026-11-24 packages were built from the tips of the
+`-2022` branches (the harness fetches a pinned commit by its id, so that
+harness commit still builds them); master-2026-11-24.1 is the first package
+built from the new `windows`.
 
 Review vehicles: GitPaean/opm-common#7, opm-grid#2, opm-simulators#4,
 opm-upscaling#1 - each `windows` against `master` in the fork; `master`
@@ -231,6 +259,8 @@ Additional source fixes:
 - `SatfuncConsistencyChecks.hpp/.cpp`: moved nested `ViolationSample` out to
   `Detail::SatfuncConsistencyViolationSample<Scalar>` (MSVC C2079: nested type
   used as std::array element of the same class template treated as incomplete).
+  Off `windows` since 2026-11-24, kept on `windows-2022`: the C2079 came from
+  the missing `<array>` (next batch), not from the nesting.
 - `GenericOutputBlackoilModule.cpp`: moved local `enum class EntryPhaseType` out
   of `doAllocBuffers` to namespace scope (MSVC treated the function-local enum as
   a distinct type per template instantiation, breaking the default member init).
@@ -241,8 +271,8 @@ Batch 3/4 (down to last files):
 - `Banners.cpp`: `getlogin()` -> `getenv("USERNAME")` on `_WIN32`.
 - `SatfuncConsistencyChecks.hpp`: `ViolationCollection` stays a `std::array`
   (with an explicit `<array>` include, upstream since 2026-11-22 through
-  OPM/opm-simulators#7720); moving the element type out to
-  `Detail::` (previous item) is sufficient for MSVC.
+  OPM/opm-simulators#7720). With that include MSVC compiles the nested
+  element type, so the move to `Detail::` (previous item) is not needed.
 - `vtkmultiwriter.hh`: `fullPath.filename()` -> `.filename().string()`.
 - `ConvergenceOutputConfiguration.cpp`: pass `options.data()`/`data()+size()`
   (const char*) to cregex_token_iterator — MSVC's string_view::begin() is a
@@ -297,6 +327,10 @@ harness's VS 2022 has 19.44, which compiles the same code correctly.
   Since 2026-11-24 the sharing of the helpers, with their renaming, is upstream
   (OPM/opm-common#5592); the commit now only keeps the two helpers out of line
   on MSVC.
+- Off `windows` and `windows-minimal` since 2026-11-24, kept on the `-2022`
+  branches: MSVC 19.52, which the nightly runners have (19.52.37029 on
+  2026-11-24), compiles the snapshot correctly. flow built without the `noinline` ran Norne 4x1
+  (1648/1296/2496) and serial cleanly. 19.44 never needed it.
 
 ## opm-common, opm-simulators — dates before 1970 (MSVC's `difftime`, `gmtime_s`)
 Found 2026-10-13: the Windows build ran SPE10 (opm-tests `spe10/`, `START 1 JAN
